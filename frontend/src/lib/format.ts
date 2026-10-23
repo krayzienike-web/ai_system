@@ -18,7 +18,23 @@ export function plural(n: number, forms: [string, string, string]): string {
   return `${n} ${form}`;
 }
 
+/** "1 пункт", "2 пункта", "1,5 пункта": percentage-point difference in words. */
+export function points(value: number): string {
+  const rounded = Math.round(Math.abs(value) * 10) / 10;
+  const text = rounded.toLocaleString("ru-RU");
+  return Number.isInteger(rounded) ? plural(rounded, ["пункт", "пункта", "пунктов"]) : `${text} пункта`;
+}
+
 export const num = (value: number) => nf.format(value);
 
 export const pct = (value: number, digits = 1) =>
   `${value.toLocaleString("ru-RU", { minimumFractionDigits: digits, maximumFractionDigits: digits })}%`;
+
+/** Money in words for people, not accountants: "теряем 38 тыс ₽ в месяц". */
+export const perMonth = (value: number) => `${rub(value)} в месяц`;
+export const lossWords = (value: number) => `теряем ${perMonth(value)}`;
+export const gainWords = (value: number) => `можно заработать ${perMonth(value)}`;
+
+/** Thousands with one decimal for big animated figures: 128 400 → "128,4". */
+export const thousands = (value: number) =>
+  (value / 1000).toLocaleString("ru-RU", { maximumFractionDigits: value >= 100_000 ? 0 : 1 });

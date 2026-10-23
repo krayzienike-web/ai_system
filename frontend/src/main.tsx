@@ -5,6 +5,7 @@ import { RouterProvider } from "@tanstack/react-router";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
+import { ToastHost } from "./ds/ai";
 import { router } from "./router";
 import { PrototypeProvider } from "./state/prototype";
 
@@ -15,6 +16,7 @@ createRoot(document.getElementById("root")!).render(
     <QueryClientProvider client={queryClient}>
       <PrototypeProvider>
         <RouterProvider router={router} />
+        <ToastHost />
       </PrototypeProvider>
     </QueryClientProvider>
   </StrictMode>,

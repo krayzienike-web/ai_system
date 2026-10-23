@@ -10,6 +10,7 @@ import type {
   RestaurantInfo,
   StockRisk,
   Task,
+  WeeklyTrend,
 } from "./types";
 
 export const PERIOD = {
@@ -302,7 +303,7 @@ export const FINDINGS: Finding[] = [
     confidence: "medium",
     confidenceNote: "12 недель актов списания",
     metric: { label: "Списания", value: "1,9% выручки", benchmark: "в среднем по сети 1,7%" },
-    summary: "Списания выше среднего по сети на 0,2 п.п. — в основном выпечка и молочка.",
+    summary: "Списания выше среднего по сети на 0,2 пункта — в основном выпечка и молочка.",
     causes: [],
     actions: ["Корректировать заказ выпечки по дням недели"],
     status: "new",
@@ -432,7 +433,7 @@ export const FINDINGS: Finding[] = [
     restaurantId: null,
     title: "ТТК картофеля фри, вероятно, устарела",
     effectRubMonth: null,
-    effectNote: "искажает фудкост сети на 0,4 п.п.",
+    effectNote: "искажает фудкост сети на 0,4 пункта",
     confidence: "medium",
     confidenceNote: "Одинаковое отклонение во всех трех ресторанах",
     metric: { label: "Расход сверх ТТК", value: "6,1–6,6%", benchmark: "во всех ресторанах" },
@@ -512,6 +513,7 @@ export const TASKS: Task[] = [
     due: "10.10",
     status: "done",
     report: "Заказ переведен на вторник и пятницу. Списания за 4 недели — 5 600 ₽ против 10 800 ₽ раньше.",
+    result: "Подтверждено проверкой: +5,2 тыс ₽ в месяц",
   },
 ];
 
@@ -520,7 +522,7 @@ export const EXPERIMENTS: Experiment[] = [
     id: "e-chicken",
     title: "Куриное филе по лучшей цене сети",
     hypothesis:
-      "Если R01 и R02 перейдут на поставщика филе с лучшей ценой сети, затраты на филе снизятся на 9–10% без потери качества.",
+      "Если рестораны на Тверской и на Арбате перейдут на поставщика филе с лучшей ценой сети, затраты на филе снизятся на 9–10% без потери качества.",
     findingId: "r01-chicken-price",
     design: "Ресторан против ресторана: тест — R01, R02; контроль — R03",
     test: ["R01", "R02"],
@@ -583,3 +585,123 @@ export const FRESHNESS: DataSourceFreshness[] = RESTAURANTS.flatMap((r) => [
     ? { restaurantId: r.id, source: "erp", dataset: "Закупки", lastDate: "11.10", status: "warning", note: "отставание 7 дней" }
     : { restaurantId: r.id, source: "erp", dataset: "Закупки", lastDate: "17.10", status: "good" },
 ] as DataSourceFreshness[]);
+
+// ---------------------------------------------------------------- To-Be: plain-language layer
+// Conclusions, scales and balances for each finding (docs/ux/03-to-be.md). Kept separate so the
+// base findings stay close to what the analytics engine computes.
+
+type FindingExtras = Pick<Finding, "headline" | "scale" | "composition" | "dispute"> & { chartConclusion?: string };
+
+const EXTRAS: Record<string, FindingExtras> = {
+  "r01-mozzarella": {
+    headline: "Моцареллы уходит на 9% больше нормы — 84 кг за два месяца, и перерасход растет третий период подряд.",
+    scale: { label: "Расход сверх нормы", unit: "%", me: 9.1, network: 3.4, norm: 2, lowerIsBetter: true },
+    composition: {
+      unit: "кг",
+      formula: "Было 38 кг + пришло 1 012 кг − осталось 43 кг = израсходовано 1 007 кг",
+      parts: [
+        { label: "по техкартам проданных блюд", value: 920, tone: "brand" },
+        { label: "списано по актам", value: 3, tone: "neutral" },
+        { label: "не объяснено — это потеря", value: 84, tone: "loss" },
+      ],
+    },
+    chartConclusion: "Перерасход растет третий период подряд, а в среднем по сети держится около 3%.",
+  },
+  "r01-cream": {
+    headline: "Сливки обходятся на 51 ₽ за литр дороже, чем в среднем по сети: в августе поставщик поднял цену, и ее никто не пересмотрел.",
+    scale: { label: "Цена за литр", unit: "₽", me: 412, network: 361, lowerIsBetter: true },
+    chartConclusion: "С августа цена выросла на 13% и не снижалась; в сети цена стабильна.",
+  },
+  "r01-greens": {
+    headline: "Зелени списываем в 3,3 раза больше, чем в среднем по сети: заказываем на 5–6 дней, а хранится она 3 дня.",
+    scale: { label: "Списания зелени в неделю", unit: "₽", me: 3375, network: 1018, lowerIsBetter: true },
+    chartConclusion: "Каждую неделю списываем около 3,4 тыс ₽ зелени — в сети около 1 тыс ₽.",
+  },
+  "r01-preinventory": {
+    headline: "Больше половины списаний оформляется за 2 дня до инвентаризации. Так обычно закрывают недостачи, а не реальную порчу.",
+    scale: { label: "Доля списаний перед пересчетом", unit: "%", me: 58, network: 14, lowerIsBetter: true },
+  },
+  "r01-margarita-price": {
+    headline: "Себестоимость «Маргариты» выросла на 11%, а цена в меню прежняя — каждая пицца приносит меньше.",
+    scale: { label: "Фудкост блюда", unit: "%", me: 36, norm: 30, lowerIsBetter: true },
+  },
+  "r01-chicken-price": {
+    headline: "Другой поставщик сети возит такое же филе на 34 ₽ за кг дешевле.",
+    scale: { label: "Цена за кг", unit: "₽", me: 352, network: 318, networkLabel: "Лучшая в сети", lowerIsBetter: true },
+  },
+  "r01-partial-counts": {
+    headline: "Если раз в неделю пересчитывать 20 самых дорогих позиций, потери будут видны через неделю, а не через два месяца.",
+  },
+  "r02-beef": {
+    headline: "Говядину берем на 113 ₽ за кг дороже среднего по сети — из-за срочных заказов у дорогого поставщика.",
+    scale: { label: "Цена за кг", unit: "₽", me: 1140, network: 1027, lowerIsBetter: true },
+    chartConclusion: "Цена растет с конца июля; в сети почти не меняется.",
+  },
+  "r02-chicken-receiving": {
+    headline: "По накладным 1С приходит на 2,4% больше курицы, чем оприходуется в iiko. Похоже на недовес при приемке.",
+    scale: { label: "Расхождение 1С и iiko", unit: "%", me: 2.4, network: 0.3, lowerIsBetter: true },
+  },
+  "r02-mis-sort": {
+    headline: "Пармезан и грана падано путают при учете: излишек одного почти равен недостаче другого.",
+    dispute: {
+      by: "Директор, Ресторан на Арбате",
+      reason: "Причина другая",
+      comment: "Сыры хранятся раздельно и подписаны. Проверьте, не стоит ли в техкарте «Цезаря» грана вместо пармезана.",
+      date: "21.10",
+    },
+  },
+  "r02-no-recipes": {
+    headline: "У 9 блюд сезонного меню нет техкарт — по ним система не видит потери (7% выручки).",
+    scale: { label: "Выручка без техкарт", unit: "%", me: 7, network: 2, lowerIsBetter: true },
+  },
+  "r02-menu": { headline: "Три пасты с высокой наценкой продаются в 2 раза реже, чем менее выгодные блюда." },
+  "r02-writeoffs": {
+    headline: "Списания чуть выше среднего по сети — в основном выпечка и молочка.",
+    scale: { label: "Списания, % выручки", unit: "%", me: 1.9, network: 1.7, lowerIsBetter: true },
+  },
+  "r02-cream": {
+    headline: "Сливки можно брать на 16 ₽ за литр дешевле у поставщика сети.",
+    scale: { label: "Цена за литр", unit: "₽", me: 368, network: 352, networkLabel: "Лучшая в сети", lowerIsBetter: true },
+  },
+  "r03-salmon": {
+    headline: "Лосося уходит на 6,8% больше нормы: при разделке получаем 52% филе, а в техкарте заложено 58%.",
+    scale: { label: "Расход сверх нормы", unit: "%", me: 6.8, network: 2.9, norm: 2, lowerIsBetter: true },
+    chartConclusion: "Перерасход держится выше 6% три периода подряд — проблема постоянная, а не случайная.",
+  },
+  "r03-bread": {
+    headline: "Хлеб заказываем одинаково на все дни, а в понедельник и вторник продаем меньше — остаток списываем.",
+    scale: { label: "Списания хлеба, % закупки", unit: "%", me: 9, network: 4, lowerIsBetter: true },
+  },
+  "r03-erp-gap": { headline: "Закупки из 1С загружены только по 11.10 — цены за последнюю неделю не проверены." },
+  "r03-caesar-price": {
+    headline: "Себестоимость «Цезаря» выросла на 9%, а цена в меню прежняя.",
+    scale: { label: "Фудкост блюда", unit: "%", me: 34, norm: 30, lowerIsBetter: true },
+  },
+  "r03-vegetables": { headline: "Томаты, огурцы и перец берем на 8% дороже лучшей цены сети." },
+  "r03-greens-batch": { headline: "Малые партии зелени сократили списания почти вдвое — осталось закрепить правило." },
+  "net-fries-recipe": {
+    headline: "Во всех трех ресторанах картофеля фри уходит на 6% больше нормы — скорее всего, ошибка в техкарте, а не на кухнях.",
+  },
+};
+
+for (const f of FINDINGS) {
+  const extra = EXTRAS[f.id];
+  if (!extra) continue;
+  const { chartConclusion, ...rest } = extra;
+  Object.assign(f, rest);
+  if (chartConclusion && f.chart) f.chart.conclusion = chartConclusion;
+  if (rest.dispute) f.status = "disputed";
+}
+
+/** Weekly network trend for HQ: what can still be returned vs what is confirmed as returned (₽/month). */
+export const NETWORK_TREND: WeeklyTrend = {
+  labels: ["24.08", "31.08", "07.09", "14.09", "21.09", "28.09", "05.10", "12.10"],
+  onTable: [331_000, 322_000, 318_000, 309_000, 301_000, 294_000, 286_000, 0],
+  returned: [0, 0, 0, 1_200, 2_600, 4_100, 5_200, 5_200],
+};
+
+/** Losses one week earlier, for "better / worse than last week". */
+export const LOSSES_LAST_WEEK: Record<string, number> = { R01: 86_000, R02: 41_000, R03: 34_000 };
+
+/** "Can be returned" per restaurant one week earlier, for the director's hero. */
+export const ON_TABLE_LAST_WEEK: Record<string, number> = { R01: 141_000, R02: 89_000, R03: 72_000 };

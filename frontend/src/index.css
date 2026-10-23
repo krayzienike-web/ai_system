@@ -1,1 +1,78 @@
 @import "tailwindcss";
+
+/* SousChef AI design tokens (docs/ux/02-brand-design-system.md). Single light theme by design. */
+@theme {
+  --font-sans: "Onest", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-display: "Unbounded", "Onest", ui-sans-serif, system-ui, sans-serif;
+
+  --color-ink: #14202b;
+  --color-ink-2: #3d4a57;
+  --color-ink-3: #6a7683;
+  --color-paper: #f2f5f4;
+  --color-surface: #ffffff;
+  --color-line: #dfe6e3;
+  --color-line-strong: #c8d3cf;
+
+  --color-brand: #0a8f84;
+  --color-brand-strong: #07736a;
+  --color-brand-soft: #e1f3f1;
+  --color-spark: #f2b33d;
+  --color-network: #eb6834;
+
+  --color-loss: #b42318;
+  --color-loss-soft: #fdecea;
+  --color-loss-icon: #d03b3b;
+  --color-gain: #1f7a3a;
+  --color-gain-soft: #e7f5ec;
+  --color-gain-icon: #0ca30c;
+  --color-warn: #8a5a00;
+  --color-warn-soft: #fff4d6;
+  --color-warn-icon: #e0a000;
+  --color-info: #1d4ed8;
+  --color-info-soft: #e8eefd;
+
+  --radius-control: 10px;
+  --radius-card: 16px;
+  --radius-panel: 24px;
+
+  --shadow-raised: 0 1px 2px rgb(20 32 43 / 0.06), 0 8px 24px -12px rgb(20 32 43 / 0.18);
+  --shadow-float: 0 12px 40px -12px rgb(20 32 43 / 0.35);
+
+  --ease-out-soft: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+:root {
+  color-scheme: light;
+}
+
+body {
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3 {
+  text-wrap: balance;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 2px;
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

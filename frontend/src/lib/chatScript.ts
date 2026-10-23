@@ -2,7 +2,9 @@
 // mirroring the real design: the model only phrases answers around tool results.
 import { FINDINGS, KPIS, RESTAURANTS, STOCK_RISKS } from "../mock/data";
 import { findingById, networkKpis, restaurantByCode, restaurantFindings } from "../mock/selectors";
-import { pct, rubMonth } from "./format";
+import { pct, perMonth, rub } from "./format";
+
+const perMonthOf = perMonth;
 import type { Viewer } from "./useViewer";
 
 export interface ChatAnswer {
@@ -23,7 +25,7 @@ const SUGGESTIONS_HQ = [
   "Сравни рестораны по фудкосту",
   "Где сеть переплачивает?",
   "Что закончится до поставки?",
-  "Какие эксперименты дали эффект?",
+  "Какие проверки сработали?",
 ];
 
 export const suggestionsFor = (viewer: Viewer) => (viewer.isHq ? SUGGESTIONS_HQ : SUGGESTIONS_DIRECTOR);
@@ -55,14 +57,14 @@ export function answer(question: string, viewer: Viewer, findingId?: string): Ch
           ["Списания, % выручки", pct(own.writeoffsPct), pct(avg.writeoffsPct)],
         ],
       },
-      source: "Расчет по последнему закрытому периоду 03.08–01.10",
+      source: "период между инвентаризациями 03.08–01.10",
     };
   }
 
   if (/за год/.test(q) && findingId) {
     const f = findingById(findingId);
     if (f?.effectRubMonth) {
-      return { text: `${rubMonth(f.effectRubMonth)} — это около ${rubMonth(f.effectRubMonth * 12).replace("/мес", "")} в год.`, sourceFindingId: f.id };
+      return { text: `${perMonthOf(f.effectRubMonth)} — это около ${rub(f.effectRubMonth * 12)} в год.`, sourceFindingId: f.id };
     }
   }
 
@@ -81,15 +83,15 @@ export function answer(question: string, viewer: Viewer, findingId?: string): Ch
     const avg = networkKpis();
     const rows = codes.map((c) => {
       const k = KPIS[c]!;
-      return [name(c), pct(k.foodCostActual), pct(k.foodCostTheoretical), `${(k.foodCostActual - k.foodCostTheoretical).toLocaleString("ru-RU", { maximumFractionDigits: 1 })} п.п.`];
+      return [name(c), pct(k.foodCostActual), pct(k.foodCostTheoretical), `${(k.foodCostActual - k.foodCostTheoretical).toLocaleString("ru-RU", { maximumFractionDigits: 1 })} пункта`];
     });
     if (!viewer.isHq) rows.push(["Среднее по сети", pct(avg.foodCostActual), pct(avg.foodCostTheoretical), "—"]);
     const top = FINDINGS.filter((f) => codes.includes(f.restaurantId ?? "") && f.kind === "problem" && f.process === "production")[0];
     return {
-      text: `Фактический фудкост считается по последнему периоду между инвентаризациями (03.08–01.10). Разница с теоретическим — потери сверх ТТК.${top ? ` Главный вклад — «${top.title}» (${rubMonth(top.effectRubMonth ?? 0)}).` : ""}`,
-      table: { columns: ["Ресторан", "Факт", "По ТТК", "Разница"], rows },
+      text: `Фактический фудкост считаем между двумя инвентаризациями (03.08–01.10). Разница с фудкостом по техкартам — это то, что ушло сверх нормы.${top ? ` Главный вклад — «${top.title}» (${perMonthOf(top.effectRubMonth ?? 0)}).` : ""}`,
+      table: { columns: ["Ресторан", "Фактический", "По техкартам", "Разница"], rows },
       sourceFindingId: top?.id,
-      source: "Модули M1–M2: продажи r_keeper, склад iiko, закупки ERP",
+      source: "продажи r_keeper, склад iiko, закупки 1С за период 03.08–01.10",
     };
   }
 
@@ -101,11 +103,11 @@ export function answer(question: string, viewer: Viewer, findingId?: string): Ch
         columns: viewer.isHq ? ["Ресторан", "Позиция", "Эффект"] : ["Позиция", "Цена", "Эффект"],
         rows: items.map((f) =>
           viewer.isHq
-            ? [name(f.restaurantId), f.title, rubMonth(f.effectRubMonth ?? 0)]
-            : [f.title, `${f.metric.value} (${f.metric.benchmark})`, rubMonth(f.effectRubMonth ?? 0)],
+            ? [name(f.restaurantId), f.title, perMonthOf(f.effectRubMonth ?? 0)]
+            : [f.title, `${f.metric.value} (${f.metric.benchmark})`, perMonthOf(f.effectRubMonth ?? 0)],
         ),
       },
-      source: "Модуль M3: закупки 1С:ERP за 12 недель",
+      source: "закупки из 1С за 12 недель",
     };
   }
 
@@ -117,7 +119,7 @@ export function answer(question: string, viewer: Viewer, findingId?: string): Ch
         columns: [...(viewer.isHq ? ["Ресторан"] : []), "Товар", "Хватит на", "Поставка через", "Поставщик"],
         rows: risks.map((r) => [...(viewer.isHq ? [name(r.restaurantId)] : []), r.product, `${r.daysLeft} дн.`, `${r.nextDeliveryInDays} дн.`, r.supplier]),
       },
-      source: "Модуль M6: прогноз продаж × ТТК, остатки iiko",
+      source: "прогноз продаж × техкарты, остатки iiko на 18.10",
     };
   }
 
@@ -125,20 +127,20 @@ export function answer(question: string, viewer: Viewer, findingId?: string): Ch
     const items = codes.flatMap((c) => restaurantFindings(c).problems.concat(restaurantFindings(c).opportunities)).filter((f) => ["writeoffs", "storage"].includes(f.process));
     return {
       text: "Основные резервы по списаниям — в заказе скоропорта под реальное потребление. Подтвержденный пример в сети: малые партии зелени снизили списания на 48%.",
-      table: { columns: ["Что", "Эффект"], rows: items.map((f) => [`${viewer.isHq ? `${name(f.restaurantId)}: ` : ""}${f.title}`, rubMonth(f.effectRubMonth ?? 0)]) },
-      source: "Модуль M5: акты списания iiko",
+      table: { columns: ["Что", "Эффект"], rows: items.map((f) => [`${viewer.isHq ? `${name(f.restaurantId)}: ` : ""}${f.title}`, perMonthOf(f.effectRubMonth ?? 0)]) },
+      source: "акты списания iiko за 12 недель",
     };
   }
 
   if (/эксперимент/.test(q)) {
     return {
-      text: "Завершен 1 эксперимент: «Малые партии зелени» в ресторане на Невском — подтвержденный эффект 5,2 тыс ₽/мес (интервал 3,1–7,3 тыс). Еще один идет, один ждет утверждения.",
-      source: "Раздел «Эксперименты»",
+      text: "Одна проверка завершена: «Малые партии зелени» на Невском сработала — плюс 5,2 тыс ₽ в месяц (скорее всего от 3 до 7 тыс). Еще одна идет, одна ждет утверждения.",
+      source: "раздел «Проверки»",
     };
   }
 
   return {
-    text: "В прототипе я отвечаю на вопросы о фудкосте, ценах закупки, списаниях, рисках дефицита и экспериментах. В рабочей версии — на любые вопросы по данным в пределах ваших прав.",
+    text: "В прототипе я отвечаю на вопросы о фудкосте, ценах закупки, списаниях, рисках дефицита и проверках. В рабочей версии отвечу на любой вопрос по данным в пределах ваших прав.",
     suggestions: suggestionsFor(viewer),
   };
 }

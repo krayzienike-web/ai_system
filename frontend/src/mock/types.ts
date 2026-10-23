@@ -26,6 +26,8 @@ export interface RestaurantInfo {
 
 export interface ChartSpec {
   title: string;
+  /** One-sentence conclusion shown above the chart. */
+  conclusion?: string;
   unit: string;
   labels: string[];
   restaurant: number[];
@@ -58,6 +60,35 @@ export interface Finding {
   chart?: ChartSpec;
   evidence?: EvidenceTable;
   status: FindingStatus;
+  /** Plain-language conclusion: what is happening and why it matters. */
+  headline?: string;
+  /** "Me / network / norm" on one scale. */
+  scale?: ScaleSpec;
+  /** How the used quantity splits (by recipe norm / written off / unexplained). */
+  composition?: CompositionSpec;
+  dispute?: { by: string; reason: string; comment: string; date: string };
+}
+
+export interface ScaleSpec {
+  label: string;
+  unit: string;
+  me: number;
+  network?: number;
+  networkLabel?: string;
+  norm?: number;
+  lowerIsBetter: boolean;
+}
+
+export interface CompositionSpec {
+  unit: string;
+  formula: string;
+  parts: { label: string; value: number; tone: "brand" | "neutral" | "loss" | "gain" }[];
+}
+
+export interface WeeklyTrend {
+  labels: string[];
+  onTable: number[]; // ₽/month that can be returned, as estimated each week
+  returned: number[]; // ₽/month confirmed by experiments, run-rate
 }
 
 export interface Kpis {
@@ -91,6 +122,8 @@ export interface Task {
   status: "assigned" | "in_progress" | "done" | "overdue";
   checklist?: string[];
   report?: string;
+  /** Measured outcome once the next recount closes the period. */
+  result?: string;
 }
 
 export interface Experiment {

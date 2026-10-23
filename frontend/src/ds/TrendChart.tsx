@@ -7,15 +7,15 @@ import { useEffect, useRef, useState } from "react";
 
 import { num } from "../lib/format";
 import type { ChartSpec } from "../mock/types";
-import { Button } from "./ui";
+import { Button } from "./primitives";
 
 echarts.use([LineChart, GridComponent, LegendComponent, MarkLineComponent, TooltipComponent, SVGRenderer]);
 
 // Categorical slots 1–2 of the validated reference palette; text stays in ink colors.
-const SERIES_RESTAURANT = "#2a78d6";
+const SERIES_RESTAURANT = "#0a8f84";
 const SERIES_NETWORK = "#eb6834";
-const INK_SECONDARY = "#52514e";
-const GRID = "#e7e5e4";
+const INK_SECONDARY = "#3d4a57";
+const GRID = "#dfe6e3";
 
 const fmt = (value: number, unit: string) => (unit === "%" ? `${value.toLocaleString("ru-RU")}%` : `${num(value)} ${unit}`);
 
@@ -37,7 +37,7 @@ export function TrendChart({ spec, restaurantLabel = "Ресторан" }: { spe
             ? {
                 silent: true,
                 symbol: "none",
-                lineStyle: { color: "#a8a29e", type: "dashed", width: 1.5 },
+                lineStyle: { color: "#14202b", type: "dashed", width: 1.5 },
                 label: { formatter: spec.normLabel ?? "Норма", color: INK_SECONDARY, position: "insideEndBottom" },
                 data: [{ yAxis: spec.norm }],
               }
@@ -56,7 +56,7 @@ export function TrendChart({ spec, restaurantLabel = "Ресторан" }: { spe
     ].map((s) => ({
       ...s,
       type: "line" as const,
-      lineStyle: { width: 2 },
+      lineStyle: { width: 2.5 },
       symbol: "circle",
       symbolSize: 8,
       itemStyle: { borderColor: "#fff", borderWidth: 2 },
@@ -64,7 +64,8 @@ export function TrendChart({ spec, restaurantLabel = "Ресторан" }: { spe
     }));
 
     chart.setOption({
-      animation: false,
+      animationDuration: 700,
+      textStyle: { fontFamily: "Onest, sans-serif" },
       grid: { left: 8, right: 120, top: 36, bottom: 8, containLabel: true },
       legend: { top: 0, left: 0, icon: "roundRect", itemWidth: 12, itemHeight: 4, textStyle: { color: INK_SECONDARY } },
       tooltip: {
@@ -99,15 +100,15 @@ export function TrendChart({ spec, restaurantLabel = "Ресторан" }: { spe
   return (
     <div>
       <div className="mb-2 flex items-center justify-between gap-2">
-        <div className="text-sm font-medium text-slate-800">{spec.title}</div>
-        <Button variant="ghost" onClick={() => setAsTable((v) => !v)} aria-pressed={asTable}>
+        <div className="text-sm text-ink-3">{spec.title}</div>
+        <Button variant="ghost" size="sm" onClick={() => setAsTable((v) => !v)} aria-pressed={asTable}>
           <Table2 size={14} /> {asTable ? "График" : "Таблица"}
         </Button>
       </div>
       {asTable ? (
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <thead className="text-left text-slate-500">
+            <thead className="text-left text-ink-3">
               <tr>
                 <th className="py-1 pr-4 font-normal">Период</th>
                 <th className="py-1 pr-4 text-right font-normal">{restaurantLabel}</th>
@@ -116,7 +117,7 @@ export function TrendChart({ spec, restaurantLabel = "Ресторан" }: { spe
             </thead>
             <tbody className="tabular-nums">
               {spec.labels.map((label, i) => (
-                <tr key={label} className="border-t border-slate-100">
+                <tr key={label} className="border-t border-line">
                   <td className="py-1 pr-4">{label}</td>
                   <td className="py-1 pr-4 text-right">{fmt(spec.restaurant[i] ?? 0, spec.unit)}</td>
                   {spec.networkAvg && <td className="py-1 text-right">{fmt(spec.networkAvg[i] ?? 0, spec.unit)}</td>}

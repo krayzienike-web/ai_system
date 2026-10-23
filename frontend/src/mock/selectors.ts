@@ -1,4 +1,4 @@
-import { EXPERIMENTS, FINDINGS, KPIS, RESTAURANTS } from "./data";
+import { EXPERIMENTS, FINDINGS, KPIS, NETWORK_TREND, RESTAURANTS } from "./data";
 import type { Finding, Kpis, ProcessKey, Status } from "./types";
 
 export const PROCESSES: { key: ProcessKey; title: string }[] = [
@@ -63,4 +63,25 @@ export function networkKpis(): Kpis {
     writeoffsPct: avg((k) => k.writeoffsPct),
     overpayRubMonth: RESTAURANTS.reduce((acc, r) => acc + KPIS[r.code]!.overpayRubMonth, 0) / RESTAURANTS.length,
   };
+}
+
+/** Weekly network trend with the current week computed from open findings (never hard-coded). */
+export function networkTrend() {
+  const t = networkTotals();
+  const onTable = [...NETWORK_TREND.onTable];
+  onTable[onTable.length - 1] = t.losses + t.potential;
+  return { ...NETWORK_TREND, onTable };
+}
+
+/** Where a finding stands in the loop "found → doing → checking → result" (index into CYCLE). */
+export function cycleStage(status: Finding["status"]): number {
+  return { new: 0, disputed: 0, in_work: 1, in_experiment: 2, resolved: 3 }[status];
+}
+
+/** The 3 most valuable open actions for a director this week: money × confidence, new items first. */
+export function weeklyActions(restaurantId: string, take = 3) {
+  const weight = { high: 1, medium: 0.7, low: 0.4 } as const;
+  return FINDINGS.filter((f) => f.restaurantId === restaurantId && f.status !== "resolved" && f.effectRubMonth)
+    .sort((a, b) => (b.effectRubMonth ?? 0) * weight[b.confidence] - (a.effectRubMonth ?? 0) * weight[a.confidence])
+    .slice(0, take);
 }
