@@ -3,22 +3,108 @@ import { FlaskConical, ListTodo } from "lucide-react";
 
 import { FindingCard } from "../components/FindingCard";
 import { Card, PageHeader, SectionTitle, StatTile, StatusIcon } from "../components/ui";
-import { pct, rub, rubMonth } from "../lib/format";
-import { EXPERIMENTS, FINDINGS, FRESHNESS, KPIS, PERIOD, RESTAURANTS, TASKS } from "../mock/data";
-import { networkKpis, networkTotals, PROCESSES, processStatus, restaurantFindings } from "../mock/selectors";
+import { plural, rub, rubMonth } from "../lib/format";
+import { EXPERIMENTS, FINDINGS, FRESHNESS, PERIOD, RESTAURANTS, TASKS } from "../mock/data";
+import { networkTotals, PROCESSES, processStatus } from "../mock/selectors";
 
-// Sequential blue ramp (reference palette, light): magnitude of losses per cell.
-const RAMP = [
-  { min: 30_000, bg: "#3987e5" },
-  { min: 20_000, bg: "#6da7ec" },
-  { min: 10_000, bg: "#9ec5f4" },
-  { min: 1, bg: "#cde2fb" },
-];
-const cellBg = (value: number) => RAMP.find((s) => value >= s.min)?.bg;
+interface LossPart {
+  label: string;
+  losses: number;
+}
+
+interface LossRow {
+  key: string;
+  title: string;
+  code?: string;
+  total: number;
+  parts: LossPart[]; // processes (or restaurants) with open problems, largest first
+  okNote: string;
+}
+
+/** One list = one question ("where are we losing money?"), answered row by row in rubles. */
+function LossList({ title, rows }: { title: string; rows: LossRow[] }) {
+  const max = Math.max(...rows.map((r) => r.total), 1);
+  return (
+    <Card className="p-4">
+      <div className="mb-1 text-sm font-medium text-slate-500">{title}</div>
+      <ul>
+        {rows.map((row) => (
+          <li key={row.key} className="border-t border-slate-100 py-3 first:border-t-0">
+            <div className="flex items-baseline justify-between gap-3">
+              {row.code ? (
+                <Link to="/restaurants/$code" params={{ code: row.code }} className="font-medium text-slate-900 hover:underline">
+                  {row.title}
+                </Link>
+              ) : (
+                <span className="font-medium text-slate-900">{row.title}</span>
+              )}
+              {row.total ? (
+                <span className="whitespace-nowrap font-semibold tabular-nums text-red-700">−{rubMonth(row.total)}</span>
+              ) : (
+                <span className="whitespace-nowrap text-sm text-slate-500">без оценки в ₽</span>
+              )}
+            </div>
+            <div className="mt-2 h-1.5 rounded-full bg-slate-100" aria-hidden>
+              <div className="h-full rounded-full bg-red-600" style={{ width: `${(row.total / max) * 100}%` }} />
+            </div>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {row.parts.map((part) =>
+                part.losses ? (
+                  <span key={part.label} className="rounded-md bg-red-50 px-2 py-0.5 text-xs text-red-900">
+                    {part.label} <span className="font-medium tabular-nums">{rub(part.losses)}</span>
+                  </span>
+                ) : (
+                  <span key={part.label} className="inline-flex items-center gap-1 rounded-md bg-amber-50 px-2 py-0.5 text-xs text-amber-900">
+                    <StatusIcon status="warning" size={12} /> {part.label}: пробел в данных
+                  </span>
+                ),
+              )}
+            </div>
+            <div className="mt-1 text-xs text-slate-500">{row.okNote}</div>
+          </li>
+        ))}
+      </ul>
+    </Card>
+  );
+}
+
+function lossesByRestaurant(): LossRow[] {
+  return RESTAURANTS.map((r) => {
+    const parts = PROCESSES.map((p) => ({ label: p.title, ...processStatus(r.code, p.key) }))
+      .filter((p) => p.status !== "good")
+      .sort((a, b) => b.losses - a.losses);
+    const ok = PROCESSES.length - parts.length;
+    return {
+      key: r.code,
+      code: r.code,
+      title: r.name,
+      total: parts.reduce((acc, p) => acc + p.losses, 0),
+      parts,
+      okNote: `В норме: ${plural(ok, ["процесс", "процесса", "процессов"])} из ${PROCESSES.length}`,
+    };
+  }).sort((a, b) => b.total - a.total);
+}
+
+function lossesByProcess(): LossRow[] {
+  return PROCESSES.map((p) => {
+    const parts = RESTAURANTS.map((r) => ({ label: r.name.replace("Ресторан ", ""), ...processStatus(r.code, p.key) }))
+      .filter((x) => x.status !== "good")
+      .sort((a, b) => b.losses - a.losses);
+    const ok = RESTAURANTS.length - parts.length;
+    return {
+      key: p.key,
+      title: p.title,
+      total: parts.reduce((acc, x) => acc + x.losses, 0),
+      parts,
+      okNote: ok ? `В норме: ${plural(ok, ["ресторан", "ресторана", "ресторанов"])}` : "Проблема во всех ресторанах",
+    };
+  })
+    .filter((row) => row.parts.length > 0)
+    .sort((a, b) => b.total - a.total);
+}
 
 export function NetworkPage() {
   const totals = networkTotals();
-  const avg = networkKpis();
   const top = FINDINGS.filter((f) => f.status !== "resolved" && f.effectRubMonth !== null)
     .sort((a, b) => (b.effectRubMonth ?? 0) - (a.effectRubMonth ?? 0))
     .slice(0, 4);
@@ -40,71 +126,11 @@ export function NetworkPage() {
       </div>
 
       <section className="mb-6">
-        <SectionTitle aside="потери ₽/мес по открытым проблемам">Рестораны × процессы</SectionTitle>
-        <Card className="overflow-x-auto">
-          <table className="w-full min-w-[860px] text-sm">
-            <thead className="text-left text-xs text-slate-500">
-              <tr>
-                <th className="px-3 py-2 font-normal">Ресторан</th>
-                {PROCESSES.map((p) => (
-                  <th key={p.key} className="px-2 py-2 text-center font-normal">
-                    {p.title}
-                  </th>
-                ))}
-                <th className="px-3 py-2 text-right font-normal">Итого</th>
-                <th className="px-3 py-2 text-right font-normal">Фудкост</th>
-              </tr>
-            </thead>
-            <tbody>
-              {RESTAURANTS.map((r) => (
-                <tr key={r.code} className="border-t border-slate-100">
-                  <td className="px-3 py-2">
-                    <Link to="/restaurants/$code" params={{ code: r.code }} className="font-medium text-slate-900 hover:underline">
-                      {r.name}
-                    </Link>
-                  </td>
-                  {PROCESSES.map((p) => {
-                    const { status, losses } = processStatus(r.code, p.key);
-                    return (
-                      <td key={p.key} className="px-1 py-1">
-                        <div
-                          className="flex h-9 items-center justify-center gap-1 rounded tabular-nums text-slate-900"
-                          style={{ background: cellBg(losses) }}
-                          title={`${r.name} · ${p.title}`}
-                        >
-                          {status === "good" ? <StatusIcon status="good" size={14} /> : losses ? (losses / 1000).toLocaleString("ru-RU", { maximumFractionDigits: 1 }) : <StatusIcon status={status} size={14} />}
-                        </div>
-                      </td>
-                    );
-                  })}
-                  <td className="whitespace-nowrap px-3 py-2 text-right font-medium tabular-nums">{rubMonth(restaurantFindings(r.code).losses)}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{pct(KPIS[r.code]!.foodCostActual)}</td>
-                </tr>
-              ))}
-              <tr className="border-t border-slate-200 text-slate-500">
-                <td className="px-3 py-2" colSpan={PROCESSES.length + 2}>
-                  Среднее по сети (взвешенное по выручке)
-                </td>
-                <td className="px-3 py-2 text-right tabular-nums">{pct(avg.foodCostActual)}</td>
-              </tr>
-            </tbody>
-          </table>
-          <div className="flex flex-wrap items-center gap-3 border-t border-slate-100 px-3 py-2 text-xs text-slate-500">
-            <span>Значения в тыс ₽/мес.</span>
-            {[...RAMP].reverse().map((s, i) => (
-              <span key={s.bg} className="inline-flex items-center gap-1">
-                <span className="inline-block h-3 w-5 rounded-sm" style={{ background: s.bg }} />
-                {["до 10", "10–20", "20–30", "от 30"][i]}
-              </span>
-            ))}
-            <span className="inline-flex items-center gap-1">
-              <StatusIcon status="good" size={12} /> норма
-            </span>
-            <span className="inline-flex items-center gap-1">
-              <StatusIcon status="warning" size={12} /> пробел без оценки в ₽
-            </span>
-          </div>
-        </Card>
+        <SectionTitle aside="открытые проблемы, ₽ в месяц">Где сеть теряет деньги</SectionTitle>
+        <div className="grid items-start gap-4 lg:grid-cols-2">
+          <LossList title="По ресторанам" rows={lossesByRestaurant()} />
+          <LossList title="По процессам" rows={lossesByProcess()} />
+        </div>
       </section>
 
       <div className="grid gap-6 lg:grid-cols-3">
