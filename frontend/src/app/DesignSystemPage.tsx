@@ -148,14 +148,14 @@ export function DesignSystemPage() {
           <Card className="space-y-6 p-6">
             <div className="flex flex-wrap gap-2">
               <Button variant="primary">Взять в работу</Button>
-              <Button>Не согласен</Button>
+              <Button>Есть уточнение</Button>
               <Button variant="ghost">Подробнее</Button>
               <Button variant="danger">Отклонить</Button>
             </div>
             <div className="flex flex-wrap gap-2">
               <Pill tone="loss">Проблема</Pill>
               <Pill tone="gain">Сработало</Pill>
-              <Pill tone="warn">Оспорено</Pill>
+              <Pill tone="warn">На уточнении</Pill>
               <Pill tone="info">Делаем</Pill>
               <Pill>Нашли</Pill>
             </div>
@@ -202,7 +202,7 @@ export function DesignSystemPage() {
               <div className="mb-2 text-sm font-medium">Тренд</div>
               <AreaTrend
                 labels={["1", "2", "3", "4", "5", "6"]}
-                series={[{ name: "Можно вернуть", values: [331, 318, 309, 301, 290, 274], color: "#0a8f84", fill: true }]}
+                series={[{ name: "Можно добавить к прибыли", values: [331, 318, 309, 301, 290, 274], color: "#0a8f84", fill: true }]}
                 format={(n) => `${n} тыс`}
               />
             </Card>

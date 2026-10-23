@@ -19,9 +19,9 @@ export function ReportPage() {
     0,
   );
   const figures = [
-    { label: "Нашли", value: found, note: "можно вернуть по открытым находкам", tone: "text-ink" },
+    { label: "Нашли", value: found, note: "можно добавить к прибыли по открытым находкам", tone: "text-ink" },
     { label: "Взяли в работу", value: inWork, note: "задачи и проверки идут", tone: "text-brand-strong" },
-    { label: "Вернули", value: totals.confirmed, note: "подтверждено проверками", tone: "text-gain" },
+    { label: "Уже добавили к прибыли", value: totals.confirmed, note: "подтверждено проверками", tone: "text-gain" },
   ];
 
   return (
@@ -46,10 +46,10 @@ export function ReportPage() {
       <Reveal index={1}>
         <QuestionBlock
           question="Какая динамика?"
-          answer={`За 8 недель потенциал потерь снизился с ${rub(trend.onTable[0]!)} до ${rub(found)} в месяц: часть проблем исправлена.`}
+          answer={`За 8 недель потери и упущенная выгода сократились с ${rub(trend.onTable[0]!)} до ${rub(found)} в месяц: часть проблем исправлена.`}
           source={<VerifiedNote>оценка на конец каждой недели</VerifiedNote>}
         >
-          <AreaTrend labels={trend.labels} series={[{ name: "Можно вернуть", values: trend.onTable, color: "#0a8f84", fill: true }]} format={rub} height={140} />
+          <AreaTrend labels={trend.labels} series={[{ name: "Можно добавить к прибыли", values: trend.onTable, color: "#0a8f84", fill: true }]} format={rub} height={140} />
         </QuestionBlock>
       </Reveal>
       <Reveal index={2}>

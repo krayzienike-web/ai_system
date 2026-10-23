@@ -36,7 +36,7 @@ const STAGE_TONE: Tone[] = ["neutral", "info", "brand", "gain"];
 
 export function StagePill({ f }: { f: Finding }) {
   const status = useStatus(f);
-  if (status === "disputed") return <Pill tone="warn">Оспорено</Pill>;
+  if (status === "disputed") return <Pill tone="warn">На уточнении</Pill>;
   const stage = cycleStage(status);
   return (
     <Pill tone={STAGE_TONE[stage]} icon={stage === 3}>
@@ -188,7 +188,7 @@ export function TakeToWorkDialog({ f, open, onClose }: { f: Finding; open: boole
           <div className="mb-1 font-medium text-ink">Так будет выглядеть задача</div>
           {chosen.length ? chosen.join("; ") : "Выберите хотя бы один шаг"}. Срок — {DUE[due]!.date}.
           {f.effectRubMonth !== null && (
-            <> Если сработает, вернет до {perMonth(f.effectRubMonth)} — проверим после инвентаризации {PERIOD.nextInventory.slice(0, 5)}.</>
+            <> Если сработает, добавит к прибыли до {perMonth(f.effectRubMonth)} — проверим после инвентаризации {PERIOD.nextInventory.slice(0, 5)}.</>
           )}
         </div>
         <div className="flex justify-end gap-2">
@@ -220,14 +220,14 @@ export function TakeToWorkDialog({ f, open, onClose }: { f: Finding; open: boole
   );
 }
 
-const REASONS = ["Цифры не сходятся с моими", "Причина другая", "Уже исправили", "Другое"];
+const REASONS = ["Цифры не сходятся с моими", "Причина в другом", "Уже исправили", "Другое"];
 
 export function DisputeDialog({ f, open, onClose }: { f: Finding; open: boolean; onClose: () => void }) {
   const { dispute } = usePrototype();
   const [reason, setReason] = useState(REASONS[0]!);
   const [comment, setComment] = useState("");
   return (
-    <Dialog open={open} onClose={onClose} title="Не согласен с выводом">
+    <Dialog open={open} onClose={onClose} title="Уточнение по находке">
       <div className="space-y-4 text-sm">
         <div className="space-y-2">
           {REASONS.map((r) => (
@@ -241,11 +241,11 @@ export function DisputeDialog({ f, open, onClose }: { f: Finding; open: boolean;
           value={comment}
           onChange={(e) => setComment(e.target.value)}
           rows={3}
-          placeholder="Что на самом деле происходит? Это поможет системе и управляющей компании"
+          placeholder="Что происходит на самом деле? Это поможет поправить расчет"
           aria-label="Комментарий"
           className="w-full rounded-[10px] border border-line-strong p-3 outline-none focus:border-brand"
         />
-        <p className="text-ink-3">Ваш ответ увидит управляющая компания. Пока она не ответит, находка не попадет в ваши дела.</p>
+        <p className="text-ink-3">Уточнение увидит управляющая компания. Пока данные перепроверяют, находка не попадет в ваши дела.</p>
         <div className="flex justify-end gap-2">
           <Button variant="ghost" onClick={onClose}>
             Отмена

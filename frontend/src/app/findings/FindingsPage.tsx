@@ -1,106 +1,248 @@
+import { Link } from "@tanstack/react-router";
+import { ChevronRight, RotateCcw } from "lucide-react";
+import { AnimatePresence, motion } from "motion/react";
 import { useState } from "react";
 
-import { Card, cx, EmptyState, PageTitle, Reveal } from "../../ds/primitives";
+import { cx, EASE, EmptyState, PageTitle, Reveal } from "../../ds/primitives";
 import { PROCESS_ICON } from "../../ds/viz";
-import { perMonth, plural } from "../../lib/format";
+import { plural, rub } from "../../lib/format";
 import { useViewer } from "../../lib/useViewer";
 import { FINDINGS, RESTAURANTS } from "../../mock/data";
-import { PROCESSES } from "../../mock/selectors";
-import type { ProcessKey } from "../../mock/types";
-import { FindingRow } from "./parts";
+import { cycleStage, PROCESSES, processTitle, restaurantByCode } from "../../mock/selectors";
+import type { Finding, FindingKind, ProcessKey } from "../../mock/types";
+import { usePrototype } from "../../state/prototype";
+import { StagePill } from "./parts";
 
-function Chip({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+type Stage = "all" | "new" | "doing" | "done";
+
+const STAGES: { key: Stage; label: string }[] = [
+  { key: "all", label: "Все этапы" },
+  { key: "new", label: "Новые" },
+  { key: "doing", label: "В работе" },
+  { key: "done", label: "Есть результат" },
+];
+
+const KIND = {
+  problem: { title: "Где теряем", hint: "перерасход, переплаты, списания", text: "text-loss", bar: "bg-loss-icon", soft: "bg-loss-soft text-loss", ring: "ring-loss-icon" },
+  opportunity: { title: "Где можно заработать", hint: "цены меню, поставщики, запасы", text: "text-gain", bar: "bg-gain-icon", soft: "bg-gain-soft text-gain", ring: "ring-gain-icon" },
+} as const;
+
+const select =
+  "h-10 rounded-[10px] border border-line-strong bg-surface px-3 text-sm text-ink outline-none transition hover:border-ink-3 focus:border-brand";
+
+/** One finding as a row: money first (with a bar to compare), then what and where. */
+function Row({ f, max, showRestaurant, index }: { f: Finding; max: number; showRestaurant: boolean; index: number }) {
+  const Icon = PROCESS_ICON[f.process];
+  const k = KIND[f.kind];
+  const restaurant = f.restaurantId ? restaurantByCode(f.restaurantId) : null;
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={active}
-      className={cx(
-        "inline-flex h-9 items-center gap-1.5 rounded-full border px-3.5 text-sm transition-colors",
-        active ? "border-ink bg-ink text-white" : "border-line-strong bg-surface text-ink-2 hover:border-ink-3",
-      )}
+    <motion.li
+      layout
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.25, ease: EASE, delay: Math.min(index, 10) * 0.025 }}
     >
-      {children}
-    </button>
+      <Link
+        to="/findings/$findingId"
+        params={{ findingId: f.id }}
+        className="group grid grid-cols-[96px_1fr_auto] items-center gap-4 rounded-[14px] px-4 py-3.5 transition-colors hover:bg-paper sm:grid-cols-[132px_1fr_auto]"
+      >
+        <span className="min-w-0">
+          {f.effectRubMonth !== null ? (
+            <>
+              <span className={cx("num block font-display text-[19px] leading-none font-semibold", k.text)}>{rub(f.effectRubMonth)}</span>
+              <span className="mt-1 block text-[11px] text-ink-3">в месяц</span>
+              <span className="mt-1.5 block h-1 overflow-hidden rounded-full bg-ink/5">
+                <motion.span
+                  className={cx("block h-full rounded-full", k.bar)}
+                  initial={{ width: 0 }}
+                  animate={{ width: `${(f.effectRubMonth / max) * 100}%` }}
+                  transition={{ duration: 0.5, ease: EASE, delay: 0.1 + Math.min(index, 10) * 0.025 }}
+                />
+              </span>
+            </>
+          ) : (
+            <span className="block text-xs leading-tight text-ink-3">{f.effectNote ?? "без оценки"}</span>
+          )}
+        </span>
+        <span className="min-w-0">
+          <span className="block truncate font-medium text-ink group-hover:underline">{f.title}</span>
+          <span className="mt-0.5 block truncate text-sm text-ink-3">{f.headline ?? f.summary}</span>
+          <span className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-2">
+            {showRestaurant && <span className="font-medium">{restaurant ? restaurant.name.replace("Ресторан ", "") : "Вся сеть"}</span>}
+            <span className="inline-flex items-center gap-1">
+              <Icon size={13} strokeWidth={1.75} aria-hidden /> {processTitle(f.process)}
+            </span>
+          </span>
+        </span>
+        <span className="flex items-center gap-2">
+          <span className="hidden sm:inline">
+            <StagePill f={f} />
+          </span>
+          <ChevronRight size={18} className="text-ink-3 transition group-hover:translate-x-0.5 group-hover:text-ink" />
+        </span>
+      </Link>
+    </motion.li>
+  );
+}
+
+function Group({ title, items, max, showRestaurant }: { title: string; items: Finding[]; max: number; showRestaurant: boolean }) {
+  if (!items.length) return null;
+  const sum = items.reduce((acc, f) => acc + (f.effectRubMonth ?? 0), 0);
+  return (
+    <section className="rounded-[18px] border border-line bg-surface p-2">
+      <div className="flex items-baseline justify-between px-4 pt-3 pb-2">
+        <h2 className="font-display text-base font-semibold">{title}</h2>
+        <span className="text-sm text-ink-3">
+          {plural(items.length, ["находка", "находки", "находок"])}
+          {sum > 0 && <> · {rub(sum)} в месяц</>}
+        </span>
+      </div>
+      <ul className="divide-y divide-line">
+        <AnimatePresence initial={false}>
+          {items.map((f, i) => (
+            <Row key={f.id} f={f} max={max} showRestaurant={showRestaurant} index={i} />
+          ))}
+        </AnimatePresence>
+      </ul>
+    </section>
   );
 }
 
 export function FindingsPage() {
   const viewer = useViewer();
-  const [kind, setKind] = useState<"all" | "problem" | "opportunity">("all");
+  const { findingStatus } = usePrototype();
+  const [kind, setKind] = useState<FindingKind | "all">("all");
   const [process, setProcess] = useState<ProcessKey | "all">("all");
   const [restaurant, setRestaurant] = useState<string>("all");
+  const [stage, setStage] = useState<Stage>("all");
   if (!viewer) return null;
 
+  const stageOf = (f: Finding): Stage => {
+    const s = cycleStage(findingStatus[f.id] ?? f.status);
+    return s === 0 ? "new" : s === 3 ? "done" : "doing";
+  };
   const scope = FINDINGS.filter((f) => viewer.isHq || f.restaurantId === viewer.restaurantCode);
-  const items = scope
-    .filter(
-      (f) =>
-        (kind === "all" || f.kind === kind) &&
-        (process === "all" || f.process === process) &&
-        (restaurant === "all" || (f.restaurantId ?? "net") === restaurant),
-    )
-    .sort((a, b) => (b.effectRubMonth ?? -1) - (a.effectRubMonth ?? -1));
-  const sum = items.reduce((acc, f) => acc + (f.effectRubMonth ?? 0), 0);
-  const count = (k: typeof kind) => scope.filter((f) => k === "all" || f.kind === k).length;
+  const filtered = scope.filter(
+    (f) =>
+      (process === "all" || f.process === process) &&
+      (restaurant === "all" || (f.restaurantId ?? "net") === restaurant) &&
+      (stage === "all" || stageOf(f) === stage),
+  );
+  const byMoney = (a: Finding, b: Finding) => (b.effectRubMonth ?? -1) - (a.effectRubMonth ?? -1);
+  const ofKind = (k: FindingKind) => filtered.filter((f) => f.kind === k && f.effectRubMonth !== null).sort(byMoney);
+  const unestimated = filtered.filter((f) => f.effectRubMonth === null && (kind === "all" || f.kind === kind));
+  const max = Math.max(...filtered.map((f) => f.effectRubMonth ?? 0), 1);
+  const total = (k: FindingKind) => filtered.filter((f) => f.kind === k).reduce((acc, f) => acc + (f.effectRubMonth ?? 0), 0);
+  const count = (k: FindingKind) => filtered.filter((f) => f.kind === k).length;
+  const filtersOn = process !== "all" || restaurant !== "all" || stage !== "all";
+  const shownKinds = (kind === "all" ? ["problem", "opportunity"] : [kind]) as FindingKind[];
+  const empty = shownKinds.every((k) => !ofKind(k).length) && !unestimated.length;
 
   return (
     <div className="mx-auto max-w-[1040px]">
       <PageTitle
         title={viewer.isHq ? "Находки сети" : "Все находки ресторана"}
-        subtitle={`${plural(items.length, ["находка", "находки", "находок"])} · в сумме ${perMonth(sum)}. Сначала самые дорогие.`}
+        subtitle="Что су-шеф нашел в данных: где теряем деньги и где можно заработать. Самые дорогие — сверху."
       />
+
+      {/* Kind switch: two summary cards that also filter */}
       <Reveal>
-        <div className="mb-3 flex flex-wrap gap-2">
-          <Chip active={kind === "all"} onClick={() => setKind("all")}>
-            Все <span className="num opacity-60">{count("all")}</span>
-          </Chip>
-          <Chip active={kind === "problem"} onClick={() => setKind("problem")}>
-            Где теряем <span className="num opacity-60">{count("problem")}</span>
-          </Chip>
-          <Chip active={kind === "opportunity"} onClick={() => setKind("opportunity")}>
-            Где можно заработать <span className="num opacity-60">{count("opportunity")}</span>
-          </Chip>
+        <div className="grid gap-3 sm:grid-cols-2">
+          {(["problem", "opportunity"] as const).map((k) => {
+            const active = kind === k;
+            return (
+              <button
+                key={k}
+                type="button"
+                onClick={() => setKind(active ? "all" : k)}
+                aria-pressed={active}
+                className={cx(
+                  "rounded-[18px] border bg-surface p-5 text-left transition",
+                  active ? cx("ring-2", KIND[k].ring, "border-transparent") : "border-line hover:border-ink-3",
+                  kind !== "all" && !active && "opacity-55",
+                )}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="font-medium text-ink">{KIND[k].title}</span>
+                  <span className={cx("num rounded-full px-2 py-0.5 text-xs font-semibold", KIND[k].soft)}>{count(k)}</span>
+                </div>
+                <div className={cx("num mt-2 font-display text-[28px] leading-none font-semibold", KIND[k].text)}>{rub(total(k))}</div>
+                <div className="mt-1 text-xs text-ink-3">в месяц · {KIND[k].hint}</div>
+              </button>
+            );
+          })}
+        </div>
+      </Reveal>
+
+      {/* Secondary filters in one compact row */}
+      <Reveal index={1}>
+        <div className="mt-4 mb-5 flex flex-wrap items-center gap-2">
           {viewer.isHq && (
-            <select
-              value={restaurant}
-              onChange={(e) => setRestaurant(e.target.value)}
-              aria-label="Ресторан"
-              className="h-9 rounded-full border border-line-strong bg-surface px-3.5 text-sm text-ink-2"
-            >
+            <select value={restaurant} onChange={(e) => setRestaurant(e.target.value)} aria-label="Ресторан" className={select}>
               <option value="all">Все рестораны</option>
               {RESTAURANTS.map((r) => (
                 <option key={r.code} value={r.code}>
                   {r.name}
                 </option>
               ))}
-              <option value="net">Вся сеть (общие)</option>
+              <option value="net">Общие для сети</option>
             </select>
           )}
-        </div>
-        <div className="mb-5 flex flex-wrap gap-1.5">
-          <Chip active={process === "all"} onClick={() => setProcess("all")}>
-            Все процессы
-          </Chip>
-          {PROCESSES.filter((p) => scope.some((f) => f.process === p.key)).map((p) => {
-            const Icon = PROCESS_ICON[p.key];
-            return (
-              <Chip key={p.key} active={process === p.key} onClick={() => setProcess(p.key)}>
-                <Icon size={14} strokeWidth={1.75} /> {p.title}
-              </Chip>
-            );
-          })}
+          <select value={process} onChange={(e) => setProcess(e.target.value as ProcessKey | "all")} aria-label="Процесс" className={select}>
+            <option value="all">Все процессы</option>
+            {PROCESSES.filter((p) => scope.some((f) => f.process === p.key)).map((p) => (
+              <option key={p.key} value={p.key}>
+                {p.title}
+              </option>
+            ))}
+          </select>
+          <div className="flex rounded-[10px] border border-line-strong bg-surface p-0.5" role="group" aria-label="Этап">
+            {STAGES.map((s) => (
+              <button
+                key={s.key}
+                type="button"
+                onClick={() => setStage(s.key)}
+                aria-pressed={stage === s.key}
+                className={cx(
+                  "relative h-9 rounded-[8px] px-3 text-sm transition-colors",
+                  stage === s.key ? "text-white" : "text-ink-2 hover:text-ink",
+                )}
+              >
+                {stage === s.key && (
+                  <motion.span layoutId="stage-pill" className="absolute inset-0 rounded-[8px] bg-ink" transition={{ type: "spring", stiffness: 500, damping: 36 }} />
+                )}
+                <span className="relative">{s.label}</span>
+              </button>
+            ))}
+          </div>
+          {filtersOn && (
+            <button
+              type="button"
+              onClick={() => {
+                setProcess("all");
+                setRestaurant("all");
+                setStage("all");
+              }}
+              className="inline-flex h-10 items-center gap-1.5 px-2 text-sm text-ink-3 hover:text-ink"
+            >
+              <RotateCcw size={14} /> Сбросить
+            </button>
+          )}
         </div>
       </Reveal>
-      <Reveal index={1}>
-        {items.length ? (
-          <Card className="p-2">
-            {items.map((f) => (
-              <FindingRow key={f.id} f={f} showRestaurant={viewer.isHq} />
-            ))}
-          </Card>
+
+      <Reveal index={2}>
+        {empty ? (
+          <EmptyState title="Под эти условия находок нет">Измените фильтры или нажмите «Сбросить».</EmptyState>
         ) : (
-          <EmptyState title="Таких находок нет">Попробуйте другой процесс или вид.</EmptyState>
+          <div className="space-y-4">
+            {shownKinds.map((k) => (
+              <Group key={k} title={KIND[k].title} items={ofKind(k)} max={max} showRestaurant={viewer.isHq} />
+            ))}
+            <Group title="Без оценки в рублях — но важно для точности" items={unestimated} max={max} showRestaurant={viewer.isHq} />
+          </div>
         )}
       </Reveal>
     </div>

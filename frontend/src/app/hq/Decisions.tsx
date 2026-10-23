@@ -1,11 +1,13 @@
 import { Link } from "@tanstack/react-router";
-import { BellRing, FlaskConical, MessageSquareWarning, Timer } from "lucide-react";
+import { BellRing, ChevronDown, FlaskConical, MessageSquareWarning, Timer } from "lucide-react";
+import { useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 
-import { Button, Card, EmptyState, PageTitle, Reveal } from "../../ds/primitives";
-import { perMonth } from "../../lib/format";
+import { Button, Card, cx, EmptyState, PageTitle, Reveal } from "../../ds/primitives";
+import { perMonth, rub } from "../../lib/format";
 import { RESTAURANTS } from "../../mock/data";
 import { findingById, restaurantByCode } from "../../mock/selectors";
+import type { Experiment } from "../../mock/types";
 import { usePrototype } from "../../state/prototype";
 import { useInbox } from "../counts";
 
@@ -29,6 +31,54 @@ function Section({ icon, title, count, children }: { icon: React.ReactNode; titl
 
 const exit = { opacity: 0, x: 60, transition: { duration: 0.3 } };
 
+/** A proposed check as one scannable row; details (hypothesis, tasks) unfold on demand. */
+function ProposedRow({ e, onDecide }: { e: Experiment; onDecide: (id: string, d: "approved" | "rejected") => void }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <motion.li layout exit={{ opacity: 0, height: 0, transition: { duration: 0.25 } }} className="overflow-hidden">
+      <div className="grid grid-cols-[1fr_auto] items-center gap-x-4 gap-y-2 px-4 py-4 sm:grid-cols-[1fr_auto_auto]">
+        <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} className="min-w-0 text-left">
+          <span className="flex items-center gap-2 font-medium text-ink">
+            <ChevronDown size={16} className={cx("shrink-0 text-ink-3 transition", open && "rotate-180")} />
+            <span className="truncate">{e.title}</span>
+          </span>
+          <span className="mt-1 block truncate pl-6 text-sm text-ink-3">
+            Пробуем: <span className="text-ink-2">{names(e.test)}</span> · сравниваем с: {e.control.length ? names(e.control) : "внутри ресторана"} · {e.period}
+          </span>
+        </button>
+        <span className="text-right">
+          <span className="num block font-display text-lg font-semibold text-gain">+{rub(e.expectedRubMonth)}</span>
+          <span className="block text-[11px] text-ink-3">в месяц, если сработает</span>
+        </span>
+        <span className="col-span-2 flex gap-2 pl-6 sm:col-span-1 sm:pl-0">
+          <Button size="sm" variant="primary" onClick={() => onDecide(e.id, "approved")}>
+            Утвердить
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => onDecide(e.id, "rejected")}>
+            Отклонить
+          </Button>
+        </span>
+      </div>
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div initial={{ height: 0 }} animate={{ height: "auto" }} exit={{ height: 0 }} className="overflow-hidden">
+            <div className="space-y-3 px-10 pb-5 text-sm">
+              <p className="text-ink-2">{e.hypothesis}</p>
+              <div className="rounded-[12px] bg-paper p-3 text-ink-2">
+                <span className="font-medium text-ink">После утверждения: </span>
+                задача директору {e.test.map((c) => `«${restaurantByCode(c)?.name}»`).join(" и ")} со сроком и чек-листом; замер — «{e.metric}».
+              </div>
+              <Link to="/checks/$checkId" params={{ checkId: e.id }} className="inline-block text-brand-strong hover:underline">
+                Вся проверка →
+              </Link>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.li>
+  );
+}
+
 export function DecisionsPage() {
   const { experiments, disputed, overdue, drafts } = useInbox();
   const { decideExperiment, resolveDispute, notify } = usePrototype();
@@ -43,43 +93,17 @@ export function DecisionsPage() {
       {!total && <EmptyState title="Все решения приняты">Новые вопросы появятся здесь — и на главной сети.</EmptyState>}
 
       <Section icon={<FlaskConical size={20} />} title="Проверки на утверждение" count={experiments.length}>
-        {experiments.map((e) => (
-          <motion.div key={e.id} layout exit={exit}>
-            <Card className="p-5">
-              <div className="font-semibold">{e.title}</div>
-              <p className="mt-1 text-sm text-ink-2">{e.hypothesis}</p>
-              <div className="mt-4 grid gap-3 text-sm sm:grid-cols-3">
-                <div className="rounded-[12px] bg-brand-soft p-3">
-                  <div className="text-xs text-brand-strong">Где пробуем</div>
-                  <div className="font-medium">{names(e.test)}</div>
-                </div>
-                <div className="rounded-[12px] bg-paper p-3">
-                  <div className="text-xs text-ink-3">С чем сравниваем</div>
-                  <div className="font-medium">{e.control.length ? names(e.control) : "внутри ресторана"}</div>
-                </div>
-                <div className="rounded-[12px] bg-paper p-3">
-                  <div className="text-xs text-ink-3">Если сработает</div>
-                  <div className="font-medium text-gain">+{perMonth(e.expectedRubMonth)}</div>
-                </div>
-              </div>
-              <div className="mt-4 rounded-[12px] border border-dashed border-line-strong p-3 text-sm text-ink-2">
-                <span className="font-medium text-ink">Задачи после утверждения: </span>
-                {e.test.map((c) => `директору «${restaurantByCode(c)?.name}» — ${e.title.toLowerCase()}`).join("; ")}. Срок — {e.period}.
-              </div>
-              <div className="mt-4 flex flex-wrap gap-2">
-                <Button variant="primary" onClick={() => decideExperiment(e.id, "approved")}>
-                  Утвердить и поставить задачи
-                </Button>
-                <Link to="/checks/$checkId" params={{ checkId: e.id }} className="inline-flex h-10 items-center px-3 text-sm font-medium text-ink-2 hover:text-ink">
-                  Подробнее
-                </Link>
-                <Button variant="ghost" className="ml-auto" onClick={() => decideExperiment(e.id, "rejected")}>
-                  Отклонить
-                </Button>
-              </div>
-            </Card>
-          </motion.div>
-        ))}
+        <motion.div key="proposed" layout exit={exit}>
+          <Card className="p-2">
+            <ul className="divide-y divide-line">
+              <AnimatePresence initial={false}>
+                {experiments.map((e) => (
+                  <ProposedRow key={e.id} e={e} onDecide={decideExperiment} />
+                ))}
+              </AnimatePresence>
+            </ul>
+          </Card>
+        </motion.div>
       </Section>
 
       <Section icon={<FlaskConical size={20} />} title="Черновики проверок от команды" count={drafts.length}>
@@ -96,7 +120,7 @@ export function DecisionsPage() {
         })}
       </Section>
 
-      <Section icon={<MessageSquareWarning size={20} />} title="Директора не согласны" count={disputed.length}>
+      <Section icon={<MessageSquareWarning size={20} />} title="Уточнения от директоров" count={disputed.length}>
         {disputed.map(({ finding, dispute }) => (
           <motion.div key={finding.id} layout exit={exit}>
             <Card className="p-5">
@@ -114,9 +138,9 @@ export function DecisionsPage() {
               </blockquote>
               <div className="mt-4 flex flex-wrap gap-2">
                 <Button variant="primary" onClick={() => resolveDispute(finding.id)}>
-                  Директор прав — закрыть находку
+                  Принять уточнение и закрыть находку
                 </Button>
-                <Button onClick={() => resolveDispute(finding.id)}>Проверим данные — оставить</Button>
+                <Button onClick={() => resolveDispute(finding.id)}>Перепроверить данные</Button>
               </div>
             </Card>
           </motion.div>

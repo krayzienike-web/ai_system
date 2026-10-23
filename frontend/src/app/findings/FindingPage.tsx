@@ -73,7 +73,7 @@ function FindingView({ id, isHq }: { id: string; isHq: boolean }) {
                   Взять в работу
                 </Button>
                 <Button size="lg" onClick={() => setDisputing(true)}>
-                  Не согласен
+                  Есть уточнение
                 </Button>
               </>
             )}
@@ -97,7 +97,7 @@ function FindingView({ id, isHq }: { id: string; isHq: boolean }) {
           {dispute && (
             <div className="mt-4 rounded-[12px] bg-warn-soft p-4 text-sm text-ink">
               <div className="font-medium">
-                {dispute.by} не согласен(а): «{dispute.reason}» · {dispute.date}
+                Уточнение — {dispute.by}: «{dispute.reason}» · {dispute.date}
               </div>
               {dispute.comment && <div className="mt-1 text-ink-2">{dispute.comment}</div>}
             </div>

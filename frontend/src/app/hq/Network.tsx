@@ -2,7 +2,7 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { ArrowDownRight, Inbox } from "lucide-react";
 
 import { VerifiedNote } from "../../ds/ai";
-import { buttonClass, cx, QuestionBlock, Reveal } from "../../ds/primitives";
+import { buttonClass, cx, QuestionBlock, Reveal, Term } from "../../ds/primitives";
 import { AnimatedNumber, AreaTrend, PROCESS_ICON, RankList } from "../../ds/viz";
 import { perMonth, plural, rub, thousands } from "../../lib/format";
 import { FINDINGS, LOSSES_LAST_WEEK, PERIOD, RESTAURANTS } from "../../mock/data";
@@ -50,7 +50,9 @@ export function NetworkPage() {
             <div className="text-sm text-white/70">
               {plural(RESTAURANTS.length, ["ресторан", "ресторана", "ресторанов"])} · неделя {PERIOD.week}
             </div>
-            <div className="mt-4 text-sm font-medium text-spark">Можно вернуть по сети</div>
+            <div className="mt-4 text-sm font-medium text-spark">
+              <Term hint="Сколько прибыли в месяц можно добавить: перестать терять деньги на перерасходе, переплатах и списаниях — и дополнительно заработать на ценах меню и лучших поставщиках">Можно добавить к прибыли сети</Term>
+            </div>
             <div className="mt-1 flex items-baseline gap-3">
               <span className="font-display text-[56px] leading-none font-semibold tracking-tight sm:text-[72px]">
                 <AnimatedNumber value={onTable} format={thousands} />
@@ -60,18 +62,18 @@ export function NetworkPage() {
             <div className="mt-2 text-sm text-white/60">≈ {rub(onTable * 12)} в год</div>
             <div className="mt-5 flex flex-wrap gap-x-6 gap-y-2 text-sm">
               <span>
-                <span className="text-white/60">теряем </span>
+                <span className="text-white/60">= перестать терять </span>
                 <span className="num font-semibold">{rub(totals.losses)}</span>
               </span>
               <span>
-                <span className="text-white/60">можно заработать </span>
+                <span className="text-white/60">+ дополнительно заработать </span>
                 <span className="num font-semibold">{rub(totals.potential)}</span>
               </span>
             </div>
           </div>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
             <div className="rounded-[18px] bg-white/[0.07] p-5">
-              <div className="text-sm text-white/70">Уже вернули</div>
+              <div className="text-sm text-white/70">Уже добавили к прибыли</div>
               <div className="mt-1 font-display text-3xl font-semibold text-[#9be3a9]">
                 <AnimatedNumber value={totals.confirmed} format={thousands} /> <span className="text-base text-white/80">тыс ₽/мес</span>
               </div>
@@ -91,10 +93,10 @@ export function NetworkPage() {
       <div className="grid gap-6 lg:grid-cols-2">
         <Reveal index={1}>
           <QuestionBlock
-            question="Становится ли сеть лучше?"
+            question="Сокращаются ли потери сети?"
             answer={
               <>
-                Да. За 8 недель сумма, которую можно вернуть, снизилась с {rub(first)} до {rub(onTable)} в месяц.
+                Да. Сумма, которую сеть теряет и недозарабатывает, за 8 недель снизилась с {rub(first)} до {rub(onTable)} в месяц — часть проблем уже исправили.
               </>
             }
             source={<VerifiedNote>оценка на конец каждой недели</VerifiedNote>}
@@ -102,12 +104,15 @@ export function NetworkPage() {
           >
             <AreaTrend
               labels={trend.labels}
-              series={[{ name: "Можно вернуть", values: trend.onTable, color: "#0a8f84", fill: true }]}
+              series={[{ name: "Можно добавить к прибыли", values: trend.onTable, color: "#0a8f84", fill: true }]}
               format={(n) => rub(n)}
               height={150}
             />
-            <div className="mt-2 inline-flex items-center gap-1.5 text-sm text-gain">
-              <ArrowDownRight size={15} /> −{Math.round((1 - onTable / first) * 100)}% за 8 недель
+            <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-sm">
+              <span className="inline-flex items-center gap-1.5 font-medium text-gain">
+                <ArrowDownRight size={15} /> на {Math.round((1 - onTable / first) * 100)}% меньше, чем 8 недель назад
+              </span>
+              <span className="text-xs text-ink-3">Линия — потери + упущенная выгода, ₽ в месяц. Чем ниже, тем лучше</span>
             </div>
           </QuestionBlock>
         </Reveal>

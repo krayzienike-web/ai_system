@@ -4,16 +4,17 @@ import { AnimatePresence } from "motion/react";
 import { useState } from "react";
 
 import { AiBadge, VerifiedNote } from "../../ds/ai";
-import { Button, Card, cx, EmptyState, QuestionBlock, Reveal } from "../../ds/primitives";
+import { Button, Card, cx, EmptyState, QuestionBlock, Reveal, Term } from "../../ds/primitives";
 import { AnimatedNumber, BulletScale, ProcessMap } from "../../ds/viz";
 import { pct, perMonth, points, rub, thousands } from "../../lib/format";
-import { DIGEST_TEXT, IMPROVEMENTS, KPIS, ON_TABLE_LAST_WEEK, PERIOD, STOCK_RISKS } from "../../mock/data";
+import { DIGEST_SOURCES, DIGEST_TEXT, IMPROVEMENTS, KPIS, ON_TABLE_LAST_WEEK, PERIOD, STOCK_RISKS } from "../../mock/data";
 import {
   networkKpis,
   PROCESSES,
   processStatus,
   processTitle,
   restaurantByCode,
+  findingById,
   restaurantFindings,
   weeklyActions,
 } from "../../mock/selectors";
@@ -59,7 +60,9 @@ export function WeekView({ code, readOnly = false }: { code: string; readOnly?: 
             <div className="text-sm text-white/70">
               {restaurant.name} · неделя {PERIOD.week}
             </div>
-            <div className="mt-4 text-sm font-medium text-spark">Можно вернуть</div>
+            <div className="mt-4 text-sm font-medium text-spark">
+              <Term hint="Сколько прибыли в месяц можно добавить: перестать терять деньги на перерасходе, переплатах и списаниях — и дополнительно заработать на ценах меню и лучших поставщиках">Можно добавить к прибыли</Term>
+            </div>
             <div className="mt-1 flex items-baseline gap-3">
               <span className="font-display text-[56px] leading-none font-semibold tracking-tight sm:text-[72px]">
                 <AnimatedNumber value={onTable} format={thousands} />
@@ -68,11 +71,11 @@ export function WeekView({ code, readOnly = false }: { code: string; readOnly?: 
             </div>
             <div className="mt-4 flex flex-wrap gap-x-6 gap-y-2 text-sm">
               <span>
-                <span className="text-white/60">теряем </span>
+                <span className="text-white/60">= перестать терять </span>
                 <span className="num font-semibold">{rub(losses)}</span>
               </span>
               <span>
-                <span className="text-white/60">можно заработать </span>
+                <span className="text-white/60">+ дополнительно заработать </span>
                 <span className="num font-semibold">{rub(potential)}</span>
               </span>
             </div>
@@ -93,6 +96,24 @@ export function WeekView({ code, readOnly = false }: { code: string; readOnly?: 
               Главное за неделю <AiBadge basis="Сводка по продажам r_keeper, складу iiko и закупкам 1С за неделю 12–18.10 и последней инвентаризации 01.10." />
             </div>
             <p className="mt-3 flex-1 text-[15px] leading-relaxed text-white/90">{DIGEST_TEXT[code]}</p>
+            <div className="mt-3">
+              <div className="text-xs text-white/50">На чем основан текст:</div>
+              <div className="mt-1.5 flex flex-wrap gap-1.5">
+                {(DIGEST_SOURCES[code] ?? []).map((id) => {
+                  const src = findingById(id);
+                  return src ? (
+                    <Link
+                      key={id}
+                      to="/findings/$findingId"
+                      params={{ findingId: id }}
+                      className="rounded-full bg-white/10 px-2.5 py-1 text-xs text-white/90 hover:bg-white/20"
+                    >
+                      {src.title} →
+                    </Link>
+                  ) : null;
+                })}
+              </div>
+            </div>
             <button
               type="button"
               onClick={() => openChat({ title: `Неделя: ${restaurant.name}` })}
@@ -109,7 +130,7 @@ export function WeekView({ code, readOnly = false }: { code: string; readOnly?: 
         <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
           <div>
             <h2 className="font-display text-xl font-semibold">С чего начать на этой неделе</h2>
-            <p className="text-sm text-ink-3">Три дела, которые вернут больше всего денег при самой надежной оценке</p>
+            <p className="text-sm text-ink-3">Три дела, которые дадут больше всего денег при самой надежной оценке</p>
           </div>
           {!readOnly && (
             <Link to="/tasks" className="text-sm font-medium text-brand-strong hover:underline">

@@ -1,10 +1,10 @@
 import { Link } from "@tanstack/react-router";
-import { Camera, Check } from "lucide-react";
+import { BellRing, Camera, Check, ChevronRight, Search } from "lucide-react";
 import { motion } from "motion/react";
 import { useState } from "react";
 
-import { Button, Card, cx, EmptyState, PageTitle, Pill, QuestionBlock, Reveal, type Tone } from "../ds/primitives";
-import { plural } from "../lib/format";
+import { Button, Card, cx, EmptyState, PageTitle, Reveal } from "../ds/primitives";
+import { plural, rub } from "../lib/format";
 import { useViewer } from "../lib/useViewer";
 import { RESTAURANTS } from "../mock/data";
 import { findingById } from "../mock/selectors";
@@ -12,14 +12,200 @@ import type { Task } from "../mock/types";
 import { usePrototype } from "../state/prototype";
 import { useTasks } from "./counts";
 
-const STATUS: Record<Task["status"], { label: string; tone: Tone }> = {
-  assigned: { label: "Новая", tone: "neutral" },
-  in_progress: { label: "В работе", tone: "info" },
-  done: { label: "Сделано", tone: "gain" },
-  overdue: { label: "Просрочена", tone: "loss" },
+// Prototype "today" matches the demo data period.
+const TODAY = new Date(2026, 9, 23);
+
+function daysUntil(due: string) {
+  const [d, m] = due.split(".").map(Number);
+  const date = new Date(2026, (m ?? 1) - 1, d ?? 1);
+  return Math.round((date.getTime() - TODAY.getTime()) / 86_400_000);
+}
+
+/** "просрочено на 3 дня" / "сегодня" / "через 8 дней" — when, in words. */
+function dueWords(t: Task) {
+  if (t.status === "done") return "сделано";
+  const days = daysUntil(t.due);
+  if (days < 0) return `просрочено на ${plural(-days, ["день", "дня", "дней"])}`;
+  if (days === 0) return "срок сегодня";
+  return `до ${t.due} · ${plural(days, ["день", "дня", "дней"])}`;
+}
+
+const isLate = (t: Task) => t.status !== "done" && (t.status === "overdue" || daysUntil(t.due) < 0);
+
+const STATUS_DOT: Record<Task["status"], string> = {
+  assigned: "bg-ink-3",
+  in_progress: "bg-info",
+  done: "bg-gain-icon",
+  overdue: "bg-loss-icon",
 };
 
-function TaskCard({ task, canExecute, showRestaurant }: { task: Task; canExecute: boolean; showRestaurant: boolean }) {
+const restaurantName = (code: string) => RESTAURANTS.find((r) => r.code === code)?.name ?? code;
+
+// ------------------------------------------------------------------ HQ
+
+type Tab = "late" | "open" | "done";
+
+function HqTasks({ tasks }: { tasks: Task[] }) {
+  const { notify } = usePrototype();
+  const [tab, setTab] = useState<Tab>(tasks.some(isLate) ? "late" : "open");
+  const [query, setQuery] = useState("");
+  const late = tasks.filter(isLate);
+  const open = tasks.filter((t) => t.status !== "done" && !isLate(t));
+  const done = tasks.filter((t) => t.status === "done");
+  const lists: Record<Tab, Task[]> = { late, open, done };
+
+  const perRestaurant = RESTAURANTS.map((r) => {
+    const own = tasks.filter((t) => t.restaurantId === r.code);
+    return {
+      code: r.code,
+      name: r.name,
+      total: own.length,
+      late: own.filter(isLate).length,
+      open: own.filter((t) => t.status !== "done").length,
+      done: own.filter((t) => t.status === "done").length,
+    };
+  })
+    .filter((r) => r.name.toLowerCase().includes(query.trim().toLowerCase()))
+    .sort((a, b) => b.late - a.late || b.open - a.open);
+
+  const tabs: { key: Tab; label: string }[] = [
+    { key: "late", label: "Просрочены" },
+    { key: "open", label: "В работе" },
+    { key: "done", label: "Сделаны" },
+  ];
+
+  return (
+    <div className="space-y-6">
+      <Reveal>
+        <div className="grid gap-3 sm:grid-cols-3">
+          <Card className="p-5">
+            <div className="text-sm text-ink-3">Просрочено</div>
+            <div className={cx("num mt-1 font-display text-3xl font-semibold", late.length ? "text-loss" : "text-gain")}>{late.length}</div>
+            <div className="mt-1 text-xs text-ink-3">{late.length ? "нужно напомнить директорам" : "все в срок"}</div>
+          </Card>
+          <Card className="p-5">
+            <div className="text-sm text-ink-3">В работе</div>
+            <div className="num mt-1 font-display text-3xl font-semibold">{open.length}</div>
+            <div className="mt-1 text-xs text-ink-3">срок еще не наступил</div>
+          </Card>
+          <Card className="p-5">
+            <div className="text-sm text-ink-3">Сделано</div>
+            <div className="num mt-1 font-display text-3xl font-semibold text-gain">{done.length}</div>
+            <div className="mt-1 text-xs text-ink-3">результат считаем после инвентаризации</div>
+          </Card>
+        </div>
+      </Reveal>
+
+      <Reveal index={1}>
+        <Card className="p-2">
+          <div className="flex flex-wrap items-center justify-between gap-3 px-3 pt-3 pb-2">
+            <div className="flex rounded-[10px] border border-line-strong p-0.5" role="tablist">
+              {tabs.map((t) => (
+                <button
+                  key={t.key}
+                  role="tab"
+                  aria-selected={tab === t.key}
+                  onClick={() => setTab(t.key)}
+                  className={cx("relative h-9 rounded-[8px] px-3.5 text-sm", tab === t.key ? "text-white" : "text-ink-2 hover:text-ink")}
+                >
+                  {tab === t.key && (
+                    <motion.span layoutId="task-tab" className="absolute inset-0 rounded-[8px] bg-ink" transition={{ type: "spring", stiffness: 500, damping: 36 }} />
+                  )}
+                  <span className="relative">
+                    {t.label} <span className="num opacity-60">{lists[t.key].length}</span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+          {lists[tab].length ? (
+            <ul className="divide-y divide-line">
+              {lists[tab].map((t) => {
+                const f = t.findingId ? findingById(t.findingId) : undefined;
+                return (
+                  <li key={t.id} className="grid grid-cols-[10px_1fr_auto] items-center gap-x-4 gap-y-1 px-4 py-3.5">
+                    <span className={cx("h-2.5 w-2.5 rounded-full", isLate(t) ? STATUS_DOT.overdue : STATUS_DOT[t.status])} aria-hidden />
+                    <span className="min-w-0">
+                      <span className="block font-medium text-ink">{t.title}</span>
+                      <span className="mt-0.5 flex flex-wrap gap-x-3 text-sm text-ink-3">
+                        <span className="font-medium text-ink-2">{restaurantName(t.restaurantId)}</span>
+                        <span className={isLate(t) ? "font-medium text-loss" : ""}>{dueWords(t)}</span>
+                        {f?.effectRubMonth != null && <span>на кону {rub(f.effectRubMonth)} в месяц</span>}
+                      </span>
+                    </span>
+                    <span>
+                      {isLate(t) ? (
+                        <Button size="sm" onClick={() => notify(`Напоминание отправлено: ${restaurantName(t.restaurantId)}`)}>
+                          <BellRing size={14} /> Напомнить
+                        </Button>
+                      ) : f ? (
+                        <Link to="/findings/$findingId" params={{ findingId: f.id }} className="inline-flex items-center text-sm text-ink-3 hover:text-ink" aria-label="Открыть находку">
+                          <ChevronRight size={18} />
+                        </Link>
+                      ) : null}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : (
+            <div className="px-4 py-8 text-center text-sm text-ink-3">{tab === "late" ? "Просроченных задач нет." : "Здесь пусто."}</div>
+          )}
+        </Card>
+      </Reveal>
+
+      <Reveal index={2}>
+        <Card className="p-2">
+          <div className="flex flex-wrap items-center justify-between gap-3 px-3 pt-3 pb-2">
+            <div>
+              <h2 className="font-display text-base font-semibold">Исполнение по ресторанам</h2>
+              <div className="text-xs text-ink-3">Сначала те, у кого есть просрочки</div>
+            </div>
+            <label className="flex h-9 items-center gap-2 rounded-[10px] border border-line-strong px-3 text-sm focus-within:border-brand">
+              <Search size={14} className="text-ink-3" />
+              <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Найти ресторан" aria-label="Найти ресторан" className="w-40 outline-none" />
+            </label>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[560px] text-sm">
+              <thead className="text-left text-xs text-ink-3">
+                <tr>
+                  <th className="px-4 py-2 font-medium">Ресторан</th>
+                  <th className="px-4 py-2 text-right font-medium">Просрочено</th>
+                  <th className="px-4 py-2 text-right font-medium">В работе</th>
+                  <th className="px-4 py-2 text-right font-medium">Сделано</th>
+                  <th className="w-[30%] px-4 py-2 font-medium">Выполнено</th>
+                </tr>
+              </thead>
+              <tbody className="num">
+                {perRestaurant.map((r) => (
+                  <tr key={r.code} className="border-t border-line">
+                    <td className="px-4 py-3 font-medium">{r.name}</td>
+                    <td className={cx("px-4 py-3 text-right", r.late ? "font-semibold text-loss" : "text-ink-3")}>{r.late || "—"}</td>
+                    <td className="px-4 py-3 text-right">{r.open - r.late}</td>
+                    <td className="px-4 py-3 text-right">{r.done}</td>
+                    <td className="px-4 py-3">
+                      <span className="flex items-center gap-2">
+                        <span className="h-2 flex-1 overflow-hidden rounded-full bg-ink/10">
+                          <span className="block h-full rounded-full bg-brand" style={{ width: `${r.total ? (r.done / r.total) * 100 : 0}%` }} />
+                        </span>
+                        <span className="w-9 text-right text-xs text-ink-3">{r.total ? Math.round((r.done / r.total) * 100) : 0}%</span>
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      </Reveal>
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------ director
+
+function TaskCard({ task }: { task: Task }) {
   const { setTaskStatus, toggleCheck, taskChecks, taskReports } = usePrototype();
   const [reporting, setReporting] = useState(false);
   const [report, setReport] = useState("");
@@ -27,106 +213,93 @@ function TaskCard({ task, canExecute, showRestaurant }: { task: Task; canExecute
   const finding = task.findingId ? findingById(task.findingId) : undefined;
   const checks = taskChecks[task.id] ?? [];
   const steps = task.checklist ?? [];
-  const progress = steps.length ? checks.filter(Boolean).length / steps.length : task.status === "done" ? 1 : 0;
+  const late = isLate(task);
+  const done = task.status === "done";
 
   return (
     <motion.div layout initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
-      <Card className="p-5">
-        <div className="flex flex-wrap items-start justify-between gap-2">
+      <Card className={cx("overflow-hidden", late && "border-loss-icon/50")}>
+        <div className="flex flex-wrap items-start justify-between gap-3 p-5 pb-4">
           <div className="min-w-0">
-            <div className="font-semibold text-ink">{task.title}</div>
-            <div className="mt-1 flex flex-wrap gap-x-3 text-xs text-ink-3">
-              {showRestaurant && <span>{RESTAURANTS.find((r) => r.code === task.restaurantId)?.name}</span>}
-              <span>Срок {task.due}</span>
-              <span>{task.source}</span>
+            <div className={cx("text-xs font-semibold uppercase tracking-[0.06em]", late ? "text-loss" : done ? "text-gain" : "text-ink-3")}>
+              {dueWords(task)}
             </div>
+            <div className="mt-1 text-[17px] font-semibold leading-snug text-ink">{task.title}</div>
           </div>
-          <Pill tone={STATUS[task.status].tone}>{STATUS[task.status].label}</Pill>
+          {finding?.effectRubMonth != null && (
+            <div className="text-right">
+              <div className="num font-display text-xl font-semibold text-ink">{rub(finding.effectRubMonth)}</div>
+              <div className="text-xs text-ink-3">в месяц, если сработает</div>
+            </div>
+          )}
         </div>
-        {finding && (
-          <Link
-            to="/findings/$findingId"
-            params={{ findingId: finding.id }}
-            className="mt-3 block rounded-[10px] bg-paper px-3 py-2 text-sm text-ink-2 hover:text-ink"
-          >
-            Зачем: {finding.title}
-            {finding.effectRubMonth !== null && <span className="text-ink-3"> — до {Math.round(finding.effectRubMonth / 1000)} тыс ₽ в месяц</span>}
-          </Link>
-        )}
+
         {steps.length > 0 && (
-          <div className="mt-4">
-            <div className="mb-2 h-1.5 overflow-hidden rounded-full bg-ink/10">
-              <motion.div className="h-full bg-brand" animate={{ width: `${progress * 100}%` }} transition={{ duration: 0.3 }} />
-            </div>
-            <ul className="space-y-1.5">
-              {steps.map((s, i) => (
-                <li key={s}>
-                  <button
-                    type="button"
-                    disabled={!canExecute || task.status === "done"}
-                    onClick={() => toggleCheck(task.id, i, steps.length)}
-                    className="flex w-full items-center gap-2.5 rounded-[10px] px-2 py-1.5 text-left text-sm hover:bg-paper disabled:hover:bg-transparent"
-                  >
-                    <span
-                      className={cx(
-                        "grid h-5 w-5 shrink-0 place-items-center rounded-md border",
-                        checks[i] ? "border-brand bg-brand text-white" : "border-line-strong",
-                      )}
-                    >
-                      {checks[i] && <Check size={13} />}
-                    </span>
-                    <span className={checks[i] ? "text-ink-3 line-through" : ""}>{s}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
+          <ul className="space-y-1 px-5 pb-4">
+            {steps.map((s, i) => (
+              <li key={s}>
+                <button
+                  type="button"
+                  disabled={done}
+                  onClick={() => toggleCheck(task.id, i, steps.length)}
+                  className="flex w-full items-center gap-3 rounded-[10px] px-2 py-2 text-left text-[15px] hover:bg-paper disabled:hover:bg-transparent"
+                >
+                  <span className={cx("grid h-5 w-5 shrink-0 place-items-center rounded-md border", checks[i] ? "border-brand bg-brand text-white" : "border-line-strong")}>
+                    {checks[i] && <Check size={13} />}
+                  </span>
+                  <span className={checks[i] ? "text-ink-3 line-through" : ""}>{s}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {(task.report || taskReports[task.id] || task.result) && (
+          <div className="mx-5 mb-4 rounded-[12px] bg-paper p-3 text-sm">
+            {(task.report ?? taskReports[task.id]) && <div className="text-ink-2">Отчет: {task.report ?? taskReports[task.id]}</div>}
+            {task.result && <div className="mt-1 font-medium text-gain">{task.result}</div>}
           </div>
         )}
-        {(task.report || taskReports[task.id]) && (
-          <div className="mt-3 rounded-[10px] bg-paper p-3 text-sm text-ink-2">Отчет: {task.report ?? taskReports[task.id]}</div>
-        )}
-        {task.result && <div className="mt-2 text-sm font-medium text-gain">{task.result}</div>}
-        {task.status === "done" && !task.result && (
-          <div className="mt-2 text-sm text-ink-3">Результат в рублях покажем после следующей инвентаризации.</div>
-        )}
-        {canExecute && task.status !== "done" && (
-          <div className="mt-4">
-            {reporting ? (
-              <div className="space-y-2">
-                <textarea
-                  className="w-full rounded-[10px] border border-line-strong p-3 text-sm outline-none focus:border-brand"
-                  rows={2}
-                  placeholder="Коротко: что сделано"
-                  value={report}
-                  onChange={(e) => setReport(e.target.value)}
-                  aria-label="Отчет о выполнении"
-                />
-                <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-ink-2 hover:text-ink">
-                  <Camera size={16} /> {photo ? `Фото: ${photo}` : "Приложить фото"}
-                  <input
-                    type="file"
-                    accept="image/*"
-                    className="sr-only"
-                    onChange={(e) => setPhoto(e.target.files?.[0]?.name ?? null)}
-                  />
-                </label>
-                <div className="flex gap-2">
-                  <Button variant="primary" disabled={!report.trim()} onClick={() => setTaskStatus(task.id, "done", report)}>
-                    Отметить сделанной
-                  </Button>
-                  <Button variant="ghost" onClick={() => setReporting(false)}>
-                    Отмена
-                  </Button>
-                </div>
-              </div>
-            ) : (
-              <div className="flex gap-2">
-                {task.status === "assigned" && <Button onClick={() => setTaskStatus(task.id, "in_progress")}>Начать</Button>}
-                <Button variant="primary" onClick={() => setReporting(true)}>
-                  Готово
+
+        <div className="flex flex-wrap items-center gap-2 border-t border-line bg-paper/50 px-5 py-3">
+          {finding && (
+            <Link to="/findings/$findingId" params={{ findingId: finding.id }} className="mr-auto text-sm text-ink-3 hover:text-ink">
+              Зачем: {finding.title} →
+            </Link>
+          )}
+          {!done && !reporting && (
+            <>
+              {task.status === "assigned" && <Button onClick={() => setTaskStatus(task.id, "in_progress")}>Начать</Button>}
+              <Button variant="primary" onClick={() => setReporting(true)}>
+                Готово
+              </Button>
+            </>
+          )}
+        </div>
+        {reporting && (
+          <div className="space-y-2 border-t border-line p-5">
+            <textarea
+              className="w-full rounded-[10px] border border-line-strong p-3 text-sm outline-none focus:border-brand"
+              rows={2}
+              placeholder="Коротко: что сделано"
+              value={report}
+              onChange={(e) => setReport(e.target.value)}
+              aria-label="Отчет о выполнении"
+            />
+            <div className="flex flex-wrap items-center gap-3">
+              <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-ink-2 hover:text-ink">
+                <Camera size={16} /> {photo ? `Фото: ${photo}` : "Приложить фото"}
+                <input type="file" accept="image/*" className="sr-only" onChange={(e) => setPhoto(e.target.files?.[0]?.name ?? null)} />
+              </label>
+              <span className="ml-auto flex gap-2">
+                <Button variant="ghost" onClick={() => setReporting(false)}>
+                  Отмена
                 </Button>
-              </div>
-            )}
+                <Button variant="primary" disabled={!report.trim()} onClick={() => setTaskStatus(task.id, "done", report)}>
+                  Отметить сделанной
+                </Button>
+              </span>
+            </div>
           </div>
         )}
       </Card>
@@ -138,74 +311,42 @@ export function TasksPage() {
   const viewer = useViewer();
   const tasks = useTasks();
   if (!viewer) return null;
-  const open = tasks.filter((t) => t.status !== "done");
+  const open = tasks.filter((t) => t.status !== "done").sort((a, b) => daysUntil(a.due) - daysUntil(b.due));
   const done = tasks.filter((t) => t.status === "done");
-  const overdue = open.filter((t) => t.status === "overdue");
+  const late = open.filter(isLate);
 
   return (
-    <div className="mx-auto max-w-[1040px]">
+    <div className="mx-auto max-w-[960px]">
       <PageTitle
         title={viewer.isHq ? "Задачи ресторанов" : "Мои задачи"}
         subtitle={
-          overdue.length
-            ? `${plural(open.length, ["открытая задача", "открытые задачи", "открытых задач"])}, из них просрочено: ${overdue.length}`
-            : `${plural(open.length, ["открытая задача", "открытые задачи", "открытых задач"])}, просрочек нет`
+          viewer.isHq
+            ? "Что директора делают по находкам и проверкам, и где нужна ваша помощь"
+            : late.length
+              ? `${plural(open.length, ["задача", "задачи", "задач"])} в работе, из них просрочено: ${late.length}`
+              : `${plural(open.length, ["задача", "задачи", "задач"])} в работе, просрочек нет`
         }
       />
-      {viewer.isHq && (
-        <Reveal>
-          <QuestionBlock question="Кто как выполняет?" className="mb-6">
-            <div className="grid gap-4 sm:grid-cols-3">
-              {RESTAURANTS.map((r) => {
-                const own = tasks.filter((t) => t.restaurantId === r.code);
-                const d = own.filter((t) => t.status === "done").length;
-                const late = own.filter((t) => t.status === "overdue").length;
-                return (
-                  <div key={r.code}>
-                    <div className="flex justify-between text-sm">
-                      <span className="font-medium">{r.name}</span>
-                      <span className="num text-ink-3">
-                        {d} из {own.length}
-                      </span>
-                    </div>
-                    <div className="mt-2 h-2 overflow-hidden rounded-full bg-ink/10">
-                      <motion.div
-                        className="h-full bg-brand"
-                        initial={{ width: 0 }}
-                        animate={{ width: `${own.length ? (d / own.length) * 100 : 0}%` }}
-                        transition={{ duration: 0.6 }}
-                      />
-                    </div>
-                    <div className={cx("mt-1 text-xs", late ? "text-loss" : "text-ink-3")}>
-                      {late ? `Просрочено: ${late}` : "Без просрочек"}
-                    </div>
-                  </div>
-                );
-              })}
+      {viewer.isHq ? (
+        <HqTasks tasks={tasks} />
+      ) : (
+        <>
+          <Reveal>
+            <div className="space-y-4">
+              {open.length ? open.map((t) => <TaskCard key={t.id} task={t} />) : <EmptyState title="Открытых задач нет">Возьмите в работу дело из «Моей недели».</EmptyState>}
             </div>
-          </QuestionBlock>
-        </Reveal>
-      )}
-      <Reveal index={1}>
-        <div className="space-y-3">
-          {open.length ? (
-            [...overdue, ...open.filter((t) => t.status !== "overdue")].map((t) => (
-              <TaskCard key={t.id} task={t} canExecute={!viewer.isHq} showRestaurant={viewer.isHq} />
-            ))
-          ) : (
-            <EmptyState title="Открытых задач нет">Возьмите в работу дело из «Моей недели».</EmptyState>
+          </Reveal>
+          {done.length > 0 && (
+            <Reveal index={1}>
+              <h2 className="mt-10 mb-3 font-display text-lg font-semibold">Сделано</h2>
+              <div className="space-y-4">
+                {done.map((t) => (
+                  <TaskCard key={t.id} task={t} />
+                ))}
+              </div>
+            </Reveal>
           )}
-        </div>
-      </Reveal>
-      {done.length > 0 && (
-        <Reveal index={2}>
-          <h2 className="mt-8 mb-3 font-display text-lg font-semibold">Сделано</h2>
-          <div className="space-y-3">
-            {done.map((t) => (
-              <TaskCard key={t.id} task={t} canExecute={false} showRestaurant={viewer.isHq} />
-            ))}
-          </div>
-        </Reveal>
+        </>
       )}
     </div>
   );

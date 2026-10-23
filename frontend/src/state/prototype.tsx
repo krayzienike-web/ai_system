@@ -92,7 +92,7 @@ export function PrototypeProvider({ children }: { children: ReactNode }) {
           findingStatus: { ...s.findingStatus, [findingId]: "disputed" },
           disputes: { ...s.disputes, [findingId]: { reason, comment } },
         }));
-        notify("Отправлено в управляющую компанию");
+        notify("Уточнение отправлено в управляющую компанию");
       },
       setTaskStatus: (taskId, status, report) => {
         patch((s) => ({
@@ -117,7 +117,7 @@ export function PrototypeProvider({ children }: { children: ReactNode }) {
       },
       resolveDispute: (findingId) => {
         patch((s) => ({ resolvedDisputes: [...s.resolvedDisputes, findingId] }));
-        notify("Спор закрыт, директор увидит ответ");
+        notify("Готово, директор увидит ответ");
       },
       proposeRollout: (experimentId) => {
         patch((s) => ({ rollouts: [...s.rollouts, experimentId] }));
