@@ -1,0 +1,35 @@
+from functools import lru_cache
+
+from pydantic import Field, model_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+DEV_JWT_SECRET = "dev-secret-change-me-dev-secret-change-me"
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", env_prefix="FAI_", extra="ignore")
+
+    env: str = "dev"
+
+    # The application connects as a role without BYPASSRLS; migrations run as the schema owner.
+    database_url: str = "postgresql+psycopg://franchise_app:app@localhost:5432/franchise"
+    migrations_database_url: str = "postgresql+psycopg://franchise_owner:owner@localhost:5432/franchise"
+    app_db_role: str = "franchise_app"
+
+    jwt_secret: str = Field(default=DEV_JWT_SECRET, min_length=32)
+    jwt_algorithm: str = "HS256"
+    access_token_ttl_minutes: int = 30
+    refresh_token_ttl_days: int = 14
+
+    cors_origins: list[str] = ["http://localhost:5173"]
+
+    @model_validator(mode="after")
+    def no_dev_secret_outside_dev(self) -> "Settings":
+        if self.env not in ("dev", "test") and self.jwt_secret == DEV_JWT_SECRET:
+            raise ValueError("FAI_JWT_SECRET must be set outside dev/test")
+        return self
+
+
+@lru_cache
+def get_settings() -> Settings:
+    return Settings()
