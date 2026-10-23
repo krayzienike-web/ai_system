@@ -3,7 +3,7 @@ from functools import lru_cache
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-DEV_JWT_SECRET = "dev-secret-change-me-dev-secret-change-me"
+DEV_JWT_SECRET = "dev-secret-change-me-dev-secret-change-me"  # noqa: S105  (dev only, refused outside dev)
 
 
 class Settings(BaseSettings):
