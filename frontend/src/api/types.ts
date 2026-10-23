@@ -12,7 +12,7 @@ export interface Me {
   full_name: string;
   tenant_id: string;
   role: Role;
-  restaurant: { id: string; name: string } | null;
+  restaurant: { id: string; code: string; name: string } | null;
   permissions: string[];
 }
 

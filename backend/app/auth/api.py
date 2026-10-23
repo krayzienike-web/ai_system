@@ -32,6 +32,7 @@ class TokenPair(BaseModel):
 
 class RestaurantRef(BaseModel):
     id: UUID
+    code: str
     name: str
 
 
@@ -96,6 +97,8 @@ def me(ctx: AccessDep, session: SessionDep) -> Me:
         full_name=user.full_name,
         tenant_id=ctx.tenant_id,
         role=ctx.role,
-        restaurant=RestaurantRef(id=restaurant.id, name=restaurant.name) if restaurant else None,
+        restaurant=RestaurantRef(id=restaurant.id, code=restaurant.code, name=restaurant.name)
+        if restaurant
+        else None,
         permissions=sorted(ctx.permissions),
     )

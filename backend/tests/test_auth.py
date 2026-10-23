@@ -14,6 +14,7 @@ def test_login_and_me_for_director(client: TestClient, network: Network) -> None
     me = client.get("/api/auth/me", headers=headers).json()
     assert me["role"] == "restaurant_director"
     assert me["restaurant"]["id"] == str(network.a.restaurants["A1"])
+    assert me["restaurant"]["code"] == "A1"
     assert "tasks.execute" in me["permissions"]
     assert "restaurants.manage" not in me["permissions"]
 

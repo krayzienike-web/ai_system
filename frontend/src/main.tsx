@@ -6,13 +6,16 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
 import { router } from "./router";
+import { PrototypeProvider } from "./state/prototype";
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
-      <RouterProvider router={router} />
+      <PrototypeProvider>
+        <RouterProvider router={router} />
+      </PrototypeProvider>
     </QueryClientProvider>
   </StrictMode>,
 );

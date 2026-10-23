@@ -3,6 +3,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { type FormEvent, useState } from "react";
 
 import { ApiError, login } from "../api/client";
+import { PRODUCT_NAME } from "../config";
 
 export function LoginPage() {
   const navigate = useNavigate();
@@ -31,7 +32,7 @@ export function LoginPage() {
     <div className="flex min-h-screen items-center justify-center bg-slate-50 px-4">
       <form onSubmit={onSubmit} className="w-full max-w-sm space-y-4 rounded-xl bg-white p-8 shadow">
         <div>
-          <h1 className="text-xl font-semibold text-slate-900">AI-центр франшизы</h1>
+          <h1 className="text-xl font-semibold text-slate-900">{PRODUCT_NAME}</h1>
           <p className="text-sm text-slate-500">Вход в систему</p>
         </div>
         <label className="block">
@@ -64,6 +65,27 @@ export function LoginPage() {
         >
           {pending ? "Входим…" : "Войти"}
         </button>
+        <div className="rounded-md bg-slate-50 p-3 text-xs text-slate-600">
+          Демо-доступ, пароль <span className="font-mono">demo12345</span>:
+          <div className="mt-1 flex flex-wrap gap-1.5">
+            {[
+              ["admin@demo.local", "Управляющая компания"],
+              ["director1@demo.local", "Директор ресторана"],
+            ].map(([demoEmail, label]) => (
+              <button
+                key={demoEmail}
+                type="button"
+                className="rounded border border-slate-300 bg-white px-2 py-1 hover:bg-slate-100"
+                onClick={() => {
+                  setEmail(demoEmail!);
+                  setPassword("demo12345");
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
       </form>
     </div>
   );
