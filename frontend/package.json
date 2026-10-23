@@ -8,7 +8,8 @@
     "build": "tsc -b && vite build",
     "typecheck": "tsc -b",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "build:demo": "tsc -b && VITE_DEMO=1 vite build --base ./ --outDir dist-demo"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.104.5",

@@ -1,7 +1,7 @@
-import { createRootRoute, createRoute, createRouter, redirect } from "@tanstack/react-router";
+import { createMemoryHistory, createRootRoute, createRoute, createRouter, redirect } from "@tanstack/react-router";
 import type { ComponentType } from "react";
 
-import { tokens } from "./api/client";
+import { DEMO, tokens } from "./api/client";
 import { EmptyState } from "./components/ui";
 import { useViewer } from "./lib/useViewer";
 import { DataPage } from "./pages/Data";
@@ -72,7 +72,11 @@ const routeTree = rootRoute.addChildren([
   ]),
 ]);
 
-export const router = createRouter({ routeTree });
+// The standalone demo runs inside a sandboxed frame where URL paths are not ours: keep history in memory.
+export const router = createRouter({
+  routeTree,
+  ...(DEMO ? { history: createMemoryHistory({ initialEntries: ["/login"] }) } : {}),
+});
 
 declare module "@tanstack/react-router" {
   interface Register {
