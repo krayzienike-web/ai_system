@@ -5,6 +5,7 @@ import { type FormEvent, useCallback, useEffect, useRef, useState } from "react"
 
 import { LogoMark } from "../../brand/Logo";
 import { Button, cx, EASE } from "../../ds/primitives";
+import { dateIn, todayLabel } from "../../lib/dates";
 import { answer, type ChatAnswer, suggestionsFor } from "../../lib/chatScript";
 import { useViewer } from "../../lib/useViewer";
 import { findingById } from "../../mock/selectors";
@@ -42,7 +43,7 @@ function Typed({ text, onDone }: { text: string; onDone: () => void }) {
 function AssistantMessage({ m, last }: { m: Message; last: boolean }) {
   const navigate = useNavigate();
   const viewer = useViewer();
-  const { takeToWork, closeChat, findingStatus } = usePrototype();
+  const { createTasks, closeChat, findingStatus } = usePrototype();
   const [done, setDone] = useState(!last);
   const finish = useCallback(() => setDone(true), []);
   const a = m.answer;
@@ -112,15 +113,19 @@ function AssistantMessage({ m, last }: { m: Message; last: boolean }) {
                 size="sm"
                 variant="primary"
                 onClick={() =>
-                  takeToWork(finding.id, {
-                    id: `x-${finding.id}`,
-                    restaurantId: finding.restaurantId!,
-                    title: finding.actions[0] ?? finding.title,
-                    source: "Из разговора с су-шефом",
-                    findingId: finding.id,
-                    due: "01.11",
-                    status: "assigned",
-                  })
+                  createTasks([
+                    {
+                      id: `x-${finding.id}`,
+                      restaurantId: finding.restaurantId!,
+                      title: finding.actions[0] ?? finding.title,
+                      source: "Из разговора с су-шефом",
+                      findingId: finding.id,
+                      assignedBy: "director",
+                      createdAt: todayLabel(),
+                      due: dateIn(7),
+                      status: "assigned",
+                    },
+                  ])
                 }
               >
                 Взять в работу

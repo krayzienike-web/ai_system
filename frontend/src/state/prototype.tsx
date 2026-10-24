@@ -16,27 +16,24 @@ export interface Toast {
 
 interface State {
   findingStatus: Record<string, FindingStatus>;
-  disputes: Record<string, { reason: string; comment: string }>;
   taskStatus: Record<string, Task["status"]>;
   taskChecks: Record<string, boolean[]>;
   taskReports: Record<string, string>;
   extraTasks: Task[];
   experimentStatus: Record<string, "approved" | "rejected">;
   sentDrafts: string[]; // finding ids whose experiment draft went to approval
-  resolvedDisputes: string[];
   rollouts: string[];
   chat: { open: boolean; context: ChatContextRef | null };
   toast: Toast | null;
 }
 
 interface Api extends State {
-  takeToWork: (findingId: string, task: Task) => void;
-  dispute: (findingId: string, reason: string, comment: string) => void;
+  /** Creates tasks (one per restaurant); the finding moves to "Делаем"; the toast offers undo. */
+  createTasks: (tasks: Task[], toast?: string) => void;
   setTaskStatus: (taskId: string, status: Task["status"], report?: string) => void;
   toggleCheck: (taskId: string, index: number, size: number) => void;
   decideExperiment: (id: string, decision: "approved" | "rejected") => void;
   sendDraft: (findingId: string) => void;
-  resolveDispute: (findingId: string) => void;
   proposeRollout: (experimentId: string) => void;
   openChat: (context?: ChatContextRef) => void;
   closeChat: () => void;
@@ -49,14 +46,12 @@ const Ctx = createContext<Api | null>(null);
 export function PrototypeProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<State>({
     findingStatus: {},
-    disputes: {},
     taskStatus: {},
     taskChecks: {},
     taskReports: {},
     extraTasks: [],
     experimentStatus: {},
     sentDrafts: [],
-    resolvedDisputes: [],
     rollouts: [],
     chat: { open: false, context: null },
     toast: null,
@@ -74,32 +69,30 @@ export function PrototypeProvider({ children }: { children: ReactNode }) {
     const patch = (fn: (s: State) => Partial<State>) => setState((s) => ({ ...s, ...fn(s) }));
     return {
       ...state,
-      takeToWork: (findingId, task) => {
-        patch((s) => ({
-          findingStatus: { ...s.findingStatus, [findingId]: "in_work" },
-          extraTasks: [task, ...s.extraTasks.filter((t) => t.id !== task.id)],
-        }));
-        notify("Задача добавлена в «Задачи»", () =>
+      createTasks: (tasks, toast) => {
+        const ids = new Set(tasks.map((t) => t.id));
+        patch((s) => {
+          const findingStatus = { ...s.findingStatus };
+          for (const t of tasks) if (t.findingId && !findingStatus[t.findingId]) findingStatus[t.findingId] = "in_work";
+          return { findingStatus, extraTasks: [...tasks, ...s.extraTasks.filter((t) => !ids.has(t.id))] };
+        });
+        notify(toast ?? "Задача добавлена в «Задачи»", () =>
           patch((s) => {
+            const extraTasks = s.extraTasks.filter((t) => !ids.has(t.id));
             const findingStatus = { ...s.findingStatus };
-            delete findingStatus[findingId];
-            return { findingStatus, extraTasks: s.extraTasks.filter((t) => t.id !== task.id) };
+            for (const t of tasks) {
+              if (t.findingId && !extraTasks.some((x) => x.findingId === t.findingId)) delete findingStatus[t.findingId];
+            }
+            return { findingStatus, extraTasks };
           }),
         );
-      },
-      dispute: (findingId, reason, comment) => {
-        patch((s) => ({
-          findingStatus: { ...s.findingStatus, [findingId]: "disputed" },
-          disputes: { ...s.disputes, [findingId]: { reason, comment } },
-        }));
-        notify("Уточнение отправлено в управляющую компанию");
       },
       setTaskStatus: (taskId, status, report) => {
         patch((s) => ({
           taskStatus: { ...s.taskStatus, [taskId]: status },
           taskReports: report ? { ...s.taskReports, [taskId]: report } : s.taskReports,
         }));
-        if (status === "done") notify("Задача выполнена. Результат посчитаем после следующей инвентаризации");
+        if (status === "done") notify("Отчет отправлен. Результат в рублях посчитаем после инвентаризации и покажем у задачи");
       },
       toggleCheck: (taskId, index, size) =>
         patch((s) => {
@@ -114,10 +107,6 @@ export function PrototypeProvider({ children }: { children: ReactNode }) {
       sendDraft: (findingId) => {
         patch((s) => ({ sentDrafts: [...s.sentDrafts, findingId] }));
         notify("Проверка отправлена на утверждение");
-      },
-      resolveDispute: (findingId) => {
-        patch((s) => ({ resolvedDisputes: [...s.resolvedDisputes, findingId] }));
-        notify("Готово, директор увидит ответ");
       },
       proposeRollout: (experimentId) => {
         patch((s) => ({ rollouts: [...s.rollouts, experimentId] }));

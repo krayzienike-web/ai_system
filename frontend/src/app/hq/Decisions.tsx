@@ -1,10 +1,10 @@
 import { Link } from "@tanstack/react-router";
-import { BellRing, ChevronDown, FlaskConical, MessageSquareWarning, Timer } from "lucide-react";
+import { BellRing, ChevronDown, FlaskConical, Timer } from "lucide-react";
 import { useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 
 import { Button, Card, cx, EmptyState, PageTitle, Reveal } from "../../ds/primitives";
-import { perMonth, rub } from "../../lib/format";
+import { rub } from "../../lib/format";
 import { RESTAURANTS } from "../../mock/data";
 import { findingById, restaurantByCode } from "../../mock/selectors";
 import type { Experiment } from "../../mock/types";
@@ -80,9 +80,9 @@ function ProposedRow({ e, onDecide }: { e: Experiment; onDecide: (id: string, d:
 }
 
 export function DecisionsPage() {
-  const { experiments, disputed, overdue, drafts } = useInbox();
-  const { decideExperiment, resolveDispute, notify } = usePrototype();
-  const total = experiments.length + disputed.length + overdue.length + drafts.length;
+  const { experiments, overdue, drafts } = useInbox();
+  const { decideExperiment, notify } = usePrototype();
+  const total = experiments.length + overdue.length + drafts.length;
 
   return (
     <div className="mx-auto max-w-[920px] space-y-8">
@@ -118,33 +118,6 @@ export function DecisionsPage() {
             </motion.div>
           );
         })}
-      </Section>
-
-      <Section icon={<MessageSquareWarning size={20} />} title="Уточнения от директоров" count={disputed.length}>
-        {disputed.map(({ finding, dispute }) => (
-          <motion.div key={finding.id} layout exit={exit}>
-            <Card className="p-5">
-              <Link to="/findings/$findingId" params={{ findingId: finding.id }} className="font-semibold hover:underline">
-                {finding.title}
-              </Link>
-              <div className="mt-1 text-sm text-ink-3">
-                {restaurantByCode(finding.restaurantId ?? "")?.name} · {finding.effectRubMonth !== null && perMonth(finding.effectRubMonth)}
-              </div>
-              <blockquote className="mt-3 rounded-[12px] bg-warn-soft p-3 text-sm">
-                <div className="font-medium">
-                  {dispute.by}: «{dispute.reason}»
-                </div>
-                {dispute.comment && <div className="mt-1 text-ink-2">{dispute.comment}</div>}
-              </blockquote>
-              <div className="mt-4 flex flex-wrap gap-2">
-                <Button variant="primary" onClick={() => resolveDispute(finding.id)}>
-                  Принять уточнение и закрыть находку
-                </Button>
-                <Button onClick={() => resolveDispute(finding.id)}>Перепроверить данные</Button>
-              </div>
-            </Card>
-          </motion.div>
-        ))}
       </Section>
 
       <Section icon={<Timer size={20} />} title="Просроченные задачи" count={overdue.length}>

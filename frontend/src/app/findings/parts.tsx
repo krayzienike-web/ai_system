@@ -6,6 +6,7 @@ import { useState } from "react";
 import { ConfidenceNote } from "../../ds/ai";
 import { Button, cx, Dialog, EASE, Pill, type Tone } from "../../ds/primitives";
 import { CYCLE, PROCESS_ICON } from "../../ds/viz";
+import { dateIn, DUE_PRESETS, todayLabel } from "../../lib/dates";
 import { perMonth } from "../../lib/format";
 import { PERIOD } from "../../mock/data";
 import { cycleStage, processTitle, restaurantByCode } from "../../mock/selectors";
@@ -36,7 +37,6 @@ const STAGE_TONE: Tone[] = ["neutral", "info", "brand", "gain"];
 
 export function StagePill({ f }: { f: Finding }) {
   const status = useStatus(f);
-  if (status === "disputed") return <Pill tone="warn">На уточнении</Pill>;
   const stage = cycleStage(status);
   return (
     <Pill tone={STAGE_TONE[stage]} icon={stage === 3}>
@@ -134,14 +134,10 @@ export function FindingRow({ f, showRestaurant }: { f: Finding; showRestaurant?:
 
 // ------------------------------------------------------------------ dialogs
 
-const DUE = [
-  { label: "За 3 дня", date: "26.10" },
-  { label: "За неделю", date: "30.10" },
-  { label: "За 2 недели", date: "06.11" },
-];
+const DUE = DUE_PRESETS.map((p) => ({ label: `За ${p.label.toLowerCase().replace("неделя", "неделю")}`, date: dateIn(p.days) }));
 
 export function TakeToWorkDialog({ f, open, onClose }: { f: Finding; open: boolean; onClose: () => void }) {
-  const { takeToWork } = usePrototype();
+  const { createTasks } = usePrototype();
   const [steps, setSteps] = useState<boolean[]>(() => f.actions.map((_, i) => i === 0));
   const [due, setDue] = useState(1);
   const chosen = f.actions.filter((_, i) => steps[i]);
@@ -188,7 +184,7 @@ export function TakeToWorkDialog({ f, open, onClose }: { f: Finding; open: boole
           <div className="mb-1 font-medium text-ink">Так будет выглядеть задача</div>
           {chosen.length ? chosen.join("; ") : "Выберите хотя бы один шаг"}. Срок — {DUE[due]!.date}.
           {f.effectRubMonth !== null && (
-            <> Если сработает, добавит к прибыли до {perMonth(f.effectRubMonth)} — проверим после инвентаризации {PERIOD.nextInventory.slice(0, 5)}.</>
+            <> Если сработает, эффект — до {perMonth(f.effectRubMonth)} — проверим после инвентаризации {PERIOD.nextInventory.slice(0, 5)}.</>
           )}
         </div>
         <div className="flex justify-end gap-2">
@@ -199,65 +195,24 @@ export function TakeToWorkDialog({ f, open, onClose }: { f: Finding; open: boole
             variant="primary"
             disabled={!chosen.length}
             onClick={() => {
-              takeToWork(f.id, {
-                id: `x-${f.id}`,
-                restaurantId: f.restaurantId ?? "",
-                title: chosen[0]!,
-                checklist: chosen.length > 1 ? chosen : undefined,
-                source: "Взято из сводки недели",
-                findingId: f.id,
-                due: DUE[due]!.date,
-                status: "assigned",
-              });
+              createTasks([
+                {
+                  id: `x-${f.id}`,
+                  restaurantId: f.restaurantId ?? "",
+                  title: chosen[0]!,
+                  checklist: chosen.length > 1 ? chosen : undefined,
+                  source: "Взято из сводки недели",
+                  findingId: f.id,
+                  assignedBy: "director",
+                  createdAt: todayLabel(),
+                  due: DUE[due]!.date,
+                  status: "assigned",
+                },
+              ]);
               onClose();
             }}
           >
             Взять в работу
-          </Button>
-        </div>
-      </div>
-    </Dialog>
-  );
-}
-
-const REASONS = ["Цифры не сходятся с моими", "Причина в другом", "Уже исправили", "Другое"];
-
-export function DisputeDialog({ f, open, onClose }: { f: Finding; open: boolean; onClose: () => void }) {
-  const { dispute } = usePrototype();
-  const [reason, setReason] = useState(REASONS[0]!);
-  const [comment, setComment] = useState("");
-  return (
-    <Dialog open={open} onClose={onClose} title="Уточнение по находке">
-      <div className="space-y-4 text-sm">
-        <div className="space-y-2">
-          {REASONS.map((r) => (
-            <label key={r} className="flex cursor-pointer items-center gap-2.5">
-              <input type="radio" name="reason" checked={reason === r} onChange={() => setReason(r)} className="h-4 w-4 accent-[#0a8f84]" />
-              {r}
-            </label>
-          ))}
-        </div>
-        <textarea
-          value={comment}
-          onChange={(e) => setComment(e.target.value)}
-          rows={3}
-          placeholder="Что происходит на самом деле? Это поможет поправить расчет"
-          aria-label="Комментарий"
-          className="w-full rounded-[10px] border border-line-strong p-3 outline-none focus:border-brand"
-        />
-        <p className="text-ink-3">Уточнение увидит управляющая компания. Пока данные перепроверяют, находка не попадет в ваши дела.</p>
-        <div className="flex justify-end gap-2">
-          <Button variant="ghost" onClick={onClose}>
-            Отмена
-          </Button>
-          <Button
-            variant="primary"
-            onClick={() => {
-              dispute(f.id, reason, comment);
-              onClose();
-            }}
-          >
-            Отправить
           </Button>
         </div>
       </div>

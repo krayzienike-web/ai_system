@@ -1,9 +1,10 @@
 import { Link } from "@tanstack/react-router";
-import { BellRing, Camera, Check, ChevronRight, Search } from "lucide-react";
-import { motion } from "motion/react";
+import { BellRing, Camera, Check, ChevronDown, Search } from "lucide-react";
+import { AnimatePresence, motion } from "motion/react";
 import { useState } from "react";
 
 import { Button, Card, cx, EmptyState, PageTitle, Reveal } from "../ds/primitives";
+import { daysUntil } from "../lib/dates";
 import { plural, rub } from "../lib/format";
 import { useViewer } from "../lib/useViewer";
 import { RESTAURANTS } from "../mock/data";
@@ -11,15 +12,7 @@ import { findingById } from "../mock/selectors";
 import type { Task } from "../mock/types";
 import { usePrototype } from "../state/prototype";
 import { useTasks } from "./counts";
-
-// Prototype "today" matches the demo data period.
-const TODAY = new Date(2026, 9, 23);
-
-function daysUntil(due: string) {
-  const [d, m] = due.split(".").map(Number);
-  const date = new Date(2026, (m ?? 1) - 1, d ?? 1);
-  return Math.round((date.getTime() - TODAY.getTime()) / 86_400_000);
-}
+import { OutcomePill, QuickTaskForm, TaskTrace } from "./tasks/trace";
 
 /** "просрочено на 3 дня" / "сегодня" / "через 8 дней" — when, in words. */
 function dueWords(t: Task) {
@@ -53,6 +46,8 @@ function HqTasks({ tasks }: { tasks: Task[] }) {
   const open = tasks.filter((t) => t.status !== "done" && !isLate(t));
   const done = tasks.filter((t) => t.status === "done");
   const lists: Record<Tab, Task[]> = { late, open, done };
+  const confirmed = done.reduce((acc, t) => acc + (t.outcome?.verdict === "confirmed" ? (t.outcome.effectRubMonth ?? 0) : 0), 0);
+  const [expanded, setExpanded] = useState<string | null>(null);
 
   const perRestaurant = RESTAURANTS.map((r) => {
     const own = tasks.filter((t) => t.restaurantId === r.code);
@@ -77,6 +72,9 @@ function HqTasks({ tasks }: { tasks: Task[] }) {
   return (
     <div className="space-y-6">
       <Reveal>
+        <QuickTaskForm />
+      </Reveal>
+      <Reveal>
         <div className="grid gap-3 sm:grid-cols-3">
           <Card className="p-5">
             <div className="text-sm text-ink-3">Просрочено</div>
@@ -91,7 +89,9 @@ function HqTasks({ tasks }: { tasks: Task[] }) {
           <Card className="p-5">
             <div className="text-sm text-ink-3">Сделано</div>
             <div className="num mt-1 font-display text-3xl font-semibold text-gain">{done.length}</div>
-            <div className="mt-1 text-xs text-ink-3">результат считаем после инвентаризации</div>
+            <div className="mt-1 text-xs text-ink-3">
+              {confirmed ? `подтверждено +${rub(confirmed)} в месяц` : "результат считаем после инвентаризации"}
+            </div>
           </Card>
         </div>
       </Reveal>
@@ -122,6 +122,7 @@ function HqTasks({ tasks }: { tasks: Task[] }) {
             <ul className="divide-y divide-line">
               {lists[tab].map((t) => {
                 const f = t.findingId ? findingById(t.findingId) : undefined;
+                const isOpen = expanded === t.id;
                 return (
                   <li key={t.id} className="grid grid-cols-[10px_1fr_auto] items-center gap-x-4 gap-y-1 px-4 py-3.5">
                     <span className={cx("h-2.5 w-2.5 rounded-full", isLate(t) ? STATUS_DOT.overdue : STATUS_DOT[t.status])} aria-hidden />
@@ -133,17 +134,37 @@ function HqTasks({ tasks }: { tasks: Task[] }) {
                         {f?.effectRubMonth != null && <span>на кону {rub(f.effectRubMonth)} в месяц</span>}
                       </span>
                     </span>
-                    <span>
-                      {isLate(t) ? (
+                    <span className="flex items-center gap-2">
+                      {t.status === "done" && <OutcomePill outcome={t.outcome} />}
+                      {isLate(t) && (
                         <Button size="sm" onClick={() => notify(`Напоминание отправлено: ${restaurantName(t.restaurantId)}`)}>
                           <BellRing size={14} /> Напомнить
                         </Button>
-                      ) : f ? (
-                        <Link to="/findings/$findingId" params={{ findingId: f.id }} className="inline-flex items-center text-sm text-ink-3 hover:text-ink" aria-label="Открыть находку">
-                          <ChevronRight size={18} />
-                        </Link>
-                      ) : null}
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setExpanded(isOpen ? null : t.id)}
+                        aria-expanded={isOpen}
+                        aria-label="История задачи"
+                        className="grid h-8 w-8 place-items-center rounded-[8px] text-ink-3 hover:bg-paper hover:text-ink"
+                      >
+                        <ChevronDown size={17} className={cx("transition", isOpen && "rotate-180")} />
+                      </button>
                     </span>
+                    <AnimatePresence initial={false}>
+                      {isOpen && (
+                        <motion.div
+                          initial={{ height: 0, opacity: 0 }}
+                          animate={{ height: "auto", opacity: 1 }}
+                          exit={{ height: 0, opacity: 0 }}
+                          className="col-start-2 col-end-4 overflow-hidden"
+                        >
+                          <div className="pt-3 pb-1">
+                            <TaskTrace task={t} />
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
                   </li>
                 );
               })}
@@ -206,7 +227,7 @@ function HqTasks({ tasks }: { tasks: Task[] }) {
 // ------------------------------------------------------------------ director
 
 function TaskCard({ task }: { task: Task }) {
-  const { setTaskStatus, toggleCheck, taskChecks, taskReports } = usePrototype();
+  const { setTaskStatus, toggleCheck, taskChecks } = usePrototype();
   const [reporting, setReporting] = useState(false);
   const [report, setReport] = useState("");
   const [photo, setPhoto] = useState<string | null>(null);
@@ -226,7 +247,9 @@ function TaskCard({ task }: { task: Task }) {
             </div>
             <div className="mt-1 text-[17px] font-semibold leading-snug text-ink">{task.title}</div>
           </div>
-          {finding?.effectRubMonth != null && (
+          {done ? (
+            <OutcomePill outcome={task.outcome} />
+          ) : finding?.effectRubMonth != null && (
             <div className="text-right">
               <div className="num font-display text-xl font-semibold text-ink">{rub(finding.effectRubMonth)}</div>
               <div className="text-xs text-ink-3">в месяц, если сработает</div>
@@ -254,10 +277,9 @@ function TaskCard({ task }: { task: Task }) {
           </ul>
         )}
 
-        {(task.report || taskReports[task.id] || task.result) && (
-          <div className="mx-5 mb-4 rounded-[12px] bg-paper p-3 text-sm">
-            {(task.report ?? taskReports[task.id]) && <div className="text-ink-2">Отчет: {task.report ?? taskReports[task.id]}</div>}
-            {task.result && <div className="mt-1 font-medium text-gain">{task.result}</div>}
+        {done && (
+          <div className="mx-5 mb-4 rounded-[14px] bg-paper/70 p-4">
+            <TaskTrace task={task} showFinding={false} />
           </div>
         )}
 
@@ -332,7 +354,10 @@ export function TasksPage() {
       ) : (
         <>
           <Reveal>
-            <div className="space-y-4">
+            <QuickTaskForm />
+          </Reveal>
+          <Reveal>
+            <div className="mt-4 space-y-4">
               {open.length ? open.map((t) => <TaskCard key={t.id} task={t} />) : <EmptyState title="Открытых задач нет">Возьмите в работу дело из «Моей недели».</EmptyState>}
             </div>
           </Reveal>

@@ -6,7 +6,7 @@ import { useState } from "react";
 import { AiBadge, VerifiedNote } from "../../ds/ai";
 import { Button, Card, cx, EmptyState, QuestionBlock, Reveal, Term } from "../../ds/primitives";
 import { AnimatedNumber, BulletScale, ProcessMap } from "../../ds/viz";
-import { pct, perMonth, points, rub, thousands } from "../../lib/format";
+import { pct, perMonth, plural, points, rub, thousands } from "../../lib/format";
 import { DIGEST_SOURCES, DIGEST_TEXT, IMPROVEMENTS, KPIS, ON_TABLE_LAST_WEEK, PERIOD, STOCK_RISKS } from "../../mock/data";
 import {
   networkKpis,
@@ -18,9 +18,10 @@ import {
   restaurantFindings,
   weeklyActions,
 } from "../../mock/selectors";
-import type { Finding, ProcessKey } from "../../mock/types";
+import type { Finding, ProcessKey, Task } from "../../mock/types";
 import { usePrototype } from "../../state/prototype";
 import { useTasks } from "../counts";
+import { OutcomePill } from "../tasks/trace";
 import { ActionCard, FindingRow, TakeToWorkDialog, useStatus } from "../findings/parts";
 
 /** The weekly view of one restaurant. Director's home; HQ opens it from "Рестораны" (readOnly). */
@@ -61,7 +62,7 @@ export function WeekView({ code, readOnly = false }: { code: string; readOnly?: 
               {restaurant.name} · неделя {PERIOD.week}
             </div>
             <div className="mt-4 text-sm font-medium text-spark">
-              <Term hint="Сколько прибыли в месяц можно добавить: перестать терять деньги на перерасходе, переплатах и списаниях — и дополнительно заработать на ценах меню и лучших поставщиках">Можно добавить к прибыли</Term>
+              <Term hint="Сколько прибыли в месяц можно получить дополнительно: перестать терять деньги на перерасходе, переплатах и списаниях — и заработать больше на ценах меню и лучших поставщиках">Потенциал прибыли</Term>
             </div>
             <div className="mt-1 flex items-baseline gap-3">
               <span className="font-display text-[56px] leading-none font-semibold tracking-tight sm:text-[72px]">
@@ -264,14 +265,27 @@ export function WeekView({ code, readOnly = false }: { code: string; readOnly?: 
           </Reveal>
 
           <Reveal index={5}>
-            <QuestionBlock question="Что улучшилось?" answer={doneTasks.length ? "Ваши действия уже дают результат" : undefined}>
+            <QuestionBlock
+              question="Что улучшилось?"
+              answer={improvedAnswer(doneTasks)}
+              action={
+                doneTasks.length > 0 && (
+                  <Link to="/tasks" className="text-sm font-medium text-brand-strong hover:underline">
+                    История задач →
+                  </Link>
+                )
+              }
+            >
               <ul className="space-y-3 text-sm">
                 {doneTasks.map((t) => (
                   <li key={t.id} className="flex gap-2">
                     <CheckCircle2 size={17} className="mt-0.5 shrink-0 text-gain" aria-hidden />
-                    <span>
-                      {t.title}
-                      {t.result && <span className="block font-medium text-gain">{t.result}</span>}
+                    <span className="min-w-0 space-y-1">
+                      <span className="block">
+                        {t.title} <span className="text-ink-3">· сделано {t.doneAt}</span>
+                      </span>
+                      <OutcomePill outcome={t.outcome} />
+                      {t.outcome && <span className="block text-xs text-ink-3">{t.outcome.text}</span>}
                     </span>
                   </li>
                 ))}
@@ -313,4 +327,14 @@ function ReadOnlyAction({ f, index }: { f: Finding; index: number }) {
       </div>
     </Card>
   );
+}
+
+function improvedAnswer(done: Task[]) {
+  if (!done.length) return undefined;
+  const confirmed = done.reduce((acc, t) => acc + (t.outcome?.verdict === "confirmed" ? (t.outcome.effectRubMonth ?? 0) : 0), 0);
+  const pending = done.filter((t) => t.outcome?.verdict === "pending").length;
+  return [confirmed ? `Ваши задачи уже приносят +${perMonth(confirmed)}` : null, pending ? `по ${plural(pending, ["задаче", "задачам", "задачам"])} результат посчитаем после инвентаризации` : null]
+    .filter(Boolean)
+    .join("; ")
+    .replace(/^./, (c) => c.toUpperCase()) + ".";
 }

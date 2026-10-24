@@ -17,7 +17,7 @@ export function NetworkPage() {
   const onTable = totals.losses + totals.potential;
   const first = trend.onTable[0]!;
   const inbox = useInbox();
-  const inboxCount = inbox.experiments.length + inbox.disputed.length + inbox.overdue.length;
+  const inboxCount = inbox.experiments.length + inbox.overdue.length + inbox.drafts.length;
 
   const ranking = RESTAURANTS.map((r) => {
     const { losses, problems } = restaurantFindings(r.code);
@@ -51,7 +51,7 @@ export function NetworkPage() {
               {plural(RESTAURANTS.length, ["ресторан", "ресторана", "ресторанов"])} · неделя {PERIOD.week}
             </div>
             <div className="mt-4 text-sm font-medium text-spark">
-              <Term hint="Сколько прибыли в месяц можно добавить: перестать терять деньги на перерасходе, переплатах и списаниях — и дополнительно заработать на ценах меню и лучших поставщиках">Можно добавить к прибыли сети</Term>
+              <Term hint="Сколько прибыли в месяц можно получить дополнительно: перестать терять деньги на перерасходе, переплатах и списаниях — и заработать больше на ценах меню и лучших поставщиках">Потенциал прибыли сети</Term>
             </div>
             <div className="mt-1 flex items-baseline gap-3">
               <span className="font-display text-[56px] leading-none font-semibold tracking-tight sm:text-[72px]">
@@ -73,11 +73,11 @@ export function NetworkPage() {
           </div>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
             <div className="rounded-[18px] bg-white/[0.07] p-5">
-              <div className="text-sm text-white/70">Уже добавили к прибыли</div>
+              <div className="text-sm text-white/70">Подтвержденный эффект</div>
               <div className="mt-1 font-display text-3xl font-semibold text-[#9be3a9]">
                 <AnimatedNumber value={totals.confirmed} format={thousands} /> <span className="text-base text-white/80">тыс ₽/мес</span>
               </div>
-              <div className="mt-1 text-xs text-white/60">подтверждено проверками</div>
+              <div className="mt-1 text-xs text-white/60">по итогам завершенных проверок</div>
             </div>
             <Link to="/decisions" className="group rounded-[18px] bg-spark p-5 text-ink transition hover:brightness-105">
               <div className="flex items-center gap-2 text-sm font-medium">
@@ -104,7 +104,7 @@ export function NetworkPage() {
           >
             <AreaTrend
               labels={trend.labels}
-              series={[{ name: "Можно добавить к прибыли", values: trend.onTable, color: "#0a8f84", fill: true }]}
+              series={[{ name: "Потенциал прибыли", values: trend.onTable, color: "#0a8f84", fill: true }]}
               format={(n) => rub(n)}
               height={150}
             />
@@ -120,26 +120,31 @@ export function NetworkPage() {
         <Reveal index={2}>
           <QuestionBlock
             question="Кто теряет больше всего?"
+            action={
+              <Link to="/restaurants" className="text-sm font-medium text-brand-strong hover:underline">
+                Все рестораны ({RESTAURANTS.length}) →
+              </Link>
+            }
             answer={
               <>
-                {ranking[0]!.title} — {perMonth(ranking[0]!.value)}. Нажмите на ресторан, чтобы открыть его неделю.
+                {ranking[0]!.title} — {perMonth(ranking[0]!.value)}. Здесь топ-5, полный список с поиском — в «Все рестораны».
               </>
             }
             source={<VerifiedNote>открытые проблемы; «лучше / хуже» — по сравнению с прошлой неделей</VerifiedNote>}
             className="h-full"
           >
-            <RankList items={ranking} />
+            <RankList items={ranking.slice(0, 5)} />
           </QuestionBlock>
         </Reveal>
       </div>
 
       <Reveal index={3}>
         <QuestionBlock
-          question="Где проблема не в одном ресторане, а в сети?"
+          question="Общие проблемы сети"
           answer={
             systemic.length
-              ? `${plural(systemic.length, ["процесс", "процесса", "процессов"])} проседает сразу в нескольких ресторанах — это повод для общего решения, а не задач каждому директору.`
-              : "Системных проблем нет"
+              ? `В ${plural(systemic.length, ["процессе", "процессах", "процессах"])} проблемы сразу в нескольких ресторанах — их выгоднее решать одним решением на всю сеть.`
+              : "Общих проблем нет"
           }
         >
           <div className="grid gap-3 md:grid-cols-3">

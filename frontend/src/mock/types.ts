@@ -13,7 +13,7 @@ export type ProcessKey =
 
 export type FindingKind = "problem" | "opportunity";
 export type Confidence = "high" | "medium" | "low";
-export type FindingStatus = "new" | "in_work" | "disputed" | "in_experiment" | "resolved";
+export type FindingStatus = "new" | "in_work" | "in_experiment" | "resolved";
 export type Status = "good" | "warning" | "critical";
 
 export interface RestaurantInfo {
@@ -66,7 +66,6 @@ export interface Finding {
   scale?: ScaleSpec;
   /** How the used quantity splits (by recipe norm / written off / unexplained). */
   composition?: CompositionSpec;
-  dispute?: { by: string; reason: string; comment: string; date: string };
 }
 
 export interface ScaleSpec {
@@ -118,12 +117,25 @@ export interface Task {
   source: string; // where the task came from
   findingId?: string;
   experimentId?: string;
+  /** Who set the task: HQ assigns, a director takes it from the digest or adds it. */
+  assignedBy: "hq" | "director";
+  createdAt: string;
   due: string;
   status: "assigned" | "in_progress" | "done" | "overdue";
   checklist?: string[];
   report?: string;
-  /** Measured outcome once the next recount closes the period. */
-  result?: string;
+  doneAt?: string;
+  /** Measured outcome: computed by the analytics layer after the next recount or at the end of a check. */
+  outcome?: TaskOutcome;
+}
+
+export interface TaskOutcome {
+  verdict: "confirmed" | "not_confirmed" | "pending";
+  /** Measured change in profit, ₽/month. */
+  effectRubMonth?: number;
+  /** How it was measured, in words. */
+  text: string;
+  measuredOn?: string;
 }
 
 export interface Experiment {

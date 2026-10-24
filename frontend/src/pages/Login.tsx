@@ -58,7 +58,7 @@ export function LoginPage() {
             transition={{ delay: 0.3, duration: 0.6 }}
             className="mt-4 max-w-md text-white/70"
           >
-            Каждую неделю: сколько можно добавить к прибыли, три главных дела и проверка, что изменения сработали.
+            Каждую неделю: потенциал прибыли, три главных дела и проверка, что изменения сработали.
           </motion.p>
         </div>
         <motion.div
@@ -67,7 +67,7 @@ export function LoginPage() {
           transition={{ delay: 0.5, duration: 0.6, ease: EASE }}
           className="max-w-sm rounded-[20px] bg-white/[0.07] p-5"
         >
-          <div className="text-sm text-spark">Можно добавить к прибыли</div>
+          <div className="text-sm text-spark">Потенциал прибыли</div>
           <div className="font-display text-4xl font-semibold">128 тыс ₽</div>
           <div className="text-sm text-white/60">в месяц · пример ресторана из демо-сети</div>
         </motion.div>

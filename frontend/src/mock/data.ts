@@ -276,7 +276,7 @@ export const FINDINGS: Finding[] = [
     summary: "Сезонное меню (9 блюд) продается через r_keeper, но в iiko для них нет ТТК. Потери по этим блюдам система не видит.",
     causes: ["Сезонное меню введено без заведения ТТК"],
     actions: ["Завести ТТК для 9 блюд (список в доказательствах)"],
-    status: "new",
+    status: "in_work",
   },
   {
     id: "r02-menu",
@@ -489,6 +489,8 @@ export const TASKS: Task[] = [
     source: "Эксперимент «Контрольное взвешивание сыра»",
     findingId: "r01-mozzarella",
     experimentId: "e-mozzarella",
+    assignedBy: "hq",
+    createdAt: "13.10",
     due: "10.11",
     status: "in_progress",
     checklist: ["Весы на станции пиццы", "Фото-стандарт порции у станции", "Пересчет моцареллы каждый понедельник"],
@@ -499,6 +501,8 @@ export const TASKS: Task[] = [
     title: "Запросить у «Молочного двора» цену на сливки",
     source: "Взято директором из сводки",
     findingId: "r01-cream",
+    assignedBy: "director",
+    createdAt: "19.10",
     due: "25.10",
     status: "assigned",
   },
@@ -508,6 +512,8 @@ export const TASKS: Task[] = [
     title: "Взвешивать каждую поставку мяса и птицы",
     source: "Взято директором из сводки",
     findingId: "r02-chicken-receiving",
+    assignedBy: "director",
+    createdAt: "14.10",
     due: "20.10",
     status: "overdue",
   },
@@ -517,10 +523,36 @@ export const TASKS: Task[] = [
     title: "Заказывать зелень партиями на 2–3 дня",
     source: "Эксперимент «Малые партии зелени»",
     experimentId: "e-greens",
+    findingId: "r03-greens-batch",
+    assignedBy: "hq",
+    createdAt: "15.09",
     due: "10.10",
     status: "done",
+    doneAt: "10.10",
     report: "Заказ переведен на вторник и пятницу. Списания за 4 недели — 5 600 ₽ против 10 800 ₽ раньше.",
-    result: "Подтверждено проверкой: +5,2 тыс ₽ в месяц",
+    outcome: {
+      verdict: "confirmed",
+      effectRubMonth: 5_200,
+      text: "Списания зелени снизились на 48% по сравнению с ресторанами, где ничего не меняли. Дефицитов не было.",
+      measuredOn: "10.10",
+    },
+  },
+  {
+    id: "t5",
+    restaurantId: "R02",
+    title: "Завести техкарты на 9 блюд сезонного меню",
+    source: "Поставлено управляющей компанией",
+    findingId: "r02-no-recipes",
+    assignedBy: "hq",
+    createdAt: "14.10",
+    due: "24.10",
+    status: "done",
+    doneAt: "21.10",
+    report: "Техкарты на 9 блюд заведены в iiko 21.10, шеф проверил граммовки.",
+    outcome: {
+      verdict: "pending",
+      text: "Теперь фудкост этих блюд считается. Сколько это дало, покажем после инвентаризации 02.11.",
+    },
   },
 ];
 
@@ -653,7 +685,7 @@ export const FRESHNESS: DataSourceFreshness[] = RESTAURANTS.flatMap((r) => [
 // Conclusions, scales and balances for each finding (docs/ux/03-to-be.md). Kept separate so the
 // base findings stay close to what the analytics engine computes.
 
-type FindingExtras = Pick<Finding, "headline" | "scale" | "composition" | "dispute"> & { chartConclusion?: string };
+type FindingExtras = Pick<Finding, "headline" | "scale" | "composition"> & { chartConclusion?: string };
 
 const EXTRAS: Record<string, FindingExtras> = {
   "r01-mozzarella": {
@@ -706,12 +738,6 @@ const EXTRAS: Record<string, FindingExtras> = {
   },
   "r02-mis-sort": {
     headline: "Пармезан и грана падано путают при учете: излишек одного почти равен недостаче другого.",
-    dispute: {
-      by: "Директор, Ресторан на Арбате",
-      reason: "Причина в другом",
-      comment: "Сыры хранятся раздельно и подписаны. Проверьте, не стоит ли в техкарте «Цезаря» грана вместо пармезана.",
-      date: "21.10",
-    },
   },
   "r02-no-recipes": {
     headline: "У 9 блюд сезонного меню нет техкарт — по ним система не видит потери (7% выручки).",
@@ -753,7 +779,6 @@ for (const f of FINDINGS) {
   const { chartConclusion, ...rest } = extra;
   Object.assign(f, rest);
   if (chartConclusion && f.chart) f.chart.conclusion = chartConclusion;
-  if (rest.dispute) f.status = "disputed";
 }
 
 /** Weekly network trend for HQ: what can still be returned vs what is confirmed as returned (₽/month). */

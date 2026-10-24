@@ -10,6 +10,8 @@ import { EXPERIMENTS, RESTAURANTS } from "../../mock/data";
 import { findingById, restaurantByCode } from "../../mock/selectors";
 import type { Experiment } from "../../mock/types";
 import { usePrototype } from "../../state/prototype";
+import { useTasks } from "../counts";
+import { TaskTrace } from "../tasks/trace";
 
 const names = (codes: string[]) => codes.map((c) => restaurantByCode(c)?.name ?? c);
 
@@ -155,8 +157,10 @@ export function CheckPage() {
   const e = EXPERIMENTS.find((x) => x.id === checkId);
   const { decideExperiment, proposeRollout, rollouts } = usePrototype();
   const stage = useStage(e ?? EXPERIMENTS[0]!);
+  const tasks = useTasks();
   if (!e) return <EmptyState title="Проверка не найдена" />;
   const finding = e.findingId ? findingById(e.findingId) : undefined;
+  const checkTasks = tasks.filter((t) => t.experimentId === e.id);
 
   return (
     <div className="mx-auto max-w-[960px] space-y-6">
@@ -246,6 +250,25 @@ export function CheckPage() {
           {e.progress && stage === "running" && <div className="mt-5 rounded-[12px] bg-info-soft p-3 text-sm text-info">{e.progress}</div>}
         </QuestionBlock>
       </Reveal>
+
+      {checkTasks.length > 0 && (
+        <Reveal index={3}>
+          <QuestionBlock
+            question="Что сделали в ресторанах?"
+            answer={`Задач по проверке — ${checkTasks.length}, выполнено ${checkTasks.filter((t) => t.status === "done").length}. Отчеты директоров и результат — по каждой задаче.`}
+            source={<VerifiedNote>результат считает система по данным, а не со слов исполнителя</VerifiedNote>}
+          >
+            <div className="grid gap-4 md:grid-cols-2">
+              {checkTasks.map((t) => (
+                <div key={t.id} className="rounded-[16px] border border-line p-4">
+                  <div className="mb-3 font-medium">{restaurantByCode(t.restaurantId)?.name}</div>
+                  <TaskTrace task={t} />
+                </div>
+              ))}
+            </div>
+          </QuestionBlock>
+        </Reveal>
+      )}
 
       {stage === "proposed" && (
         <Reveal index={3}>

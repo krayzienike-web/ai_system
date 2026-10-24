@@ -75,7 +75,7 @@ export function networkTrend() {
 
 /** Where a finding stands in the loop "found → doing → checking → result" (index into CYCLE). */
 export function cycleStage(status: Finding["status"]): number {
-  return { new: 0, disputed: 0, in_work: 1, in_experiment: 2, resolved: 3 }[status];
+  return { new: 0, in_work: 1, in_experiment: 2, resolved: 3 }[status];
 }
 
 /** The 3 most valuable open actions for a director this week: money × confidence, new items first. */

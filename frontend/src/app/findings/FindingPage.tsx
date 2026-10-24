@@ -11,8 +11,11 @@ import { num, perMonth, rub } from "../../lib/format";
 import { canSeeRestaurant, useViewer } from "../../lib/useViewer";
 import { EXPERIMENTS, PERIOD } from "../../mock/data";
 import { cycleStage, findingById, restaurantByCode } from "../../mock/selectors";
+import type { Experiment, Task } from "../../mock/types";
 import { usePrototype } from "../../state/prototype";
-import { DisputeDialog, FindingConfidence, MoneyWords, ProcessChip, TakeToWorkDialog, useStatus } from "./parts";
+import { useTasks } from "../counts";
+import { QuickSteps, TaskTrace } from "../tasks/trace";
+import { FindingConfidence, MoneyWords, ProcessChip, TakeToWorkDialog, useStatus } from "./parts";
 
 export function FindingPage() {
   const { findingId } = useParams({ from: "/app/findings/$findingId" });
@@ -29,16 +32,15 @@ export function FindingPage() {
 function FindingView({ id, isHq }: { id: string; isHq: boolean }) {
   const f = findingById(id)!;
   const status = useStatus(f);
-  const { openChat, disputes } = usePrototype();
+  const { openChat } = usePrototype();
   const [taking, setTaking] = useState(false);
-  const [disputing, setDisputing] = useState(false);
   const [showEvidence, setShowEvidence] = useState(false);
   const restaurant = f.restaurantId ? restaurantByCode(f.restaurantId) : null;
   const experiment = EXPERIMENTS.find((e) => e.findingId === f.id);
+  const tasks = useTasks().filter((t) => t.findingId === f.id);
   const stage = cycleStage(status);
   const unit = f.scale?.unit ?? "";
   const fmtScale = (n: number) => (unit === "%" ? `${n.toLocaleString("ru-RU")}%` : `${num(n)} ${unit}`);
-  const dispute = f.dispute ?? (disputes[f.id] ? { by: "Вы", date: "сегодня", ...disputes[f.id]! } : undefined);
 
   return (
     <div className="mx-auto max-w-[1040px] space-y-6">
@@ -68,14 +70,9 @@ function FindingView({ id, isHq }: { id: string; isHq: boolean }) {
           </div>
           <div className="mt-6 flex flex-wrap items-center gap-3 border-t border-line pt-5">
             {!isHq && status === "new" && (
-              <>
-                <Button variant="primary" size="lg" onClick={() => setTaking(true)}>
-                  Взять в работу
-                </Button>
-                <Button size="lg" onClick={() => setDisputing(true)}>
-                  Есть уточнение
-                </Button>
-              </>
+              <Button variant="primary" size="lg" onClick={() => setTaking(true)}>
+                Взять в работу
+              </Button>
             )}
             {isHq && f.restaurantId && !experiment && (
               <Link to="/checks/new/$findingId" params={{ findingId: f.id }} className={buttonClass("primary", "lg")}>
@@ -94,14 +91,6 @@ function FindingView({ id, isHq }: { id: string; isHq: boolean }) {
               <FindingConfidence f={f} />
             </span>
           </div>
-          {dispute && (
-            <div className="mt-4 rounded-[12px] bg-warn-soft p-4 text-sm text-ink">
-              <div className="font-medium">
-                Уточнение — {dispute.by}: «{dispute.reason}» · {dispute.date}
-              </div>
-              {dispute.comment && <div className="mt-1 text-ink-2">{dispute.comment}</div>}
-            </div>
-          )}
           {experiment?.progress && <div className="mt-4 rounded-[12px] bg-info-soft p-4 text-sm text-info">{experiment.progress}</div>}
         </section>
       </Reveal>
@@ -150,20 +139,48 @@ function FindingView({ id, isHq }: { id: string; isHq: boolean }) {
                 ))}
               </ul>
             )}
-            <div className="mt-5 text-sm font-medium">Что сделать</div>
-            <ol className="mt-2 space-y-2 text-sm">
-              {f.actions.map((a, i) => (
-                <li key={a} className="flex gap-3">
-                  <span className="num grid h-6 w-6 shrink-0 place-items-center rounded-full bg-brand-soft text-xs font-semibold text-brand-strong">
-                    {i + 1}
-                  </span>
-                  <span className="pt-0.5">{a}</span>
-                </li>
-              ))}
-            </ol>
+            <div className="mt-5">
+              <QuickSteps f={f} />
+            </div>
           </QuestionBlock>
         </Reveal>
       </div>
+
+      {(tasks.length > 0 || experiment) && (
+        <Reveal index={3}>
+          <QuestionBlock
+            question="Что сделали и что получилось?"
+            answer={traceAnswer(tasks, experiment)}
+            source={<VerifiedNote>результат считает система по данным после выполнения, а не со слов исполнителя</VerifiedNote>}
+          >
+            <div className="grid gap-4 md:grid-cols-2">
+              {tasks.map((t) => (
+                <div key={t.id} className="rounded-[16px] border border-line p-4">
+                  <div className="mb-3 font-medium">{t.title}</div>
+                  <TaskTrace task={t} showFinding={false} showRestaurant={isHq} />
+                </div>
+              ))}
+              {experiment && (
+                <Link
+                  to="/checks/$checkId"
+                  params={{ checkId: experiment.id }}
+                  className="rounded-[16px] border border-line p-4 transition hover:border-ink-3"
+                >
+                  <div className="flex items-center gap-2 font-medium">
+                    <FlaskConical size={16} className="text-brand" /> Проверка «{experiment.title}»
+                  </div>
+                  <div className="mt-2 text-sm text-ink-2">
+                    {experiment.result
+                      ? `Итог: +${perMonth(experiment.result.effectRubMonth)} — подтверждено сравнением с ресторанами без изменений.`
+                      : experiment.progress ?? `Ожидаем +${perMonth(experiment.expectedRubMonth)}; итог — после ${experiment.period}.`}
+                  </div>
+                  <div className="mt-2 text-sm text-brand-strong">Открыть проверку →</div>
+                </Link>
+              )}
+            </div>
+          </QuestionBlock>
+        </Reveal>
+      )}
 
       {f.composition && (
         <Reveal index={3}>
@@ -244,9 +261,17 @@ function FindingView({ id, isHq }: { id: string; isHq: boolean }) {
       </p>
 
       <TakeToWorkDialog f={f} open={taking} onClose={() => setTaking(false)} />
-      <DisputeDialog f={f} open={disputing} onClose={() => setDisputing(false)} />
     </div>
   );
+}
+
+function traceAnswer(tasks: Task[], experiment?: Experiment) {
+  const confirmed = tasks.reduce((acc, t) => acc + (t.outcome?.verdict === "confirmed" ? (t.outcome.effectRubMonth ?? 0) : 0), 0);
+  if (confirmed) return `Сработало: +${perMonth(confirmed)} — посчитано по данным после выполнения.`;
+  if (experiment?.result) return `Проверка подтвердила эффект +${perMonth(experiment.result.effectRubMonth)}.`;
+  const done = tasks.filter((t) => t.status === "done").length;
+  if (done) return `Задачи выполнены (${done} из ${tasks.length}), результат в рублях посчитаем после инвентаризации.`;
+  return `В работе: ${tasks.length ? `задач — ${tasks.length}` : "идет проверка"}. Как только выполнят — здесь появится отчет и результат.`;
 }
 
 function scaleAnswer(s: NonNullable<ReturnType<typeof findingById>>["scale"]) {
