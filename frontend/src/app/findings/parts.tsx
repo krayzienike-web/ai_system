@@ -9,9 +9,10 @@ import { CYCLE, PROCESS_ICON } from "../../ds/viz";
 import { dateIn, DUE_PRESETS, todayLabel } from "../../lib/dates";
 import { perMonth } from "../../lib/format";
 import { PERIOD } from "../../mock/data";
-import { cycleStage, processTitle, restaurantByCode } from "../../mock/selectors";
+import { processTitle, restaurantByCode } from "../../mock/selectors";
 import type { Finding, FindingStatus } from "../../mock/types";
 import { usePrototype } from "../../state/prototype";
+import { useWork, type WorkStage } from "../counts";
 
 export function useStatus(f: Finding): FindingStatus {
   const { findingStatus } = usePrototype();
@@ -35,9 +36,10 @@ export function MoneyWords({ f, size = "md" }: { f: Finding; size?: "md" | "lg" 
 
 const STAGE_TONE: Tone[] = ["neutral", "info", "brand", "gain"];
 
+const STAGE_INDEX: Record<WorkStage, number> = { new: 0, doing: 1, checking: 2, done: 3 };
+
 export function StagePill({ f }: { f: Finding }) {
-  const status = useStatus(f);
-  const stage = cycleStage(status);
+  const stage = STAGE_INDEX[useWork()(f).stage];
   return (
     <Pill tone={STAGE_TONE[stage]} icon={stage === 3}>
       {CYCLE[stage]}

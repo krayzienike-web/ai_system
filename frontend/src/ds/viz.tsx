@@ -413,3 +413,41 @@ export function AreaTrend({
     </svg>
   );
 }
+
+// ------------------------------------------------------------------ profit potential split
+
+/** How the profit potential splits on a dark hero: losses vs missed profit, one stacked bar. */
+export function ProfitSplit({ losses, missed, format }: { losses: number; missed: number; format: (n: number) => string }) {
+  const total = losses + missed || 1;
+  const rows = [
+    { label: "Потери", note: "перерасход, переплаты, списания", value: losses, color: "bg-[#ff8a80]" },
+    { label: "Упущенная выгода", note: "цены в меню, лучшие поставщики", value: missed, color: "bg-[#9be3a9]" },
+  ];
+  return (
+    <div className="mt-5 max-w-md">
+      <div className="flex h-2 overflow-hidden rounded-full bg-white/10" aria-hidden>
+        {rows.map((r, i) => (
+          <motion.div
+            key={r.label}
+            className={r.color}
+            initial={{ width: 0 }}
+            animate={{ width: `${(r.value / total) * 100}%` }}
+            transition={{ duration: 0.6, ease: EASE, delay: 0.2 + i * 0.1 }}
+          />
+        ))}
+      </div>
+      <dl className="mt-3 grid grid-cols-2 gap-4 text-sm">
+        {rows.map((r) => (
+          <div key={r.label}>
+            <dt className="flex items-center gap-1.5 text-white/70">
+              <span className={cx("h-2 w-2 rounded-full", r.color)} aria-hidden />
+              {r.label}
+            </dt>
+            <dd className="num mt-0.5 text-base font-semibold">{format(r.value)}</dd>
+            <dd className="text-xs text-white/50">{r.note}</dd>
+          </div>
+        ))}
+      </dl>
+    </div>
+  );
+}

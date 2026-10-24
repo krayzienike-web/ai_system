@@ -54,6 +54,7 @@ const DOT: Record<StepState, string> = {
  * The result is computed by code after the recount or the check, never typed by a person.
  */
 export function TaskTrace({ task, showFinding = true, showRestaurant = false }: { task: Task; showFinding?: boolean; showRestaurant?: boolean }) {
+  const viewer = useViewer();
   const finding = task.findingId ? findingById(task.findingId) : undefined;
   const done = task.status === "done";
   const late = !done && (task.status === "overdue" || daysUntil(task.due) < 0);
@@ -107,7 +108,7 @@ export function TaskTrace({ task, showFinding = true, showRestaurant = false }: 
             {o.text}
             {o.measuredOn && <span className="text-ink-3"> · посчитано {o.measuredOn}</span>}
           </span>
-          {task.experimentId && (
+          {task.experimentId && viewer?.isHq && (
             <Link to="/checks/$checkId" params={{ checkId: task.experimentId }} className="inline-block text-brand-strong hover:underline">
               Как проверяли →
             </Link>
@@ -196,10 +197,16 @@ export function QuickSteps({ f }: { f: Finding }) {
               <span className="num grid h-6 w-6 shrink-0 place-items-center rounded-full bg-brand-soft text-xs font-semibold text-brand-strong">{i + 1}</span>
               <span className="min-w-0 flex-1 pt-0.5">{a}</span>
               {existing.length ? (
-                <Link to="/tasks" className="inline-flex items-center gap-1 pt-0.5 text-xs font-medium text-brand-strong hover:underline">
-                  <Check size={13} /> Задача до {existing[0]!.due}
-                  {existing.length > 1 && ` · ${existing.length} рест.`} →
-                </Link>
+                byHq ? (
+                  <span className="inline-flex items-center gap-1 pt-0.5 text-xs font-medium text-brand-strong">
+                    <Check size={13} /> Поставлено до {existing[0]!.due}
+                    {existing.length > 1 && ` · ${existing.length} рест.`}
+                  </span>
+                ) : (
+                  <Link to="/tasks" className="inline-flex items-center gap-1 pt-0.5 text-xs font-medium text-brand-strong hover:underline">
+                    <Check size={13} /> Задача до {existing[0]!.due} →
+                  </Link>
+                )
               ) : (
                 <Button
                   size="sm"

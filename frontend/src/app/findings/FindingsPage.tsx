@@ -8,19 +8,22 @@ import { PROCESS_ICON } from "../../ds/viz";
 import { plural, rub } from "../../lib/format";
 import { useViewer } from "../../lib/useViewer";
 import { FINDINGS, RESTAURANTS } from "../../mock/data";
-import { cycleStage, PROCESSES, processTitle, restaurantByCode } from "../../mock/selectors";
+import { PROCESSES, processTitle, restaurantByCode } from "../../mock/selectors";
 import type { Finding, FindingKind, ProcessKey } from "../../mock/types";
-import { usePrototype } from "../../state/prototype";
+import { useWork, type WorkStage } from "../counts";
 import { StagePill } from "./parts";
 
-type Stage = "all" | "new" | "doing" | "done";
+type Stage = "all" | WorkStage;
 
 const STAGES: { key: Stage; label: string }[] = [
-  { key: "all", label: "Все этапы" },
+  { key: "all", label: "Все" },
   { key: "new", label: "Новые" },
-  { key: "doing", label: "В работе" },
+  { key: "doing", label: "Делаем" },
+  { key: "checking", label: "Проверяем" },
   { key: "done", label: "Есть результат" },
 ];
+
+const LINE_TONE = { loss: "text-loss", gain: "text-gain", info: "text-info", warn: "text-warn" } as const;
 
 const KIND = {
   problem: { title: "Где теряем", hint: "перерасход, переплаты, списания", text: "text-loss", bar: "bg-loss-icon", soft: "bg-loss-soft text-loss", ring: "ring-loss-icon" },
@@ -32,6 +35,7 @@ const select =
 
 /** One finding as a row: money first (with a bar to compare), then what and where. */
 function Row({ f, max, showRestaurant, index }: { f: Finding; max: number; showRestaurant: boolean; index: number }) {
+  const work = useWork()(f);
   const Icon = PROCESS_ICON[f.process];
   const k = KIND[f.kind];
   const restaurant = f.restaurantId ? restaurantByCode(f.restaurantId) : null;
@@ -74,6 +78,7 @@ function Row({ f, max, showRestaurant, index }: { f: Finding; max: number; showR
             <span className="inline-flex items-center gap-1">
               <Icon size={13} strokeWidth={1.75} aria-hidden /> {processTitle(f.process)}
             </span>
+            {work.line && <span className={cx("font-medium", LINE_TONE[work.line.tone])}>{work.line.text}</span>}
           </span>
         </span>
         <span className="flex items-center gap-2">
@@ -112,23 +117,23 @@ function Group({ title, items, max, showRestaurant }: { title: string; items: Fi
 
 export function FindingsPage() {
   const viewer = useViewer();
-  const { findingStatus } = usePrototype();
+  const workOf = useWork();
   const [kind, setKind] = useState<FindingKind | "all">("all");
   const [process, setProcess] = useState<ProcessKey | "all">("all");
   const [restaurant, setRestaurant] = useState<string>("all");
   const [stage, setStage] = useState<Stage>("all");
+  const [lateOnly, setLateOnly] = useState(false);
   if (!viewer) return null;
 
-  const stageOf = (f: Finding): Stage => {
-    const s = cycleStage(findingStatus[f.id] ?? f.status);
-    return s === 0 ? "new" : s === 3 ? "done" : "doing";
-  };
   const scope = FINDINGS.filter((f) => viewer.isHq || f.restaurantId === viewer.restaurantCode);
+  const stageCount = (s: Stage) => scope.filter((f) => s === "all" || workOf(f).stage === s).length;
+  const lateCount = scope.filter((f) => workOf(f).late > 0).length;
   const filtered = scope.filter(
     (f) =>
       (process === "all" || f.process === process) &&
       (restaurant === "all" || (f.restaurantId ?? "net") === restaurant) &&
-      (stage === "all" || stageOf(f) === stage),
+      (stage === "all" || workOf(f).stage === stage) &&
+      (!lateOnly || workOf(f).late > 0),
   );
   const byMoney = (a: Finding, b: Finding) => (b.effectRubMonth ?? -1) - (a.effectRubMonth ?? -1);
   const ofKind = (k: FindingKind) => filtered.filter((f) => f.kind === k && f.effectRubMonth !== null).sort(byMoney);
@@ -136,7 +141,7 @@ export function FindingsPage() {
   const max = Math.max(...filtered.map((f) => f.effectRubMonth ?? 0), 1);
   const total = (k: FindingKind) => filtered.filter((f) => f.kind === k).reduce((acc, f) => acc + (f.effectRubMonth ?? 0), 0);
   const count = (k: FindingKind) => filtered.filter((f) => f.kind === k).length;
-  const filtersOn = process !== "all" || restaurant !== "all" || stage !== "all";
+  const filtersOn = process !== "all" || restaurant !== "all" || stage !== "all" || lateOnly;
   const shownKinds = (kind === "all" ? ["problem", "opportunity"] : [kind]) as FindingKind[];
   const empty = shownKinds.every((k) => !ofKind(k).length) && !unestimated.length;
 
@@ -144,7 +149,11 @@ export function FindingsPage() {
     <div className="mx-auto max-w-[1040px]">
       <PageTitle
         title={viewer.isHq ? "Находки сети" : "Все находки ресторана"}
-        subtitle="Что су-шеф нашел в данных: где теряем деньги и где можно заработать. Самые дорогие — сверху."
+        subtitle={
+          viewer.isHq
+            ? "Все, что су-шеф нашел, и работа по каждой находке: задачи директорам, проверки и результат. Самые дорогие — сверху."
+            : "Что су-шеф нашел в данных: где теряем деньги и где можно заработать. Самые дорогие — сверху."
+        }
       />
 
       {/* Kind switch: two summary cards that also filter */}
@@ -213,10 +222,25 @@ export function FindingsPage() {
                 {stage === s.key && (
                   <motion.span layoutId="stage-pill" className="absolute inset-0 rounded-[8px] bg-ink" transition={{ type: "spring", stiffness: 500, damping: 36 }} />
                 )}
-                <span className="relative">{s.label}</span>
+                <span className="relative">
+                  {s.label} <span className="num opacity-60">{stageCount(s.key)}</span>
+                </span>
               </button>
             ))}
           </div>
+          {lateCount > 0 && (
+            <button
+              type="button"
+              onClick={() => setLateOnly((v) => !v)}
+              aria-pressed={lateOnly}
+              className={cx(
+                "h-10 rounded-[10px] border px-3 text-sm transition",
+                lateOnly ? "border-loss-icon bg-loss-soft font-medium text-loss" : "border-line-strong bg-surface text-loss hover:border-loss-icon",
+              )}
+            >
+              Есть просрочки · {lateCount}
+            </button>
+          )}
           {filtersOn && (
             <button
               type="button"
@@ -224,6 +248,7 @@ export function FindingsPage() {
                 setProcess("all");
                 setRestaurant("all");
                 setStage("all");
+                setLateOnly(false);
               }}
               className="inline-flex h-10 items-center gap-1.5 px-2 text-sm text-ink-3 hover:text-ink"
             >

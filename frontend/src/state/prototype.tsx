@@ -102,15 +102,15 @@ export function PrototypeProvider({ children }: { children: ReactNode }) {
         }),
       decideExperiment: (id, decision) => {
         patch((s) => ({ experimentStatus: { ...s.experimentStatus, [id]: decision } }));
-        notify(decision === "approved" ? "Проверка утверждена, задачи отправлены директорам" : "Проверка отклонена");
+        notify(decision === "approved" ? "Проверка запущена, задачи отправлены директорам" : "Проверка отклонена");
       },
       sendDraft: (findingId) => {
         patch((s) => ({ sentDrafts: [...s.sentDrafts, findingId] }));
-        notify("Проверка отправлена на утверждение");
+        notify("Проверка передана на запуск");
       },
       proposeRollout: (experimentId) => {
         patch((s) => ({ rollouts: [...s.rollouts, experimentId] }));
-        notify("Тиражирование отправлено на утверждение");
+        notify("Тиражирование передано на запуск");
       },
       openChat: (context) => patch(() => ({ chat: { open: true, context: context ?? null } })),
       closeChat: () => patch((s) => ({ chat: { ...s.chat, open: false } })),

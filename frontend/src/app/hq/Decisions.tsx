@@ -52,7 +52,7 @@ function ProposedRow({ e, onDecide }: { e: Experiment; onDecide: (id: string, d:
         </span>
         <span className="col-span-2 flex gap-2 pl-6 sm:col-span-1 sm:pl-0">
           <Button size="sm" variant="primary" onClick={() => onDecide(e.id, "approved")}>
-            Утвердить
+            Запустить
           </Button>
           <Button size="sm" variant="ghost" onClick={() => onDecide(e.id, "rejected")}>
             Отклонить
@@ -65,7 +65,7 @@ function ProposedRow({ e, onDecide }: { e: Experiment; onDecide: (id: string, d:
             <div className="space-y-3 px-10 pb-5 text-sm">
               <p className="text-ink-2">{e.hypothesis}</p>
               <div className="rounded-[12px] bg-paper p-3 text-ink-2">
-                <span className="font-medium text-ink">После утверждения: </span>
+                <span className="font-medium text-ink">После запуска: </span>
                 задача директору {e.test.map((c) => `«${restaurantByCode(c)?.name}»`).join(" и ")} со сроком и чек-листом; замер — «{e.metric}».
               </div>
               <Link to="/checks/$checkId" params={{ checkId: e.id }} className="inline-block text-brand-strong hover:underline">
@@ -92,7 +92,7 @@ export function DecisionsPage() {
       />
       {!total && <EmptyState title="Все решения приняты">Новые вопросы появятся здесь — и на главной сети.</EmptyState>}
 
-      <Section icon={<FlaskConical size={20} />} title="Проверки на утверждение" count={experiments.length}>
+      <Section icon={<FlaskConical size={20} />} title="Проверки к запуску" count={experiments.length}>
         <motion.div key="proposed" layout exit={exit}>
           <Card className="p-2">
             <ul className="divide-y divide-line">
@@ -113,7 +113,7 @@ export function DecisionsPage() {
             <motion.div key={id} layout exit={exit}>
               <Card className="p-5 text-sm">
                 <div className="font-semibold">{f?.actions[0]}</div>
-                <div className="mt-1 text-ink-3">По находке «{f?.title}» · отправлено на утверждение</div>
+                <div className="mt-1 text-ink-3">По находке «{f?.title}» · ждет запуска</div>
               </Card>
             </motion.div>
           );

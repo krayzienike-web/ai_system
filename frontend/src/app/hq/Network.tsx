@@ -2,13 +2,12 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { ArrowDownRight, Inbox } from "lucide-react";
 
 import { VerifiedNote } from "../../ds/ai";
-import { buttonClass, cx, QuestionBlock, Reveal, Term } from "../../ds/primitives";
-import { AnimatedNumber, AreaTrend, PROCESS_ICON, RankList } from "../../ds/viz";
+import { buttonClass, QuestionBlock, Reveal, Term } from "../../ds/primitives";
+import { AnimatedNumber, AreaTrend, PROCESS_ICON, ProfitSplit, RankList } from "../../ds/viz";
 import { perMonth, plural, rub, thousands } from "../../lib/format";
-import { FINDINGS, LOSSES_LAST_WEEK, PERIOD, RESTAURANTS } from "../../mock/data";
+import { EXPERIMENTS, FINDINGS, LOSSES_LAST_WEEK, RESTAURANTS } from "../../mock/data";
 import { networkTotals, networkTrend, PROCESSES, processStatus, restaurantFindings } from "../../mock/selectors";
 import { useInbox } from "../counts";
-import { FindingRow } from "../findings/parts";
 
 export function NetworkPage() {
   const navigate = useNavigate();
@@ -17,6 +16,7 @@ export function NetworkPage() {
   const onTable = totals.losses + totals.potential;
   const first = trend.onTable[0]!;
   const inbox = useInbox();
+  const completedChecks = EXPERIMENTS.filter((e) => e.result).length;
   const inboxCount = inbox.experiments.length + inbox.overdue.length + inbox.drafts.length;
 
   const ranking = RESTAURANTS.map((r) => {
@@ -38,9 +38,28 @@ export function NetworkPage() {
     const losses = hit.reduce((acc, r) => acc + processStatus(r.code, p.key).losses, 0);
     return { ...p, hit, losses };
   })
-    .filter((p) => p.hit.length >= 2)
-    .sort((a, b) => b.losses - a.losses);
-  const networkWide = FINDINGS.filter((f) => f.restaurantId === null);
+    .filter((p) => p.hit.length >= 2);
+  // One list: a process failing in several restaurants and a finding that is network-wide by nature are the same kind of problem.
+  const common = [
+    ...FINDINGS.filter((f) => f.restaurantId === null).map((f) => ({
+      key: f.id,
+      process: f.process,
+      title: f.title,
+      where: "Во всех ресторанах",
+      losses: f.effectRubMonth ?? 0,
+      note: f.effectNote ?? "сумму пока не оценить",
+      findingId: f.id as string | undefined,
+    })),
+    ...systemic.map((p) => ({
+      key: p.key,
+      process: p.key,
+      title: `${p.title}: проблемы в ${plural(p.hit.length, ["ресторане", "ресторанах", "ресторанах"])}`,
+      where: p.hit.map((r) => r.name.replace("Ресторан ", "")).join(", "),
+      losses: p.losses,
+      note: "пробел в данных",
+      findingId: undefined as string | undefined,
+    })),
+  ].sort((a, b) => b.losses - a.losses);
 
   return (
     <div className="space-y-6">
@@ -48,10 +67,10 @@ export function NetworkPage() {
         <section className="grid gap-6 rounded-[24px] bg-ink p-6 text-white sm:p-8 lg:grid-cols-[1fr_1fr]">
           <div>
             <div className="text-sm text-white/70">
-              {plural(RESTAURANTS.length, ["ресторан", "ресторана", "ресторанов"])} · неделя {PERIOD.week}
+              Сеть из {plural(RESTAURANTS.length, ["ресторана", "ресторанов", "ресторанов"])}
             </div>
             <div className="mt-4 text-sm font-medium text-spark">
-              <Term hint="Сколько прибыли в месяц можно получить дополнительно: перестать терять деньги на перерасходе, переплатах и списаниях — и заработать больше на ценах меню и лучших поставщиках">Потенциал прибыли сети</Term>
+              <Term hint="Насколько вырастет прибыль в месяц, если устранить потери и использовать найденные возможности. Оценка до уровня лучших в сети, а не до идеала">Потенциал прибыли сети</Term>
             </div>
             <div className="mt-1 flex items-baseline gap-3">
               <span className="font-display text-[56px] leading-none font-semibold tracking-tight sm:text-[72px]">
@@ -59,32 +78,33 @@ export function NetworkPage() {
               </span>
               <span className="text-lg text-white/80">тыс ₽ в месяц</span>
             </div>
-            <div className="mt-2 text-sm text-white/60">≈ {rub(onTable * 12)} в год</div>
-            <div className="mt-5 flex flex-wrap gap-x-6 gap-y-2 text-sm">
-              <span>
-                <span className="text-white/60">= перестать терять </span>
-                <span className="num font-semibold">{rub(totals.losses)}</span>
-              </span>
-              <span>
-                <span className="text-white/60">+ дополнительно заработать </span>
-                <span className="num font-semibold">{rub(totals.potential)}</span>
-              </span>
-            </div>
+            <div className="mt-2 text-sm text-white/60">{rub(onTable * 12)} в год</div>
+            <ProfitSplit losses={totals.losses} missed={totals.potential} format={rub} />
           </div>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
             <div className="rounded-[18px] bg-white/[0.07] p-5">
               <div className="text-sm text-white/70">Подтвержденный эффект</div>
               <div className="mt-1 font-display text-3xl font-semibold text-[#9be3a9]">
-                <AnimatedNumber value={totals.confirmed} format={thousands} /> <span className="text-base text-white/80">тыс ₽/мес</span>
+                +<AnimatedNumber value={totals.confirmed} format={thousands} /> <span className="text-base text-white/80">тыс ₽</span>
               </div>
-              <div className="mt-1 text-xs text-white/60">по итогам завершенных проверок</div>
+              <div className="mt-1 text-xs text-white/60">
+                в месяц — прибыль, которую уже дали изменения. Завершено проверок: {completedChecks}
+              </div>
             </div>
             <Link to="/decisions" className="group rounded-[18px] bg-spark p-5 text-ink transition hover:brightness-105">
               <div className="flex items-center gap-2 text-sm font-medium">
                 <Inbox size={16} /> Ждут вашего решения
               </div>
               <div className="mt-1 font-display text-3xl font-semibold">{inboxCount}</div>
-              <div className="mt-1 text-xs text-ink/70 group-hover:underline">Открыть →</div>
+              <div className="mt-1 text-xs text-ink/70">
+                {[
+                  inbox.experiments.length && plural(inbox.experiments.length, ["проверка ждет запуска", "проверки ждут запуска", "проверок ждут запуска"]),
+                  inbox.overdue.length && plural(inbox.overdue.length, ["просроченная задача", "просроченные задачи", "просроченных задач"]),
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </div>
+              <div className="mt-2 text-xs font-medium group-hover:underline">Перейти к решениям →</div>
             </Link>
           </div>
         </section>
@@ -142,42 +162,36 @@ export function NetworkPage() {
         <QuestionBlock
           question="Общие проблемы сети"
           answer={
-            systemic.length
-              ? `В ${plural(systemic.length, ["процессе", "процессах", "процессах"])} проблемы сразу в нескольких ресторанах — их выгоднее решать одним решением на всю сеть.`
+            common.length
+              ? `${plural(common.length, ["проблема повторяется", "проблемы повторяются", "проблем повторяются"])} в нескольких ресторанах — их выгоднее решать одним решением на всю сеть.`
               : "Общих проблем нет"
           }
         >
-          <div className="grid gap-3 md:grid-cols-3">
-            {systemic.map((p) => {
-              const Icon = PROCESS_ICON[p.key];
+          <ul className="divide-y divide-line">
+            {common.map((c) => {
+              const Icon = PROCESS_ICON[c.process];
               return (
-                <Link
-                  key={p.key}
-                  to="/findings"
-                  className="rounded-[14px] border border-line p-4 transition hover:border-ink-3"
-                >
-                  <div className="flex items-center gap-2 font-medium">
-                    <span className={cx("grid h-8 w-8 place-items-center rounded-[9px] bg-loss-soft text-loss")}>
-                      <Icon size={17} strokeWidth={1.75} />
+                <li key={c.key}>
+                  <Link
+                    to={c.findingId ? "/findings/$findingId" : "/findings"}
+                    params={c.findingId ? { findingId: c.findingId } : undefined}
+                    className="grid grid-cols-[36px_1fr_auto] items-center gap-3 rounded-[12px] px-2 py-3 transition hover:bg-paper"
+                  >
+                    <span className="grid h-9 w-9 place-items-center rounded-[10px] bg-loss-soft text-loss">
+                      <Icon size={18} strokeWidth={1.75} />
                     </span>
-                    {p.title}
-                  </div>
-                  <div className="mt-2 text-sm">
-                    {p.losses ? <span className="num font-semibold text-loss">{perMonth(p.losses)}</span> : <span className="text-warn">пробел в данных</span>}
-                  </div>
-                  <div className="mt-1 text-xs text-ink-3">{p.hit.map((r) => r.name.replace("Ресторан ", "")).join(", ")}</div>
-                </Link>
+                    <span className="min-w-0">
+                      <span className="block font-medium">{c.title}</span>
+                      <span className="block text-sm text-ink-3">{c.where}</span>
+                    </span>
+                    <span className="text-right text-sm">
+                      {c.losses ? <span className="num font-semibold text-loss">{perMonth(c.losses)}</span> : <span className="text-warn">{c.note}</span>}
+                    </span>
+                  </Link>
+                </li>
               );
             })}
-          </div>
-          {networkWide.length > 0 && (
-            <div className="mt-5 border-t border-line pt-3">
-              <div className="mb-1 px-3 text-sm font-medium">Общие для всей сети</div>
-              {networkWide.map((f) => (
-                <FindingRow key={f.id} f={f} showRestaurant />
-              ))}
-            </div>
-          )}
+          </ul>
         </QuestionBlock>
       </Reveal>
 

@@ -9,7 +9,7 @@ import { PROCESSES, processStatus, restaurantFindings } from "../../mock/selecto
 import { useTasks } from "../counts";
 import { WeekView } from "../director/Week";
 
-type SortKey = "losses" | "potential" | "foodCost" | "delta" | "late" | "name";
+type SortKey = "losses" | "potential" | "foodCost" | "delta" | "late" | "tasksDone" | "name";
 
 interface Row {
   code: string;
@@ -20,6 +20,8 @@ interface Row {
   foodCost: number;
   delta: number;
   late: number;
+  tasksDone: number;
+  tasksTotal: number;
   badProcesses: number;
   staleData: string | null;
 }
@@ -73,6 +75,8 @@ export function RestaurantsPage() {
       foodCost: KPIS[r.code]!.foodCostActual,
       delta: losses - (LOSSES_LAST_WEEK[r.code] ?? losses),
       late: tasks.filter((t) => t.restaurantId === r.code && t.status === "overdue").length,
+      tasksDone: tasks.filter((t) => t.restaurantId === r.code && t.status === "done").length,
+      tasksTotal: tasks.filter((t) => t.restaurantId === r.code).length,
       badProcesses: PROCESSES.filter((p) => processStatus(r.code, p.key).status !== "good").length,
       staleData: stale ? `${stale.dataset} по ${stale.lastDate}` : null,
     };
@@ -114,6 +118,9 @@ export function RestaurantsPage() {
                   <SortTh sort={sort} onSort={setSort} k="delta">К прошлой неделе</SortTh>
                   <SortTh sort={sort} onSort={setSort} k="foodCost">Фудкост</SortTh>
                   <SortTh sort={sort} onSort={setSort} k="late">Просрочено задач</SortTh>
+                  <SortTh sort={sort} onSort={setSort} k="tasksDone">
+                    Задачи выполнены
+                  </SortTh>
                   <th className="px-4 py-2.5 font-medium text-ink-3">Данные</th>
                 </tr>
               </thead>
@@ -149,6 +156,7 @@ export function RestaurantsPage() {
                     </td>
                     <td className="px-4 py-3 text-right">{pct(r.foodCost)}</td>
                     <td className={cx("px-4 py-3 text-right", r.late ? "font-semibold text-loss" : "text-ink-3")}>{r.late || "—"}</td>
+                    <td className="px-4 py-3 text-right text-ink-2">{r.tasksTotal ? `${r.tasksDone} из ${r.tasksTotal}` : "—"}</td>
                     <td className="px-4 py-3">
                       {r.staleData ? <Pill tone="warn">{r.staleData}</Pill> : <Pill tone="gain">свежие</Pill>}
                     </td>

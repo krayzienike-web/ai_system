@@ -105,11 +105,6 @@ export interface StockRisk {
   supplier: string;
 }
 
-export interface Improvement {
-  restaurantId: string;
-  text: string;
-}
-
 export interface Task {
   id: string;
   restaurantId: string;

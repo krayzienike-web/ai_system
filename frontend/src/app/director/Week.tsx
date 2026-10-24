@@ -1,18 +1,17 @@
 import { Link } from "@tanstack/react-router";
-import { ArrowDownRight, ArrowUpRight, CheckCircle2, MessageCircle, PackageX, TrendingUp } from "lucide-react";
+import { ArrowDownRight, ArrowUpRight, CheckCircle2, ChevronDown, MessageCircle, PackageX } from "lucide-react";
 import { AnimatePresence } from "motion/react";
 import { useState } from "react";
 
 import { AiBadge, VerifiedNote } from "../../ds/ai";
 import { Button, Card, cx, EmptyState, QuestionBlock, Reveal, Term } from "../../ds/primitives";
-import { AnimatedNumber, BulletScale, ProcessMap } from "../../ds/viz";
+import { AnimatedNumber, BulletScale, PROCESS_ICON, ProfitSplit } from "../../ds/viz";
 import { pct, perMonth, plural, points, rub, thousands } from "../../lib/format";
-import { DIGEST_SOURCES, DIGEST_TEXT, IMPROVEMENTS, KPIS, ON_TABLE_LAST_WEEK, PERIOD, STOCK_RISKS } from "../../mock/data";
+import { DIGEST_SOURCES, DIGEST_TEXT, KPIS, ON_TABLE_LAST_WEEK, PERIOD, STOCK_RISKS } from "../../mock/data";
 import {
   networkKpis,
   PROCESSES,
   processStatus,
-  processTitle,
   restaurantByCode,
   findingById,
   restaurantFindings,
@@ -33,20 +32,16 @@ export function WeekView({ code, readOnly = false }: { code: string; readOnly?: 
   const restaurant = restaurantByCode(code);
   if (!restaurant) return <EmptyState title="Ресторан не найден" />;
 
-  const { problems, opportunities, losses, potential } = restaurantFindings(code);
+  const { problems, losses, potential } = restaurantFindings(code);
   const onTable = losses + potential;
   const lastWeek = ON_TABLE_LAST_WEEK[code] ?? onTable;
   const delta = onTable - lastWeek;
   const actions = weeklyActions(code, 5)
     .filter((f) => (findingStatus[f.id] ?? f.status) === "new")
     .slice(0, 3);
-  const all = [...problems, ...opportunities];
-  const listed = process ? all.filter((f) => f.process === process) : all;
-  const tiles = PROCESSES.map((p) => {
-    const s = processStatus(code, p.key);
-    return { key: p.key, title: p.title, status: s.status, losses: s.losses, detail: perMonth(s.losses) };
-  });
-  const worst = [...tiles].sort((a, b) => processStatus(code, b.key).losses - processStatus(code, a.key).losses)[0]!;
+  const byProcess = PROCESSES.map((p) => ({ ...p, losses: processStatus(code, p.key).losses }));
+  const lossProcesses = byProcess.filter((p) => p.losses > 0).sort((a, b) => b.losses - a.losses);
+  const fineProcesses = byProcess.filter((p) => p.losses === 0);
   const kpi = KPIS[code]!;
   const avg = networkKpis();
   const risks = STOCK_RISKS.filter((r) => r.restaurantId === code);
@@ -59,10 +54,10 @@ export function WeekView({ code, readOnly = false }: { code: string; readOnly?: 
         <section className="grid gap-6 overflow-hidden rounded-[24px] bg-ink p-6 text-white sm:p-8 lg:grid-cols-[1.1fr_1fr]">
           <div>
             <div className="text-sm text-white/70">
-              {restaurant.name} · неделя {PERIOD.week}
+              {restaurant.name}
             </div>
             <div className="mt-4 text-sm font-medium text-spark">
-              <Term hint="Сколько прибыли в месяц можно получить дополнительно: перестать терять деньги на перерасходе, переплатах и списаниях — и заработать больше на ценах меню и лучших поставщиках">Потенциал прибыли</Term>
+              <Term hint="Насколько вырастет прибыль в месяц, если устранить потери и использовать найденные возможности. Оценка до уровня лучших в сети, а не до идеала">Потенциал прибыли</Term>
             </div>
             <div className="mt-1 flex items-baseline gap-3">
               <span className="font-display text-[56px] leading-none font-semibold tracking-tight sm:text-[72px]">
@@ -70,16 +65,7 @@ export function WeekView({ code, readOnly = false }: { code: string; readOnly?: 
               </span>
               <span className="text-lg text-white/80">тыс ₽ в месяц</span>
             </div>
-            <div className="mt-4 flex flex-wrap gap-x-6 gap-y-2 text-sm">
-              <span>
-                <span className="text-white/60">= перестать терять </span>
-                <span className="num font-semibold">{rub(losses)}</span>
-              </span>
-              <span>
-                <span className="text-white/60">+ дополнительно заработать </span>
-                <span className="num font-semibold">{rub(potential)}</span>
-              </span>
-            </div>
+            <ProfitSplit losses={losses} missed={potential} format={rub} />
             <div
               className={cx(
                 "mt-5 inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm",
@@ -88,8 +74,8 @@ export function WeekView({ code, readOnly = false }: { code: string; readOnly?: 
             >
               {delta <= 0 ? <ArrowDownRight size={15} /> : <ArrowUpRight size={15} />}
               {delta <= 0
-                ? `На ${rub(-delta)} меньше, чем неделю назад — потери сокращаются`
-                : `На ${rub(delta)} больше, чем неделю назад`}
+                ? `За неделю потенциал снизился на ${rub(-delta)}: часть проблем уже решена`
+                : `За неделю потенциал вырос на ${rub(delta)}: появились новые проблемы`}
             </div>
           </div>
           <div className="flex flex-col rounded-[18px] bg-white/[0.06] p-5">
@@ -160,153 +146,165 @@ export function WeekView({ code, readOnly = false }: { code: string; readOnly?: 
         )}
       </Reveal>
 
-      <div className="grid gap-6 lg:grid-cols-[1fr_340px]">
-        <div className="min-w-0 space-y-6">
-          {/* 3. Where the money is lost */}
-          <Reveal index={2}>
-            <QuestionBlock
-              question="Где ресторан теряет деньги?"
-              answer={
-                <>
-                  Больше всего — в процессе «{worst.title}»: <span className="text-loss">{worst.detail}</span>.{" "}
-                  <span className="text-ink-3">Нажмите на процесс, чтобы увидеть его находки.</span>
-                </>
-              }
-              source={<VerifiedNote>открытые находки на {PERIOD.dataUntil}</VerifiedNote>}
-            >
-              <ProcessMap tiles={tiles} selected={process} onSelect={setProcess} />
-              <div className="mt-5 border-t border-line pt-3">
-                <div className="mb-1 flex items-center justify-between px-3 text-sm">
-                  <span className="font-medium">
-                    {process ? `Находки: ${processTitle(process)}` : `Все находки ресторана · ${all.length}`}
-                  </span>
-                  {process && (
-                    <button type="button" className="text-brand-strong hover:underline" onClick={() => setProcess(null)}>
-                      Показать все
-                    </button>
-                  )}
-                </div>
-                {listed.length ? (
-                  listed.map((f) => <FindingRow key={f.id} f={f} />)
-                ) : (
-                  <div className="px-3 py-4 text-sm text-ink-3">В этом процессе все в норме — потерь не нашли.</div>
-                )}
-              </div>
-            </QuestionBlock>
-          </Reveal>
-
-          {/* 4. Me vs network */}
-          <Reveal index={3}>
-            <QuestionBlock
-              question="Как ресторан выглядит на фоне сети?"
-              answer={
-                <>
-                  Фудкост на {points(kpi.foodCostActual - avg.foodCostActual)} {kpi.foodCostActual >= avg.foodCostActual ? "выше" : "ниже"}{" "}
-                  среднего по сети, списания — в{" "}
-                  <span className="num">{(kpi.writeoffsPct / avg.writeoffsPct).toLocaleString("ru-RU", { maximumFractionDigits: 1 })}</span> раза
-                  больше.
-                </>
-              }
-              source={<VerifiedNote>фудкост — период 03.08–01.10, списания — последние 4 недели; среднее по сети взвешено по выручке</VerifiedNote>}
-            >
-              <div className="grid gap-x-8 gap-y-2 md:grid-cols-2">
-                <div>
-                  <div className="text-sm font-medium">Фактический фудкост</div>
-                  <BulletScale me={kpi.foodCostActual} network={avg.foodCostActual} norm={kpi.foodCostTheoretical} max={40} format={(n) => pct(n)} />
-                  <p className="-mt-2 text-xs text-ink-3">Норма — фудкост по техкартам проданных блюд. Чем ниже, тем лучше.</p>
-                </div>
-                <div>
-                  <div className="text-sm font-medium">Списания, % выручки</div>
-                  <BulletScale me={kpi.writeoffsPct} network={avg.writeoffsPct} max={4} format={(n) => pct(n)} />
-                  <p className="-mt-2 text-xs text-ink-3">Чем ниже, тем лучше.</p>
-                </div>
-              </div>
-            </QuestionBlock>
-          </Reveal>
-        </div>
-
-        <aside className="space-y-6">
-          <Reveal index={4}>
-            <QuestionBlock
-              question="Что может закончиться?"
-              answer={risks.length ? `${risks.length} позиции под риском до ближайшей поставки` : "Рисков на ближайшие дни нет"}
-            >
-              <ul className="space-y-3">
-                {risks.map((r) => {
-                  const gap = r.nextDeliveryInDays - r.daysLeft;
-                  return (
-                    <li key={r.product} className="rounded-[12px] bg-paper p-3">
-                      <div className="flex items-center gap-2 font-medium">
-                        <PackageX size={16} className={gap > 0 ? "text-loss" : "text-warn"} aria-hidden />
-                        {r.product}
-                      </div>
-                      <div className="mt-1 text-sm text-ink-2">
-                        {gap > 0
-                          ? `Закончится за ${gap} дн. до поставки`
-                          : "Закончится в день поставки — впритык"}
-                      </div>
-                      <div className="mt-2 flex h-1.5 overflow-hidden rounded-full bg-ink/10" aria-hidden>
-                        <div className="bg-brand" style={{ width: `${(r.daysLeft / r.nextDeliveryInDays) * 100}%` }} />
-                      </div>
-                      <div className="mt-1 flex justify-between text-[11px] text-ink-3">
-                        <span>хватит на {r.daysLeft} дн.</span>
-                        <span>поставка через {r.nextDeliveryInDays} дн.</span>
-                      </div>
-                      {!readOnly && (
-                        <Button size="sm" className="mt-2.5" onClick={() => notify(`Закупщик предупрежден: ${r.product}, ${r.supplier}`)}>
-                          Предупредить закупщика
-                        </Button>
-                      )}
-                    </li>
-                  );
-                })}
-              </ul>
-            </QuestionBlock>
-          </Reveal>
-
-          <Reveal index={5}>
-            <QuestionBlock
-              question="Что улучшилось?"
-              answer={improvedAnswer(doneTasks)}
-              action={
-                doneTasks.length > 0 && (
-                  <Link to="/tasks" className="text-sm font-medium text-brand-strong hover:underline">
-                    История задач →
-                  </Link>
-                )
-              }
-            >
-              <ul className="space-y-3 text-sm">
-                {doneTasks.map((t) => (
-                  <li key={t.id} className="flex gap-2">
-                    <CheckCircle2 size={17} className="mt-0.5 shrink-0 text-gain" aria-hidden />
-                    <span className="min-w-0 space-y-1">
-                      <span className="block">
-                        {t.title} <span className="text-ink-3">· сделано {t.doneAt}</span>
+      {/* 3. Stock that may run out: a slim alert, only when there is something to act on */}
+      {risks.length > 0 && (
+        <Reveal index={2}>
+          <section className="rounded-[18px] border border-warn-icon/40 bg-warn-soft p-4 sm:p-5">
+            <div className="flex items-center gap-2 font-medium text-ink">
+              <PackageX size={18} className="text-warn" aria-hidden /> Может не хватить до поставки
+            </div>
+            <ul className="mt-3 grid gap-2 sm:grid-cols-2">
+              {risks.map((r) => {
+                const gap = r.nextDeliveryInDays - r.daysLeft;
+                return (
+                  <li key={r.product} className="flex flex-wrap items-center justify-between gap-2 rounded-[12px] bg-surface px-3.5 py-2.5 text-sm">
+                    <span>
+                      <span className="font-medium">{r.product}</span>
+                      <span className="text-ink-2">
+                        {" "}
+                        — {gap > 0 ? `закончится за ${plural(gap, ["день", "дня", "дней"])} до поставки` : "хватит впритык, до дня поставки"}
                       </span>
-                      <OutcomePill outcome={t.outcome} />
-                      {t.outcome && <span className="block text-xs text-ink-3">{t.outcome.text}</span>}
                     </span>
+                    {!readOnly && (
+                      <Button size="sm" onClick={() => notify(`Закупщик предупрежден: ${r.product}, ${r.supplier}`)}>
+                        Предупредить закупщика
+                      </Button>
+                    )}
                   </li>
-                ))}
-                {IMPROVEMENTS.filter((i) => i.restaurantId === code).map((i) => (
-                  <li key={i.text} className="flex gap-2">
-                    <TrendingUp size={17} className="mt-0.5 shrink-0 text-gain" aria-hidden />
-                    {i.text}
-                  </li>
-                ))}
-              </ul>
-            </QuestionBlock>
-          </Reveal>
+                );
+              })}
+            </ul>
+          </section>
+        </Reveal>
+      )}
 
-          <Reveal index={6}>
-            <Card className="p-5 text-sm text-ink-2">
-              <div className="font-medium text-ink">Следующая инвентаризация — {PERIOD.nextInventory}</div>
-              После нее пересчитаем потери по техкартам и покажем результат ваших задач в рублях.
-            </Card>
-          </Reveal>
-        </aside>
-      </div>
+      {/* 4. Where the money is lost: processes ranked by money, findings open in place */}
+      <Reveal index={3}>
+        <QuestionBlock
+          question="Где ресторан теряет деньги?"
+          answer={
+            lossProcesses.length ? (
+              <>
+                Потери есть в {plural(lossProcesses.length, ["процессе", "процессах", "процессах"])} из {PROCESSES.length}. Больше всего —{" "}
+                «{lossProcesses[0]!.title}»: <span className="text-loss">{perMonth(lossProcesses[0]!.losses)}</span>.
+              </>
+            ) : (
+              "Потерь выше нормы не нашли"
+            )
+          }
+          source={<VerifiedNote>открытые находки на {PERIOD.dataUntil}</VerifiedNote>}
+        >
+          <ul className="divide-y divide-line">
+            {lossProcesses.map((p) => {
+              const Icon = PROCESS_ICON[p.key];
+              const open = process === p.key;
+              const items = problems.filter((f) => f.process === p.key);
+              return (
+                <li key={p.key}>
+                  <button
+                    type="button"
+                    onClick={() => setProcess(open ? null : p.key)}
+                    aria-expanded={open}
+                    className="grid w-full grid-cols-[36px_1fr_auto] items-center gap-3 rounded-[12px] px-2 py-3 text-left transition hover:bg-paper"
+                  >
+                    <span className="grid h-9 w-9 place-items-center rounded-[10px] bg-loss-soft text-loss">
+                      <Icon size={18} strokeWidth={1.75} />
+                    </span>
+                    <span className="min-w-0">
+                      <span className="flex items-baseline justify-between gap-3">
+                        <span className="font-medium">{p.title}</span>
+                        <span className="num shrink-0 font-semibold text-loss">{perMonth(p.losses)}</span>
+                      </span>
+                      <span className="mt-1.5 block h-1.5 overflow-hidden rounded-full bg-ink/5">
+                        <span className="block h-full rounded-full bg-loss-icon" style={{ width: `${(p.losses / lossProcesses[0]!.losses) * 100}%` }} />
+                      </span>
+                      <span className="mt-1 block truncate text-xs text-ink-3">
+                        {plural(items.length, ["находка", "находки", "находок"])}: {items.map((f) => f.title).join(" · ")}
+                      </span>
+                    </span>
+                    <ChevronDown size={18} className={cx("text-ink-3 transition", open && "rotate-180")} />
+                  </button>
+                  {open && (
+                    <div className="pb-2 pl-10">
+                      {items.map((f) => (
+                        <FindingRow key={f.id} f={f} />
+                      ))}
+                    </div>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+          {fineProcesses.length > 0 && (
+            <p className="mt-3 flex items-start gap-2 border-t border-line px-2 pt-3 text-sm text-ink-3">
+              <CheckCircle2 size={16} className="mt-0.5 shrink-0 text-gain" aria-hidden />В норме: {fineProcesses.map((p) => p.title).join(", ")}.
+            </p>
+          )}
+          <Link to="/findings" className="mt-3 inline-block px-2 text-sm font-medium text-brand-strong hover:underline">
+            Все находки ресторана, включая возможности заработать →
+          </Link>
+        </QuestionBlock>
+      </Reveal>
+
+      {/* 5. Me vs network */}
+      <Reveal index={4}>
+        <QuestionBlock
+          question="Как ресторан выглядит на фоне сети?"
+          answer={
+            <>
+              Фудкост на {points(kpi.foodCostActual - avg.foodCostActual)} {kpi.foodCostActual >= avg.foodCostActual ? "выше" : "ниже"}{" "}
+              среднего по сети, списания — в{" "}
+              <span className="num">{(kpi.writeoffsPct / avg.writeoffsPct).toLocaleString("ru-RU", { maximumFractionDigits: 1 })}</span> раза
+              больше.
+            </>
+          }
+          source={<VerifiedNote>фудкост — период 03.08–01.10, списания — последние 4 недели; среднее по сети взвешено по выручке</VerifiedNote>}
+        >
+          <div className="grid gap-x-8 gap-y-2 md:grid-cols-2">
+            <div>
+              <div className="text-sm font-medium">Фактический фудкост</div>
+              <BulletScale me={kpi.foodCostActual} network={avg.foodCostActual} norm={kpi.foodCostTheoretical} max={40} format={(n) => pct(n)} />
+              <p className="-mt-2 text-xs text-ink-3">Норма — фудкост по техкартам проданных блюд. Чем ниже, тем лучше.</p>
+            </div>
+            <div>
+              <div className="text-sm font-medium">Списания, % выручки</div>
+              <BulletScale me={kpi.writeoffsPct} network={avg.writeoffsPct} max={4} format={(n) => pct(n)} />
+              <p className="-mt-2 text-xs text-ink-3">Чем ниже, тем лучше.</p>
+            </div>
+          </div>
+        </QuestionBlock>
+      </Reveal>
+
+      {/* 6. Results of what was done */}
+      <Reveal index={5}>
+        <QuestionBlock
+          question="Что дали ваши задачи?"
+          answer={improvedAnswer(doneTasks) ?? `Выполненных задач пока нет. Результат в рублях появится после инвентаризации ${PERIOD.nextInventory.slice(0, 5)}.`}
+          action={
+            doneTasks.length > 0 && !readOnly && (
+              <Link to="/tasks" className="text-sm font-medium text-brand-strong hover:underline">
+                История задач →
+              </Link>
+            )
+          }
+        >
+          {doneTasks.length > 0 && (
+            <ul className="divide-y divide-line">
+              {doneTasks.map((t) => (
+                <li key={t.id} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 py-3 text-sm">
+                  <span className="min-w-0">
+                    <span className="block font-medium">{t.title}</span>
+                    <span className="block text-xs text-ink-3">
+                      сделано {t.doneAt} · {t.outcome?.text}
+                    </span>
+                  </span>
+                  <OutcomePill outcome={t.outcome} />
+                </li>
+              ))}
+            </ul>
+          )}
+        </QuestionBlock>
+      </Reveal>
 
       {taking && <TakeToWorkDialog key={taking.id} f={taking} open onClose={() => setTaking(null)} />}
     </div>

@@ -7,7 +7,7 @@ import { DesignSystemPage } from "./app/DesignSystemPage";
 import { WeekView } from "./app/director/Week";
 import { FindingPage } from "./app/findings/FindingPage";
 import { FindingsPage } from "./app/findings/FindingsPage";
-import { CheckPage, ChecksPage, NewCheckPage } from "./app/hq/Checks";
+import { CheckPage, NewCheckPage } from "./app/hq/Checks";
 import { DecisionsPage } from "./app/hq/Decisions";
 import { NetworkPage } from "./app/hq/Network";
 import { ReportPage } from "./app/hq/Report";
@@ -53,7 +53,14 @@ const findingRoute = createRoute({ getParentRoute: () => appRoute, path: "/findi
 const tasksRoute = createRoute({ getParentRoute: () => appRoute, path: "/tasks", component: TasksPage });
 const dataRoute = createRoute({ getParentRoute: () => appRoute, path: "/data", component: DataPage });
 const decisionsRoute = createRoute({ getParentRoute: () => appRoute, path: "/decisions", component: hqOnly(DecisionsPage) });
-const checksRoute = createRoute({ getParentRoute: () => appRoute, path: "/checks", component: hqOnly(ChecksPage) });
+// Checks live inside findings now (each check is opened from its finding); the old list address leads there.
+const checksRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/checks",
+  beforeLoad: () => {
+    throw redirect({ to: "/findings" });
+  },
+});
 const checkRoute = createRoute({ getParentRoute: () => appRoute, path: "/checks/$checkId", component: hqOnly(CheckPage) });
 const newCheckRoute = createRoute({ getParentRoute: () => appRoute, path: "/checks/new/$findingId", component: hqOnly(NewCheckPage) });
 const restaurantsRoute = createRoute({ getParentRoute: () => appRoute, path: "/restaurants", component: hqOnly(RestaurantsPage) });

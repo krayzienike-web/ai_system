@@ -1,5 +1,5 @@
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
-import { ArrowLeft, CheckCircle2, ChevronRight, CircleHelp, Sparkles, Timer, XCircle } from "lucide-react";
+import { ArrowLeft, CheckCircle2, CircleHelp, Sparkles, XCircle } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useState } from "react";
 
@@ -42,110 +42,6 @@ function useStage(e: Experiment) {
   return e.status;
 }
 
-const STAGE_META = {
-  proposed: { title: "Ждут вашего решения", hint: "Утвердите — и директора получат задачи", Icon: CircleHelp, tone: "text-warn bg-warn-soft" },
-  running: { title: "Идут", hint: "Собираем данные, вывод — в срок", Icon: Timer, tone: "text-info bg-info-soft" },
-  completed: { title: "Есть результат", hint: "Решите, предлагать ли всем ресторанам", Icon: CheckCircle2, tone: "text-gain bg-gain-soft" },
-} as const;
-
-/** One check as a readable row: what we change, where vs. compared to, and the money. */
-function CheckRow({ e, stage }: { e: Experiment; stage: "proposed" | "running" | "completed" }) {
-  const meta = STAGE_META[stage];
-  const money = e.result ? e.result.effectRubMonth : e.expectedRubMonth;
-  return (
-    <motion.li layout initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}>
-      <Link
-        to="/checks/$checkId"
-        params={{ checkId: e.id }}
-        className="group grid grid-cols-[40px_1fr] items-center gap-x-4 gap-y-3 rounded-[14px] px-4 py-4 transition-colors hover:bg-paper sm:grid-cols-[40px_1fr_auto_20px]"
-      >
-        <span className={cx("grid h-10 w-10 place-items-center rounded-[11px]", meta.tone)}>
-          <meta.Icon size={19} />
-        </span>
-        <span className="min-w-0">
-          <span className="block font-medium text-ink group-hover:underline">{e.title}</span>
-          <span className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs">
-            {names(e.test).map((n) => (
-              <span key={n} className="rounded-full bg-brand px-2 py-0.5 font-medium text-white">
-                {n.replace("Ресторан ", "")}
-              </span>
-            ))}
-            <span className="px-1 text-ink-3">сравниваем с</span>
-            {e.control.length ? (
-              names(e.control).map((n) => (
-                <span key={n} className="rounded-full bg-ink/10 px-2 py-0.5 font-medium text-ink">
-                  {n.replace("Ресторан ", "")}
-                </span>
-              ))
-            ) : (
-              <span className="text-ink-3">другими продуктами внутри ресторана</span>
-            )}
-          </span>
-          {stage === "running" && e.progress && <span className="mt-1.5 block text-sm text-ink-3">{e.progress.split(". Промежуточный")[0]}</span>}
-        </span>
-        <span className="col-start-2 sm:col-start-3 sm:text-right">
-          <span className={cx("num block font-display text-xl font-semibold", e.result ? "text-gain" : "text-ink")}>+{rub(money)}</span>
-          <span className="block text-[11px] text-ink-3">{e.result ? "в месяц, подтверждено" : "в месяц, если сработает"}</span>
-        </span>
-        <ChevronRight size={18} className="hidden text-ink-3 sm:block" />
-      </Link>
-    </motion.li>
-  );
-}
-
-export function ChecksPage() {
-  const { experimentStatus } = usePrototype();
-  const stageOf = (e: Experiment) =>
-    experimentStatus[e.id] === "approved" ? "running" : experimentStatus[e.id] === "rejected" ? "rejected" : e.status;
-  const groups = (["proposed", "running", "completed"] as const).map((stage) => ({
-    stage,
-    items: EXPERIMENTS.filter((e) => stageOf(e) === stage),
-  }));
-  const confirmed = EXPERIMENTS.reduce((acc, e) => acc + (e.result?.effectRubMonth ?? 0), 0);
-  const expected = groups[1]!.items.reduce((acc, e) => acc + e.expectedRubMonth, 0);
-
-  return (
-    <div className="mx-auto max-w-[960px]">
-      <PageTitle
-        title="Проверки"
-        subtitle="Прежде чем менять всю сеть, пробуем на части ресторанов и сравниваем с остальными. Проверку можно создать из любой находки."
-      />
-      <Reveal>
-        <div className="mb-6 grid gap-3 sm:grid-cols-3">
-          {groups.map((g) => (
-            <Card key={g.stage} className="p-5">
-              <div className="text-sm text-ink-3">{STAGE_META[g.stage].title}</div>
-              <div className="num mt-1 font-display text-3xl font-semibold">{g.items.length}</div>
-              <div className="mt-1 text-xs text-ink-3">
-                {g.stage === "completed" ? `подтверждено +${rub(confirmed)} в месяц` : g.stage === "proposed" ? STAGE_META.proposed.hint : `если сработают — до +${rub(expected)} в месяц`}
-              </div>
-            </Card>
-          ))}
-        </div>
-      </Reveal>
-      <div className="space-y-4">
-        {groups.map((g, i) =>
-          g.items.length ? (
-            <Reveal key={g.stage} index={i + 1}>
-              <section className="rounded-[18px] border border-line bg-surface p-2">
-                <div className="flex items-baseline justify-between px-4 pt-3 pb-1">
-                  <h2 className="font-display text-base font-semibold">{STAGE_META[g.stage].title}</h2>
-                  <span className="text-sm text-ink-3">{STAGE_META[g.stage].hint}</span>
-                </div>
-                <ul className="divide-y divide-line">
-                  {g.items.map((e) => (
-                    <CheckRow key={e.id} e={e} stage={g.stage} />
-                  ))}
-                </ul>
-              </section>
-            </Reveal>
-          ) : null,
-        )}
-      </div>
-    </div>
-  );
-}
-
 const VERDICT = {
   confirmed: { title: "Сработало", Icon: CheckCircle2, cls: "bg-gain-soft text-gain" },
   inconclusive: { title: "Пока непонятно", Icon: CircleHelp, cls: "bg-warn-soft text-warn" },
@@ -164,9 +60,15 @@ export function CheckPage() {
 
   return (
     <div className="mx-auto max-w-[960px] space-y-6">
-      <Link to="/checks" className="inline-flex items-center gap-1 text-sm text-ink-3 hover:text-ink">
-        <ArrowLeft size={14} /> Проверки
-      </Link>
+      {e.findingId ? (
+        <Link to="/findings/$findingId" params={{ findingId: e.findingId }} className="inline-flex items-center gap-1 text-sm text-ink-3 hover:text-ink">
+          <ArrowLeft size={14} /> К находке
+        </Link>
+      ) : (
+        <Link to="/findings" className="inline-flex items-center gap-1 text-sm text-ink-3 hover:text-ink">
+          <ArrowLeft size={14} /> Находки
+        </Link>
+      )}
       <Reveal>
         <section className="rounded-[24px] border border-line bg-surface p-6 sm:p-8">
           <Pill tone={stage === "completed" ? "gain" : stage === "running" ? "info" : stage === "rejected" ? "neutral" : "warn"}>
@@ -207,7 +109,7 @@ export function CheckPage() {
                   Если ввести во всех ресторанах: еще <span className="font-semibold text-gain">+{perMonth(e.result.rolloutRubMonth)}</span>
                 </span>
                 {rollouts.includes(e.id) ? (
-                  <span className="text-sm font-medium text-gain">Отправлено на утверждение</span>
+                  <span className="text-sm font-medium text-gain">Отправлено на запуск</span>
                 ) : (
                   <Button variant="primary" onClick={() => proposeRollout(e.id)}>
                     Предложить всем ресторанам
@@ -273,12 +175,12 @@ export function CheckPage() {
       {stage === "proposed" && (
         <Reveal index={3}>
           <QuestionBlock
-            question="Что будет после утверждения?"
+            question="Что будет после запуска?"
             answer={`Директорам ${names(e.test).join(", ")} придут задачи со сроком и чек-листом. Замер начнется автоматически.`}
           >
             <div className="flex flex-wrap gap-2">
               <Button variant="primary" size="lg" onClick={() => decideExperiment(e.id, "approved")}>
-                Утвердить и поставить задачи
+                Запустить и поставить задачи
               </Button>
               <Button size="lg" onClick={() => decideExperiment(e.id, "rejected")}>
                 Отклонить
@@ -446,7 +348,7 @@ export function NewCheckPage() {
         <div className="mb-1 font-medium">Итог</div>
         <div className="text-ink-2">
           {f.actions[action]} — в ресторане «{restaurantByCode(f.restaurantId)?.name}», сравниваем с {control.length ? names(control).join(", ") : "показателями внутри ресторана"},{" "}
-          {DURATIONS[weeks]!.weeks} недели. Директор получит задачу после утверждения.
+          {DURATIONS[weeks]!.weeks} недели. Директор получит задачу после запуска.
         </div>
         <div className="mt-1">
           <VerifiedNote>ожидаемый эффект по данным находки</VerifiedNote>
@@ -469,7 +371,7 @@ export function NewCheckPage() {
               void navigate({ to: "/decisions" });
             }}
           >
-            Отправить на утверждение
+            Передать на запуск
           </Button>
         )}
       </div>
