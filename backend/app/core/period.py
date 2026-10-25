@@ -78,13 +78,22 @@ def resolve_period(
     return period
 
 
+def get_today() -> date:
+    """Today for the request; tests override this dependency to pin the calendar."""
+    return date.today()
+
+
+TodayDep = Annotated[date, Depends(get_today)]
+
+
 def get_period(
+    today: TodayDep,
     preset: Annotated[PeriodPreset | None, Query()] = None,
     date_from: Annotated[date | None, Query()] = None,
     date_to: Annotated[date | None, Query()] = None,
 ) -> Period:
     try:
-        return resolve_period(date.today(), preset, date_from, date_to)
+        return resolve_period(today, preset, date_from, date_to)
     except PeriodError as e:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e)) from e
 

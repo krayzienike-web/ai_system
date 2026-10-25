@@ -10,8 +10,9 @@ class Permission(StrEnum):
     NETWORK_COMPARE = "network.compare"  # see other restaurants by name
     DATA_UPLOAD = "data.upload"
     CATALOG_MANAGE = "catalog.manage"
-    EXPERIMENTS_APPROVE = "experiments.approve"
-    TASKS_EXECUTE = "tasks.execute"
+    EXPERIMENTS_LAUNCH = "experiments.launch"  # launch or reject a proposed check
+    TASKS_ASSIGN = "tasks.assign"  # set tasks for any restaurant of the network
+    TASKS_EXECUTE = "tasks.execute"  # take tasks for one's own restaurant and report on them
     AI_CHAT = "ai.chat"
 
 

@@ -20,6 +20,14 @@
   карточка у директора), страница проверки («Что сделали в ресторанах?»), «Моя неделя» («Что улучшилось?»),
   «Отчет для руководителя» (таблица «задача → результат»).
 
+## Реализация
+
+- Backend: `app/insights` (находки + этап работы), `app/tasks` (задачи, отчет, результат), `app/experiments`
+  (запуск / отклонение проверок), `app/reports` (отчет для руководителя за период), миграция `0002_work_loop` с RLS.
+- API: `GET /api/findings`, `GET /api/findings/{id}`, `GET|POST /api/tasks`, `POST /api/tasks/{id}/start|complete`,
+  `GET /api/checks`, `POST /api/checks/{id}/launch|reject`, `GET /api/reports/head`.
+- Endpoint'а для записи результата нет: его пишут `record_outcome` / `record_result`, вызываемые расчетным слоем.
+
 ## Последствия
 - Контракт `Task`: `assignedBy`, `createdAt`, `doneAt`, `report`, `outcome` вместо текстового `result`.
 - Обратная связь директора о качестве данных не теряется полностью: отчет о выполнении и чат остаются; если

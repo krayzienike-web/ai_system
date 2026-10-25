@@ -3,7 +3,10 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import create_engine
 
-import app.tenancy.models  # noqa: F401  (registers models)
+import app.experiments.models
+import app.insights.models
+import app.tasks.models
+import app.tenancy.models  # noqa: F401
 from app.core.config import get_settings
 from app.core.models import Base
 
