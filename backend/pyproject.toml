@@ -13,6 +13,10 @@ dependencies = [
     "psycopg[binary]",
     "pyjwt",
     "argon2-cffi",
+    "polars>=2.0.0",
+    "fastexcel>=0.21.0",
+    "python-multipart>=0.0.32",
+    "xlsxwriter>=3.3.0",
 ]
 
 [dependency-groups]
@@ -47,6 +51,10 @@ python_version = "3.12"
 strict = true
 plugins = ["pydantic.mypy"]
 exclude = ["alembic/"]
+
+[[tool.mypy.overrides]]
+module = ["xlsxwriter", "xlsxwriter.*"]
+ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = ["tests.*"]

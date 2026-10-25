@@ -3,8 +3,12 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import create_engine
 
+# Importing the model modules registers their tables on Base.metadata.
+import app.catalog.models
 import app.experiments.models
+import app.imports.models
 import app.insights.models
+import app.operations.models
 import app.tasks.models
 import app.tenancy.models  # noqa: F401
 from app.core.config import get_settings

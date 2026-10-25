@@ -8,6 +8,7 @@ from app.core.config import get_settings
 from app.core.deps import SessionDep
 from app.core.errors import RuleError
 from app.experiments.api import router as checks_router
+from app.imports.api import router as imports_router
 from app.insights.api import router as findings_router
 from app.reports.api import router as reports_router
 from app.tasks.api import router as tasks_router
@@ -42,6 +43,7 @@ def create_app() -> FastAPI:
     api.include_router(tasks_router)
     api.include_router(checks_router)
     api.include_router(reports_router)
+    api.include_router(imports_router)
     app.include_router(api)
     return app
 

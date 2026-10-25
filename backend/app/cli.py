@@ -1,18 +1,28 @@
-"""Management commands: `python -m app.cli seed-demo [--password ...]`."""
+"""Management commands:
+
+- `python -m app.cli seed-demo [--password ...]` — demo tenant, 3 restaurants, users and a small work loop;
+- `python -m app.cli generate-demo --out DIR [--seed N]` — files of the synthetic 12-restaurant network;
+- `python -m app.cli load-demo [--seed N]` — load that network into the demo tenant via the import pipeline.
+"""
 
 import argparse
 from datetime import date, timedelta
 from decimal import Decimal
+from pathlib import Path
 from uuid import UUID
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
+from app.core.db import get_sessionmaker
 from app.core.security import hash_password
+from app.demo.generator import generate
+from app.demo.loader import load
 from app.experiments.models import Experiment
 from app.insights.models import Finding
 from app.tasks.models import Task
+from app.tenancy.context import load_access_context
 from app.tenancy.models import Restaurant, Role, RoleAssignment, Tenant, User
 
 DEMO_TENANT = "Демо-сеть"
@@ -183,14 +193,50 @@ def seed_work(session: Session, tenant_id: UUID, r: dict[str, UUID], today: date
     print("  work loop: 5 findings, 2 checks, 2 tasks")
 
 
+def generate_demo(out: str, seed: int) -> None:
+    net = generate(seed=seed)
+    folder = Path(out)
+    folder.mkdir(parents=True, exist_ok=True)
+    for name, content in net.files.items():
+        (folder / name).write_bytes(content)
+    print(f"{len(net.files)} files, {len(net.anomalies)} planted anomalies → {folder}")
+
+
+def load_demo(seed: int) -> None:
+    """Loads the synthetic network into the demo tenant as its HQ admin, with row-level security on."""
+    owner = create_engine(get_settings().migrations_database_url)
+    with Session(owner) as session:
+        admin = session.execute(select(User).where(User.email == "admin@demo.local")).scalar_one_or_none()
+        if admin is None:
+            raise SystemExit("Run seed-demo first")
+        user_id, tenant_id = admin.id, admin.tenant_id
+    owner.dispose()
+    with get_sessionmaker()() as session:
+        ctx = load_access_context(session, user_id, tenant_id)
+        assert ctx is not None
+        rows = load(session, ctx, generate(seed=seed), today=date.today())
+        session.commit()
+    for template, count in rows.items():
+        print(f"  {template:<18} {count:>7} rows")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="app.cli")
     sub = parser.add_subparsers(dest="command", required=True)
     seed = sub.add_parser("seed-demo", help="Create the demo tenant, 3 restaurants and users")
     seed.add_argument("--password", default="demo12345")
+    gen = sub.add_parser("generate-demo", help="Write the files of the synthetic demo network")
+    gen.add_argument("--out", default="demo-data")
+    gen.add_argument("--seed", type=int, default=42)
+    ld = sub.add_parser("load-demo", help="Load the synthetic network into the demo tenant")
+    ld.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
     if args.command == "seed-demo":
         seed_demo(args.password)
+    elif args.command == "generate-demo":
+        generate_demo(args.out, args.seed)
+    elif args.command == "load-demo":
+        load_demo(args.seed)
 
 
 if __name__ == "__main__":

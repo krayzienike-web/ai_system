@@ -13,7 +13,7 @@ AI-сводка директора по процессам ресторана и
 Нужны Docker и make.
 
 ```bash
-make up        # PostgreSQL, Redis, backend (миграции), frontend + демо-сеть из 3 ресторанов
+make up        # PostgreSQL, Redis, backend (миграции), frontend + демо-сеть: 12 ресторанов, 6 месяцев данных
 ```
 
 Интерфейс: http://localhost:5173, API: http://localhost:8000/docs.
@@ -21,7 +21,8 @@ make up        # PostgreSQL, Redis, backend (миграции), frontend + де�
 `director1..3@demo.local` (директора R01–R03).
 
 Разработка без Docker (нужны PostgreSQL 16, uv, Node 22): роли и базы — `infra/postgres/init.sql`, затем
-`make migrate seed`, `make dev-backend`, `make dev-frontend`. Проверки: `make check` (линтеры, типы, тесты, сборка).
+`make migrate seed load-demo`, `make dev-backend`, `make dev-frontend`. Файлы демо-сети с описанием заложенных
+аномалий: `make demo-data` (папка `demo-data/`, см. [docs/11-demo-network.md](docs/11-demo-network.md)). Проверки: `make check` (линтеры, типы, тесты, сборка).
 
 ## Статус
 
@@ -48,6 +49,7 @@ make up        # PostgreSQL, Redis, backend (миграции), frontend + де�
 | 08 | [AI-сводка директора и чат](docs/08-director-digest-and-chat.md) | Карта процессов, пробелы и улучшения; чат с ассистентом |
 | 09 | [Требования к данным](docs/09-data-requirements.md) | Какие данные нужны и где взять в iiko / r_keeper / 1С:ERP |
 | 10 | [UX](docs/10-ux.md) | Разбор интерфейса, принципы, структура, ключевые экраны |
+| 11 | [Демо-сеть](docs/11-demo-network.md) | 12 ресторанов × 6 месяцев, заложенные аномалии и эталон для детекторов |
 | UX | [CJM, Job Stories, аудит](docs/ux/01-cjm-job-stories-audit.md) · [Бренд и дизайн-система](docs/ux/02-brand-design-system.md) · [To-Be](docs/ux/03-to-be.md) | Пользователи, сценарии, бренд, новый интерфейс |
 | Исследования | [UX-практики](docs/research/ux-best-practices.md) · [Конкуренты](docs/research/competitors.md) | Лучшие практики и конкурентный анализ |
 | ADR | [Архитектурные решения](docs/adr/) | Почему выбрано именно так |

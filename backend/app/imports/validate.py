@@ -1,0 +1,304 @@
+"""Turning rows of a file into typed records, with a report a non-IT person can act on:
+«строка 154: неизвестная единица «кг.» у товара «Сыр Моцарелла»». Pure functions, no database."""
+
+import re
+from dataclasses import dataclass, field
+from datetime import date, datetime
+from decimal import Decimal, InvalidOperation
+from typing import Any
+from uuid import UUID
+
+from app.imports.reader import Table
+from app.imports.templates import Kind, Template
+
+MAX_ISSUES = 200
+AMOUNT_TOLERANCE = Decimal("0.01")  # amount = price × qty ± 1%
+
+
+@dataclass(frozen=True)
+class Issue:
+    row: int | None
+    column: str | None
+    message: str
+
+    def as_dict(self) -> dict[str, Any]:
+        return {"row": self.row, "column": self.column, "message": self.message}
+
+
+@dataclass(frozen=True)
+class Ref:
+    id: UUID
+    name: str
+    base_unit: str | None = None
+
+
+@dataclass
+class Lookups:
+    """Reference data of the network, by code and by lower-cased name."""
+
+    products: dict[str, Ref] = field(default_factory=dict)
+    product_names: dict[str, Ref] = field(default_factory=dict)
+    menu_items: dict[str, Ref] = field(default_factory=dict)
+    menu_item_names: dict[str, Ref] = field(default_factory=dict)
+    suppliers: dict[str, Ref] = field(default_factory=dict)
+    supplier_names: dict[str, Ref] = field(default_factory=dict)
+
+
+@dataclass
+class Result:
+    records: list[dict[str, Any]]
+    errors: list[Issue]
+    warnings: list[Issue]
+    rows_total: int
+    period_from: date | None = None
+    period_to: date | None = None
+
+
+class _RowError(Exception):
+    def __init__(self, column: str | None, message: str) -> None:
+        super().__init__(message)
+        self.column = column
+        self.message = message
+
+
+# ------------------------------------------------------------------ values
+
+UNITS = {
+    "kg": ("kg", Decimal(1)),
+    "кг": ("kg", Decimal(1)),
+    "килограмм": ("kg", Decimal(1)),
+    "g": ("kg", Decimal("0.001")),
+    "г": ("kg", Decimal("0.001")),
+    "гр": ("kg", Decimal("0.001")),
+    "грамм": ("kg", Decimal("0.001")),
+    "l": ("l", Decimal(1)),
+    "л": ("l", Decimal(1)),
+    "литр": ("l", Decimal(1)),
+    "ml": ("l", Decimal("0.001")),
+    "мл": ("l", Decimal("0.001")),
+    "pcs": ("pcs", Decimal(1)),
+    "шт": ("pcs", Decimal(1)),
+    "штук": ("pcs", Decimal(1)),
+}
+UNIT_TITLES = {"kg": "кг", "l": "л", "pcs": "шт"}
+
+
+def unit_of(text: str) -> tuple[str, Decimal] | None:
+    """«кг.», «Кг», «гр» → (base unit, factor). Unknown → None: never guess (domain invariant 4)."""
+    return UNITS.get(text.strip().lower().rstrip("."))
+
+
+def parse_decimal(text: str) -> Decimal:
+    cleaned = re.sub(r"[\s\xa0₽]", "", text).replace(",", ".")
+    if cleaned.count(".") > 1:  # "1.234.567,8" style thousands
+        head, _, tail = cleaned.rpartition(".")
+        cleaned = head.replace(".", "") + "." + tail
+    try:
+        value = Decimal(cleaned)
+    except InvalidOperation:
+        raise ValueError(text) from None
+    if not value.is_finite():
+        raise ValueError(text)
+    return value
+
+
+def parse_date(text: str) -> date:
+    value = text.strip()
+    for fmt in (
+        "%d.%m.%Y",
+        "%Y-%m-%d",
+        "%d.%m.%y",
+        "%d/%m/%Y",
+        "%Y-%m-%d %H:%M:%S",
+        "%d.%m.%Y %H:%M:%S",
+        "%d.%m.%Y %H:%M",
+    ):
+        try:
+            return datetime.strptime(value, fmt).date()
+        except ValueError:
+            continue
+    raise ValueError(text)
+
+
+def _cell(cells: list[str], index: int | None) -> str:
+    if index is None or index >= len(cells):
+        return ""
+    return cells[index].strip()
+
+
+def _values(template: Template, table: Table, cells: list[str]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for column in template.columns:
+        raw = _cell(cells, table.column_map.get(column.name))
+        if not raw:
+            if column.required:
+                raise _RowError(column.title, "пустое значение")
+            out[column.name] = None
+            continue
+        try:
+            if column.kind is Kind.DECIMAL:
+                out[column.name] = parse_decimal(raw)
+            elif column.kind is Kind.INT:
+                out[column.name] = int(parse_decimal(raw))
+            elif column.kind is Kind.DATE:
+                out[column.name] = parse_date(raw)
+            else:
+                out[column.name] = raw
+        except ValueError:
+            kind = {"decimal": "число", "int": "целое число", "date": "дата (ДД.ММ.ГГГГ)"}[column.kind]
+            raise _RowError(column.title, f"«{raw}» — ожидается {kind}") from None
+    return out
+
+
+# ------------------------------------------------------------------ references
+
+
+def _resolve(
+    code: str | None, name: str | None, by_code: dict[str, Ref], by_name: dict[str, Ref], what: str
+) -> Ref:
+    if code and code in by_code:
+        return by_code[code]
+    if name and name.lower() in by_name:
+        return by_name[name.lower()]
+    raise _RowError(None, f"неизвестный {what} «{code or name}» — сначала загрузите справочник")
+
+
+def _to_base(qty: Decimal, unit_text: str | None, product: Ref) -> Decimal:
+    if not unit_text:
+        return qty  # no unit column: the file is in base units
+    unit = unit_of(unit_text)
+    if unit is None:
+        raise _RowError("Ед. изм.", f"неизвестная единица «{unit_text}» у товара «{product.name}»")
+    base, factor = unit
+    if base != product.base_unit:
+        expected = UNIT_TITLES.get(product.base_unit or "", product.base_unit)
+        raise _RowError(
+            "Ед. изм.",
+            f"«{unit_text}» не переводится в «{expected}» для товара «{product.name}»; нужен коэффициент",
+        )
+    return qty * factor
+
+
+def _product(v: dict[str, Any], lk: Lookups) -> Ref:
+    return _resolve(v.get("product_code"), v.get("product_name"), lk.products, lk.product_names, "товар")
+
+
+# ------------------------------------------------------------------ records per template
+
+
+def _record(template: str, v: dict[str, Any], lk: Lookups, warn: list[str]) -> dict[str, Any]:
+    if template == "restaurants":
+        return {"code": v["code"], "name": v["name"], "city": v["city"]}
+    if template == "products":
+        unit = unit_of(v["unit"])
+        if unit is None or unit[1] != 1:
+            raise _RowError("Базовая ед.", f"«{v['unit']}» — базовая единица должна быть кг, л или шт")
+        return {
+            "code": v["code"],
+            "name": v["name"],
+            "category": v["category"],
+            "base_unit": unit[0],
+            "shelf_life_days": v["shelf_life_days"],
+        }
+    if template == "suppliers":
+        inn = v["inn"]
+        if inn and not re.fullmatch(r"\d{10}|\d{12}", inn):
+            raise _RowError("ИНН", f"«{inn}» — ИНН состоит из 10 или 12 цифр")
+        return {"code": v["code"], "name": v["name"], "inn": inn}
+    if template == "menu_items":
+        return {"code": v["code"], "name": v["name"], "category": v["category"], "price": v["price"]}
+    if template == "recipes":
+        item = _resolve(v["menu_item_code"], None, lk.menu_items, lk.menu_item_names, "блюдо")
+        product = _product(v, lk)
+        qty = _to_base(v["gross_qty"], v["unit"], product)
+        if qty <= 0:
+            raise _RowError("Брутто", "количество должно быть больше нуля")
+        return {
+            "menu_item_id": item.id,
+            "product_id": product.id,
+            "gross_qty": qty,
+            "valid_from": v["valid_from"],
+        }
+    if template == "sales":
+        item = _resolve(v["menu_item_code"], v["menu_item_name"], lk.menu_items, lk.menu_item_names, "блюдо")
+        if v["qty"] < 0:
+            raise _RowError(
+                "Количество",
+                "отрицательное количество: возвраты в продажах пока не поддерживаются",
+            )
+        return {
+            "day": v["day"],
+            "menu_item_id": item.id,
+            "qty": v["qty"],
+            "revenue": v["revenue"],
+            "discount": v["discount"] or Decimal(0),
+        }
+    if template == "receipts":
+        product = _product(v, lk)
+        supplier = None
+        if v["supplier_code"] or v["supplier_name"]:
+            supplier = _resolve(
+                v["supplier_code"], v["supplier_name"], lk.suppliers, lk.supplier_names, "поставщик"
+            )
+        qty = _to_base(v["qty"], v["unit"], product)
+        if qty <= 0:
+            raise _RowError("Количество", "количество в накладной должно быть больше нуля")
+        if v["price"] is not None and v["qty"]:
+            expected = v["price"] * v["qty"]
+            if expected and abs(v["amount"] - expected) > abs(expected) * AMOUNT_TOLERANCE:
+                warn.append(f"сумма {v['amount']} не равна цене × количество ({expected:.2f})")
+        return {
+            "day": v["day"],
+            "doc_no": v["doc_no"],
+            "supplier_id": supplier.id if supplier else None,
+            "product_id": product.id,
+            "qty": qty,
+            "amount": v["amount"],
+            "vat": v["vat"],
+        }
+    if template == "write_offs":
+        product = _product(v, lk)
+        qty = _to_base(v["qty"], v["unit"], product)
+        if qty <= 0:
+            raise _RowError("Количество", "количество списания должно быть больше нуля")
+        return {"day": v["day"], "product_id": product.id, "qty": qty, "reason": v["reason"]}
+    if template == "inventory_counts":
+        product = _product(v, lk)
+        actual = _to_base(v["actual_qty"], v["unit"], product)
+        if actual < 0:
+            raise _RowError("Фактический остаток", "остаток не может быть отрицательным")
+        book = _to_base(v["book_qty"], v["unit"], product) if v["book_qty"] is not None else None
+        return {"day": v["day"], "product_id": product.id, "book_qty": book, "actual_qty": actual}
+    raise ValueError(template)
+
+
+def validate(template: Template, table: Table, lookups: Lookups, *, today: date) -> Result:
+    records: list[dict[str, Any]] = []
+    errors: list[Issue] = []
+    warnings: list[Issue] = []
+    for number, cells in table.rows:
+        warn: list[str] = []
+        try:
+            values = _values(template, table, cells)
+            record = _record(template.name, values, lookups, warn)
+        except _RowError as e:
+            errors.append(Issue(number, e.column, e.message))
+            continue
+        day = record.get("day")
+        if isinstance(day, date) and day > today:
+            errors.append(Issue(number, "Дата", f"дата {day:%d.%m.%Y} в будущем"))
+            continue
+        warnings.extend(Issue(number, None, w) for w in warn)
+        records.append(record)
+    if table.skipped_totals:
+        warnings.append(Issue(None, None, f"пропущено строк итогов: {table.skipped_totals}"))
+    if table.unmapped:
+        warnings.append(Issue(None, None, "колонки не используются: " + ", ".join(table.unmapped)))
+    days = [r["day"] for r in records if "day" in r]
+    result = Result(records, errors, warnings, rows_total=len(table.rows))
+    if days:
+        result.period_from, result.period_to = min(days), max(days)
+    if len(errors) > MAX_ISSUES:
+        hidden = len(errors) - MAX_ISSUES
+        result.errors = [*errors[:MAX_ISSUES], Issue(None, None, f"и еще {hidden} ошибок того же рода")]
+    return result

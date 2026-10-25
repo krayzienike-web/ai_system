@@ -17,3 +17,7 @@ class ForbiddenError(RuleError):
 
 class InvalidError(RuleError):
     status_code = 422
+
+
+class ConflictError(RuleError):
+    status_code = 409
