@@ -161,9 +161,10 @@ function FindingView({ id, isHq }: { id: string; isHq: boolean }) {
                 </div>
               ))}
               {experiment && (
+                // The check page belongs to the management company; a director follows the check through its tasks.
                 <Link
-                  to="/checks/$checkId"
-                  params={{ checkId: experiment.id }}
+                  to={isHq ? "/checks/$checkId" : "/tasks"}
+                  params={isHq ? { checkId: experiment.id } : undefined}
                   className="rounded-[16px] border border-line p-4 transition hover:border-ink-3"
                 >
                   <div className="flex items-center gap-2 font-medium">
@@ -174,7 +175,7 @@ function FindingView({ id, isHq }: { id: string; isHq: boolean }) {
                       ? `Итог: +${perMonth(experiment.result.effectRubMonth)} — подтверждено сравнением с ресторанами без изменений.`
                       : experiment.progress ?? `Ожидаем +${perMonth(experiment.expectedRubMonth)}; итог — после ${experiment.period}.`}
                   </div>
-                  <div className="mt-2 text-sm text-brand-strong">Открыть проверку →</div>
+                  <div className="mt-2 text-sm text-brand-strong">{isHq ? "Открыть проверку →" : "Задачи проверки — в «Моих задачах» →"}</div>
                 </Link>
               )}
             </div>

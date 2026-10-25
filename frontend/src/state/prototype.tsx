@@ -1,6 +1,7 @@
 // In-memory state for prototype interactions. Resets on reload by design: the prototype has no backend for actions.
 import { createContext, type ReactNode, useCallback, useContext, useMemo, useRef, useState } from "react";
 
+import type { PeriodChoice } from "../lib/period";
 import type { FindingStatus, Task } from "../mock/types";
 
 export interface ChatContextRef {
@@ -24,6 +25,7 @@ interface State {
   sentDrafts: string[]; // finding ids whose experiment draft went to approval
   rollouts: string[];
   chat: { open: boolean; context: ChatContextRef | null };
+  period: PeriodChoice;
   toast: Toast | null;
 }
 
@@ -39,6 +41,7 @@ interface Api extends State {
   closeChat: () => void;
   notify: (text: string, undo?: () => void) => void;
   dismissToast: () => void;
+  setPeriod: (period: PeriodChoice) => void;
 }
 
 const Ctx = createContext<Api | null>(null);
@@ -54,6 +57,7 @@ export function PrototypeProvider({ children }: { children: ReactNode }) {
     sentDrafts: [],
     rollouts: [],
     chat: { open: false, context: null },
+    period: { preset: "week" },
     toast: null,
   });
   const toastSeq = useRef(0);
@@ -116,6 +120,7 @@ export function PrototypeProvider({ children }: { children: ReactNode }) {
       closeChat: () => patch((s) => ({ chat: { ...s.chat, open: false } })),
       notify,
       dismissToast: () => patch(() => ({ toast: null })),
+      setPeriod: (period) => patch(() => ({ period })),
     };
   }, [state, notify]);
 

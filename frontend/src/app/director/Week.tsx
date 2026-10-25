@@ -32,8 +32,9 @@ export function WeekView({ code, readOnly = false }: { code: string; readOnly?: 
   const restaurant = restaurantByCode(code);
   if (!restaurant) return <EmptyState title="Ресторан не найден" />;
 
-  const { problems, losses, potential } = restaurantFindings(code);
+  const { problems, opportunities, losses, potential } = restaurantFindings(code);
   const onTable = losses + potential;
+  const foundCount = [...problems, ...opportunities].filter((f) => f.effectRubMonth !== null).length;
   const lastWeek = ON_TABLE_LAST_WEEK[code] ?? onTable;
   const delta = onTable - lastWeek;
   const actions = weeklyActions(code, 5)
@@ -56,8 +57,13 @@ export function WeekView({ code, readOnly = false }: { code: string; readOnly?: 
             <div className="text-sm text-white/70">
               {restaurant.name}
             </div>
-            <div className="mt-4 text-sm font-medium text-spark">
-              <Term hint="Насколько вырастет прибыль в месяц, если устранить потери и использовать найденные возможности. Оценка до уровня лучших в сети, а не до идеала">Потенциал прибыли</Term>
+            <div className="mt-4 flex flex-wrap items-baseline gap-x-2 text-sm">
+              <span className="font-medium text-spark">
+                <Term hint="Сумма по всем открытым находкам: насколько вырастет прибыль в месяц, если устранить потери и использовать найденные возможности. Оценка до уровня лучших в сети, а не до идеала">Найденный потенциал прибыли</Term>
+              </span>
+              <Link to="/findings" className="text-white/60 hover:text-white hover:underline">
+                в {plural(foundCount, ["находке", "находках", "находках"])} →
+              </Link>
             </div>
             <div className="mt-1 flex items-baseline gap-3">
               <span className="font-display text-[56px] leading-none font-semibold tracking-tight sm:text-[72px]">
@@ -74,8 +80,8 @@ export function WeekView({ code, readOnly = false }: { code: string; readOnly?: 
             >
               {delta <= 0 ? <ArrowDownRight size={15} /> : <ArrowUpRight size={15} />}
               {delta <= 0
-                ? `За неделю потенциал снизился на ${rub(-delta)}: часть проблем уже решена`
-                : `За неделю потенциал вырос на ${rub(delta)}: появились новые проблемы`}
+                ? `За неделю найденный потенциал снизился на ${rub(-delta)}: часть проблем уже решена`
+                : `За неделю найденный потенциал вырос на ${rub(delta)}: появились новые проблемы`}
             </div>
           </div>
           <div className="flex flex-col rounded-[18px] bg-white/[0.06] p-5">

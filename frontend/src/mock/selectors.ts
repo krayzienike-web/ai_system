@@ -1,5 +1,5 @@
 import { EXPERIMENTS, FINDINGS, KPIS, NETWORK_TREND, RESTAURANTS } from "./data";
-import type { Finding, Kpis, ProcessKey, Status } from "./types";
+import type { Finding, Kpis, ProcessKey, Status, WeeklyTrend } from "./types";
 
 export const PROCESSES: { key: ProcessKey; title: string }[] = [
   { key: "purchasing", title: "Закупка" },
@@ -70,7 +70,9 @@ export function networkTrend() {
   const t = networkTotals();
   const onTable = [...NETWORK_TREND.onTable];
   onTable[onTable.length - 1] = t.losses + t.potential;
-  return { ...NETWORK_TREND, onTable };
+  const openFindings = [...NETWORK_TREND.openFindings];
+  openFindings[openFindings.length - 1] = FINDINGS.filter((f) => f.status !== "resolved").length;
+  return { ...NETWORK_TREND, onTable, openFindings };
 }
 
 /** Where a finding stands in the loop "found → doing → checking → result" (index into CYCLE). */
@@ -84,4 +86,20 @@ export function weeklyActions(restaurantId: string, take = 3) {
   return FINDINGS.filter((f) => f.restaurantId === restaurantId && f.status !== "resolved" && f.effectRubMonth)
     .sort((a, b) => (b.effectRubMonth ?? 0) * weight[b.confidence] - (a.effectRubMonth ?? 0) * weight[a.confidence])
     .slice(0, take);
+}
+
+/** The weekly points of the network trend that fall into a period (labels are week starts "ДД.ММ"); at least two. */
+export function trendInPeriod(trend: WeeklyTrend, from: Date, to: Date): WeeklyTrend {
+  const start = (label: string) => {
+    const [d, m] = label.split(".").map(Number);
+    return new Date(2026, (m ?? 1) - 1, d ?? 1);
+  };
+  // One point before the period, so the change is measured over the whole period.
+  const weekBefore = new Date(from.getTime() - 7 * 86_400_000);
+  const inside = trend.labels.flatMap((l, i) => (start(l) >= weekBefore && start(l) <= to ? [i] : []));
+  let a = inside[0] ?? (start(trend.labels[0]!) > to ? 0 : trend.labels.length - 2);
+  let b = (inside.at(-1) ?? a + 1) + 1;
+  if (b - a < 2) [a, b] = a > 0 ? [a - 1, b] : [a, b + 1];
+  const cut = <V,>(v: V[]) => v.slice(a, b);
+  return { labels: cut(trend.labels), onTable: cut(trend.onTable), returned: cut(trend.returned), openFindings: cut(trend.openFindings) };
 }

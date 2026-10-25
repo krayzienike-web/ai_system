@@ -1,21 +1,25 @@
 import { Link, useNavigate } from "@tanstack/react-router";
-import { ArrowDownRight, Inbox } from "lucide-react";
+import { ArrowDownRight, ArrowUpRight, Inbox } from "lucide-react";
 
 import { VerifiedNote } from "../../ds/ai";
 import { buttonClass, QuestionBlock, Reveal, Term } from "../../ds/primitives";
 import { AnimatedNumber, AreaTrend, PROCESS_ICON, ProfitSplit, RankList } from "../../ds/viz";
 import { perMonth, plural, rub, thousands } from "../../lib/format";
 import { EXPERIMENTS, FINDINGS, LOSSES_LAST_WEEK, RESTAURANTS } from "../../mock/data";
-import { networkTotals, networkTrend, PROCESSES, processStatus, restaurantFindings } from "../../mock/selectors";
-import { useInbox } from "../counts";
+import { networkTotals, networkTrend, PROCESSES, processStatus, restaurantFindings, trendInPeriod } from "../../mock/selectors";
+import { useInbox, usePeriod } from "../counts";
 
 export function NetworkPage() {
   const navigate = useNavigate();
   const totals = networkTotals();
-  const trend = networkTrend();
+  const period = usePeriod();
+  const trend = trendInPeriod(networkTrend(), period.from, period.to);
+  const last = trend.onTable.at(-1)!;
+  const span = plural(trend.labels.length - 1, ["неделю", "недели", "недель"]);
   const onTable = totals.losses + totals.potential;
   const first = trend.onTable[0]!;
   const inbox = useInbox();
+  const foundCount = FINDINGS.filter((f) => f.status !== "resolved" && f.effectRubMonth !== null).length;
   const completedChecks = EXPERIMENTS.filter((e) => e.result).length;
   const inboxCount = inbox.experiments.length + inbox.overdue.length + inbox.drafts.length;
 
@@ -69,8 +73,13 @@ export function NetworkPage() {
             <div className="text-sm text-white/70">
               Сеть из {plural(RESTAURANTS.length, ["ресторана", "ресторанов", "ресторанов"])}
             </div>
-            <div className="mt-4 text-sm font-medium text-spark">
-              <Term hint="Насколько вырастет прибыль в месяц, если устранить потери и использовать найденные возможности. Оценка до уровня лучших в сети, а не до идеала">Потенциал прибыли сети</Term>
+            <div className="mt-4 flex flex-wrap items-baseline gap-x-2 text-sm">
+              <span className="font-medium text-spark">
+                <Term hint="Сумма по всем открытым находкам: насколько вырастет прибыль в месяц, если устранить потери и использовать найденные возможности. Оценка до уровня лучших в сети, а не до идеала">Найденный потенциал прибыли</Term>
+              </span>
+              <Link to="/findings" className="text-white/60 hover:text-white hover:underline">
+                в {plural(foundCount, ["находке", "находках", "находках"])} →
+              </Link>
             </div>
             <div className="mt-1 flex items-baseline gap-3">
               <span className="font-display text-[56px] leading-none font-semibold tracking-tight sm:text-[72px]">
@@ -116,7 +125,9 @@ export function NetworkPage() {
             question="Сокращаются ли потери сети?"
             answer={
               <>
-                Да. Сумма, которую сеть теряет и недозарабатывает, за 8 недель снизилась с {rub(first)} до {rub(onTable)} в месяц — часть проблем уже исправили.
+                {last <= first
+                  ? `Да. За ${span} найденный потенциал снизился с ${rub(first)} до ${rub(last)} в месяц — часть проблем уже исправили.`
+                  : `Нет. За ${span} найденный потенциал вырос с ${rub(first)} до ${rub(last)} в месяц — появились новые проблемы.`}
               </>
             }
             source={<VerifiedNote>оценка на конец каждой недели</VerifiedNote>}
@@ -124,13 +135,14 @@ export function NetworkPage() {
           >
             <AreaTrend
               labels={trend.labels}
-              series={[{ name: "Потенциал прибыли", values: trend.onTable, color: "#0a8f84", fill: true }]}
+              series={[{ name: "Найденный потенциал", values: trend.onTable, color: "#0a8f84", fill: true }]}
               format={(n) => rub(n)}
               height={150}
             />
             <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-sm">
-              <span className="inline-flex items-center gap-1.5 font-medium text-gain">
-                <ArrowDownRight size={15} /> на {Math.round((1 - onTable / first) * 100)}% меньше, чем 8 недель назад
+              <span className={`inline-flex items-center gap-1.5 font-medium ${last <= first ? "text-gain" : "text-loss"}`}>
+                {last <= first ? <ArrowDownRight size={15} /> : <ArrowUpRight size={15} />} на {Math.abs(Math.round((1 - last / first) * 100))}%{" "}
+                {last <= first ? "меньше" : "больше"}, чем {span} назад
               </span>
               <span className="text-xs text-ink-3">Линия — потери + упущенная выгода, ₽ в месяц. Чем ниже, тем лучше</span>
             </div>
@@ -201,7 +213,7 @@ export function NetworkPage() {
             Все находки сети
           </Link>
           <Link to="/report" className={buttonClass("secondary")}>
-            Отчет для собственника
+            Отчет для руководителя
           </Link>
         </div>
       </Reveal>

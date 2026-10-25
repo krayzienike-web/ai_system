@@ -23,6 +23,7 @@ import { ROLE_LABELS } from "../api/types";
 import { Logo, LogoMark } from "../brand/Logo";
 import { cx } from "../ds/primitives";
 import { PERIOD } from "../mock/data";
+import { PeriodPicker } from "./PeriodPicker";
 import { usePrototype } from "../state/prototype";
 import { ChatDrawer } from "./chat/ChatDrawer";
 import { useInboxCount, useOpenTaskCount } from "./counts";
@@ -48,7 +49,7 @@ const HQ_NAV: NavItem[] = [
   { to: "/decisions", title: "Ждут решения", short: "Решения", Icon: Inbox, badge: "inbox", mobile: true },
   { to: "/findings", title: "Находки", short: "Находки", Icon: Lightbulb, mobile: true },
   { to: "/restaurants", title: "Рестораны", short: "Рестораны", Icon: Building2 },
-  { to: "/report", title: "Отчет для собственника", short: "Отчет", Icon: FileBarChart },
+  { to: "/report", title: "Отчет для руководителя", short: "Отчет", Icon: FileBarChart },
   { to: "/data", title: "Данные", short: "Данные", Icon: Database },
   { to: "/settings", title: "Нормы и настройки", short: "Настройки", Icon: Settings },
 ];
@@ -157,9 +158,8 @@ export function Shell() {
             <span className="lg:hidden">
               <Logo compact />
             </span>
-            <div className="hidden min-w-0 items-center gap-2 text-sm text-ink-2 sm:flex">
-              <span className="font-medium text-ink">Неделя {PERIOD.week}</span>
-              <span className="text-ink-3">·</span>
+            <PeriodPicker />
+            <div className="hidden min-w-0 items-center gap-2 text-sm text-ink-2 md:flex">
               <span>данные обновлены {PERIOD.dataUntil.slice(0, 5)}</span>
               <span className="rounded-full bg-spark/25 px-2 py-0.5 text-[11px] font-medium text-ink">Прототип · демо-данные</span>
             </div>

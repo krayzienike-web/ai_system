@@ -94,14 +94,20 @@ export function CheckPage() {
               })()}
               <span className="font-display text-3xl font-semibold">{VERDICT[e.result.verdict].title}</span>
             </div>
-            <div className="mt-4 text-ink">
-              <span className="font-display text-4xl font-semibold">+{rub(e.result.effectRubMonth)}</span>
-              <span className="ml-2 text-lg">в месяц</span>
-            </div>
-            <p className="mt-2 text-ink-2">
-              Скорее всего — от {rub(e.result.ciLow)} до {rub(e.result.ciHigh)} в месяц. Ждали {rub(e.expectedRubMonth)}.
-            </p>
-            <EffectRange low={e.result.ciLow} high={e.result.ciHigh} value={e.result.effectRubMonth} expected={e.expectedRubMonth} />
+            {e.result.verdict === "confirmed" ? (
+              <>
+                <div className="mt-4 text-ink">
+                  <span className="font-display text-4xl font-semibold">+{rub(e.result.effectRubMonth)}</span>
+                  <span className="ml-2 text-lg">в месяц</span>
+                </div>
+                <p className="mt-2 text-ink-2">
+                  Скорее всего — от {rub(e.result.ciLow)} до {rub(e.result.ciHigh)} в месяц. Ждали {rub(e.expectedRubMonth)}.
+                </p>
+                <EffectRange low={e.result.ciLow} high={e.result.ciHigh} value={e.result.effectRubMonth} expected={e.expectedRubMonth} />
+              </>
+            ) : (
+              <p className="mt-4 text-ink">Эффекта не видно: ждали +{perMonth(e.expectedRubMonth)}, разница с ресторанами без изменений — в пределах случайных колебаний.</p>
+            )}
             <p className="mt-4 text-sm text-ink-2">{e.result.text.replace(" (разница разниц)", "")}</p>
             {e.result.rolloutRubMonth && (
               <div className="mt-5 flex flex-wrap items-center gap-3 rounded-[16px] bg-surface p-4">

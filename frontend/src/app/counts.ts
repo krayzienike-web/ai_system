@@ -1,5 +1,6 @@
 import { daysUntil, todayLabel } from "../lib/dates";
 import { perMonth } from "../lib/format";
+import { resolvePeriod } from "../lib/period";
 import { useViewer } from "../lib/useViewer";
 import { EXPERIMENTS, PERIOD, TASKS } from "../mock/data";
 import type { Experiment, Finding, Task } from "../mock/types";
@@ -113,4 +114,10 @@ export function useWork(): (f: Finding) => Work {
       line: experiment ? { text: "Проверка ждет запуска", tone: "warn" } : null,
     };
   };
+}
+
+/** The reporting period chosen in the header, resolved to dates. */
+export function usePeriod() {
+  const { period } = usePrototype();
+  return resolvePeriod(period);
 }

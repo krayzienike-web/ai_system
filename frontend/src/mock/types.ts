@@ -88,6 +88,7 @@ export interface WeeklyTrend {
   labels: string[];
   onTable: number[]; // ₽/month that can be returned, as estimated each week
   returned: number[]; // ₽/month confirmed by experiments, run-rate
+  openFindings: number[]; // open findings at the end of each week
 }
 
 export interface Kpis {

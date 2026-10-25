@@ -1,4 +1,4 @@
-import { createMemoryHistory, createRootRoute, createRoute, createRouter, redirect } from "@tanstack/react-router";
+import { createMemoryHistory, createRootRoute, createRoute, createRouter, Navigate, redirect } from "@tanstack/react-router";
 import type { ComponentType } from "react";
 
 import { DEMO, tokens } from "./api/client";
@@ -15,16 +15,15 @@ import { RestaurantPage, RestaurantsPage } from "./app/hq/Restaurants";
 import { SettingsPage } from "./app/hq/Settings";
 import { Shell } from "./app/Shell";
 import { TasksPage } from "./app/TasksPage";
-import { EmptyState } from "./ds/primitives";
 import { useViewer } from "./lib/useViewer";
 import { LoginPage } from "./pages/Login";
 
-/** Screens for the management company only; a director gets "not found", as with the API. */
+/** Screens for the management company only. The API refuses them to a director; the UI never dead-ends there. */
 function hqOnly(Page: ComponentType) {
   return function HqOnly() {
     const viewer = useViewer();
     if (!viewer) return null;
-    return viewer.isHq ? <Page /> : <EmptyState title="Страница не найдена" />;
+    return viewer.isHq ? <Page /> : <Navigate to="/" />;
   };
 }
 
@@ -92,6 +91,8 @@ const routeTree = rootRoute.addChildren([
 export const router = createRouter({
   routeTree,
   scrollRestoration: true,
+  // An unknown address leads home instead of an empty "not found" page.
+  defaultNotFoundComponent: () => <Navigate to="/" />,
   ...(DEMO ? { history: createMemoryHistory({ initialEntries: ["/login"] }) } : {}),
 });
 
