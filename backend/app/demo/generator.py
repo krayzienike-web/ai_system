@@ -16,7 +16,7 @@ import json
 import random
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
@@ -149,6 +149,7 @@ def _pretty_xlsx(title: str, header: list[str], rows: list[list[Any]], totals: l
     """An export as people get it from r_keeper: a title, an empty line, the table and a totals row."""
     buf = io.BytesIO()
     wb = xlsxwriter.Workbook(buf, {"in_memory": True})
+    wb.set_properties({"created": datetime(2026, 1, 1)})  # fixed metadata: the same seed gives the same bytes
     ws = wb.add_worksheet("Продажи")
     ws.write(0, 0, title)
     for j, h in enumerate(header):
