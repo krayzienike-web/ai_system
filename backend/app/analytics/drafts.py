@@ -25,6 +25,7 @@ class Draft:
     period_to: date
     actions: list[str] = field(default_factory=list)
     evidence: dict[str, Any] = field(default_factory=dict)
+    view: dict[str, Any] | None = None  # how it is shown (analytics/views.py), filled by the engine
 
 
 def per_month(rub: Decimal, start: date, end: date) -> Decimal:

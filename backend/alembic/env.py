@@ -10,6 +10,7 @@ import app.imports.models
 import app.insights.models
 import app.norms.models
 import app.operations.models
+import app.overview.models
 import app.tasks.models
 import app.tenancy.models  # noqa: F401
 from app.core.config import get_settings

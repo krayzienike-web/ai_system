@@ -1,15 +1,22 @@
 from datetime import date
 from decimal import Decimal
 from typing import Annotated
+from uuid import UUID
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
+from sqlalchemy import select
 
 from app.core.deps import SessionDep, require
 from app.core.period import PeriodDep, TodayDep
+from app.experiments.api import CheckOut, checks_out
+from app.experiments.models import Experiment
+from app.overview import service as overview
+from app.overview.api import TrendOut
 from app.reports.service import head_report
-from app.tasks.api import TaskOut
+from app.tasks.api import TaskOut, tasks_out
 from app.tenancy.context import AccessContext
+from app.tenancy.models import Restaurant, Tenant
 from app.tenancy.permissions import Permission
 
 router = APIRouter(tags=["reports"])
@@ -22,6 +29,7 @@ class FailureOut(BaseModel):
     title: str
     restaurant_ids: list[str]
     reason: str
+    where: str = ""  # restaurant names
 
 
 class HeadReportOut(BaseModel):
@@ -39,6 +47,9 @@ class HeadReportOut(BaseModel):
     tasks_done: int
     done_tasks: list[TaskOut]
     failures: list[FailureOut]
+    network_name: str
+    trend: TrendOut
+    checks: list[CheckOut]
 
 
 @router.get("/reports/head")
@@ -46,6 +57,7 @@ def get_head_report(
     ctx: CanCompare, session: SessionDep, period: PeriodDep, today: TodayDep
 ) -> HeadReportOut:
     r = head_report(session, period, today=today)
+    names = dict(session.execute(select(Restaurant.id, Restaurant.name)).all())
     return HeadReportOut(
         date_from=period.date_from,
         date_to=period.date_to,
@@ -59,6 +71,14 @@ def get_head_report(
         potential_now_rub_month=r.potential_now_rub_month,
         tasks_set=r.tasks_set,
         tasks_done=r.tasks_done,
-        done_tasks=[TaskOut.of(t, today) for t in r.done_tasks],
-        failures=[FailureOut(**f.__dict__) for f in r.failures],
+        done_tasks=tasks_out(session, r.done_tasks, today),
+        failures=[
+            FailureOut(**f.__dict__, where=", ".join(names.get(UUID(i), i) for i in f.restaurant_ids))
+            for f in r.failures
+        ],
+        network_name=session.execute(select(Tenant.name)).scalar_one_or_none() or "",
+        trend=TrendOut(**overview.trend_of(session, None, period).__dict__),
+        checks=checks_out(
+            session, list(session.execute(select(Experiment).order_by(Experiment.created_at)).scalars())
+        ),
     )

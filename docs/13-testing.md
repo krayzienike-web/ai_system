@@ -140,6 +140,19 @@
 | TC-WORK-04 | Запуск и отклонение проверки изменений; правила вывода результата | `test_launch_sets_tasks_for_test_restaurants`, `test_reject_proposal`, `test_outcome_rules` | ✅ |
 | TC-WORK-05 | Отчет руководителю: цифры, провалы, границы периода | `test_head_report_numbers_and_failures`, `test_head_report_period_excludes_earlier_events` | ✅ |
 
+### Обзоры, действия и чат на сервере (OVR, ADR 0007)
+
+| ID | Требование | Тест | Статус |
+|----|------------|------|--------|
+| TC-OVR-01 | KPI — доли выручки; среднее по сети взвешено по выручке | `test_overview.py::test_kpis_are_shares_of_revenue_and_the_network_is_weighted_by_it` | ✅ |
+| TC-OVR-02 | «Это много?» словами: насколько и в какую сторону от сети или нормы | `test_scale_answer_says_how_far_and_which_way` | ✅ |
+| TC-OVR-03 | Числа словами как на экранах (₽, склонения, %) | `test_words` | ✅ |
+| TC-OVR-04 | Обзор сети, список ресторанов, «Моя неделя», счетчики: суммы из находок, права, чужой ресторан и чужая сеть — 404 | `test_overview_screens_follow_the_access_rules` | ✅ |
+| TC-OVR-05 | Находка несет, как ее показать (шкала, состав, динамика, документы), и вывод «что получилось» | `test_findings_carry_how_they_are_shown` | ✅ |
+| TC-OVR-06 | Чек-лист задачи отмечает только ее директор; напоминание — администратор УК и только по просроченной | `test_task_checklist_and_reminders` | ✅ |
+| TC-OVR-07 | Черновик проверки от системы, предложение, тиражирование только сработавшей и один раз; чужая сеть — 404 | `test_checks_are_drafted_proposed_and_rolled_out` | ✅ |
+| TC-OVR-08 | Отчет руководителю с трендом и проверками; чат не показывает директору другие рестораны | `test_head_report_and_chat` | ✅ |
+
 ### Интерфейс (UI)
 
 | ID | Требование (docs/10) | Тест | Статус |

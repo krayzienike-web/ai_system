@@ -88,6 +88,7 @@ def create_tasks(
             finding_id=finding_id,
             title=title,
             checklist=[c.strip() for c in checklist if c.strip()],
+            checklist_done=[False for c in checklist if c.strip()],
             assigned_by=assigned_by,
             created_by=ctx.user_id,
             created_on=today,
@@ -149,6 +150,42 @@ def complete_task(session: Session, ctx: AccessContext, task_id: UUID, *, report
         tenant_id=ctx.tenant_id,
         user_id=ctx.user_id,
         action="task.complete",
+        entity="task",
+        entity_id=task.id,
+    )
+    return task
+
+
+def tick(session: Session, ctx: AccessContext, task_id: UUID, index: int, done: bool) -> Task:
+    """The director ticks a checklist step of their task (or unticks it)."""
+    task = _own_task(session, ctx, task_id)
+    if task.status == TaskStatus.DONE:
+        raise InvalidError("The task is already done")
+    if not 0 <= index < len(task.checklist):
+        raise InvalidError("No such checklist step")
+    marks = list(task.checklist_done or []) + [False] * (len(task.checklist) - len(task.checklist_done or []))
+    marks[index] = done
+    task.checklist_done = marks
+    session.flush()
+    return task
+
+
+def remind(session: Session, ctx: AccessContext, task_id: UUID, *, today: date) -> Task:
+    """HQ reminds the director about an overdue task (once a day is enough)."""
+    if not ctx.can(Permission.TASKS_ASSIGN):
+        raise ForbiddenError("Directors are reminded by the HQ admin")
+    task = session.get(Task, task_id)
+    if task is None:
+        raise NotFoundError("Task not found")
+    if task.status == TaskStatus.DONE or task.due_on >= today:
+        raise InvalidError("The task is not overdue")
+    task.reminded_on = today
+    session.flush()
+    audit(
+        session,
+        tenant_id=ctx.tenant_id,
+        user_id=ctx.user_id,
+        action="task.remind",
         entity="task",
         entity_id=task.id,
     )

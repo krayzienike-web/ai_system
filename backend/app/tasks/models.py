@@ -55,6 +55,11 @@ class Task(IdMixin, TenantMixin, TimestampMixin, Base):
     experiment_id: Mapped[UUID | None] = mapped_column(ForeignKey("experiments.id", ondelete="SET NULL"))
     title: Mapped[str] = mapped_column(String(300))
     checklist: Mapped[list[str]] = mapped_column(JSONB, default=list, server_default=text("'[]'::jsonb"))
+    # Which checklist steps the director has ticked (same length as `checklist`).
+    checklist_done: Mapped[list[bool]] = mapped_column(
+        JSONB, default=list, server_default=text("'[]'::jsonb")
+    )
+    reminded_on: Mapped[date | None] = mapped_column(Date)  # HQ's last reminder about an overdue task
     assigned_by: Mapped[str] = mapped_column(String(20))
     created_by: Mapped[UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     created_on: Mapped[date] = mapped_column(Date)

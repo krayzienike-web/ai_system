@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.core.errors import ConflictError, ForbiddenError, InvalidError, NotFoundError
 from app.insights.models import Finding, ReviewStatus
+from app.overview import trend
 from app.tenancy.audit import audit
 from app.tenancy.context import AccessContext
 from app.tenancy.permissions import Permission
@@ -59,6 +60,8 @@ def review(
     finding.reviewed_by = None if verdict is Verdict.REOPEN else ctx.user_id
     finding.reviewed_on = None if verdict is Verdict.REOPEN else today
     session.flush()
+    # What the restaurants see has changed: the week's point of the trend follows.
+    trend.record_week(session, ctx.tenant_id, today)
     audit(
         session,
         tenant_id=ctx.tenant_id,

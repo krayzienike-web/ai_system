@@ -64,3 +64,8 @@ class Experiment(IdMixin, TenantMixin, TimestampMixin, Base):
     ci_high_rub_month: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
     result_text: Mapped[str | None] = mapped_column(Text)
     completed_on: Mapped[date | None] = mapped_column(Date)
+    baseline: Mapped[str | None] = mapped_column(Text)  # what the change is compared with, in words
+    progress_text: Mapped[str | None] = mapped_column(Text)  # interim measurement, written by the measurement
+    rollout_rub_month: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))  # the effect network-wide
+    rollout_on: Mapped[date | None] = mapped_column(Date)  # when HQ set the change for every restaurant
+    proposed_by: Mapped[UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))

@@ -1,15 +1,15 @@
 """Management commands:
 
-- `python -m app.cli seed-demo [--password ...]` — demo tenant, 3 restaurants, users and a small work loop;
+- `python -m app.cli seed-demo [--password ...]` — demo tenant, 3 restaurants and users;
 - `python -m app.cli generate-demo --out DIR [--seed N]` — files of the synthetic 12-restaurant network;
-- `python -m app.cli load-demo [--seed N]` — load that network into the demo tenant via the import pipeline
-  and compute findings;
+- `python -m app.cli load-demo [--seed N]` — load that network into the demo tenant via the import pipeline,
+  recompute findings week by week over the last quarter (the trend's history) and add the work on them
+  (app/demo/showcase.py);
 - `python -m app.cli analyze` — recompute findings of the demo tenant (analytics engine).
 """
 
 import argparse
-from datetime import date, timedelta
-from decimal import Decimal
+from datetime import timedelta
 from pathlib import Path
 from uuid import UUID
 
@@ -20,15 +20,15 @@ from app.analytics import engine
 from app.core.config import get_settings
 from app.core.db import get_sessionmaker
 from app.core.security import hash_password
-from app.demo.generator import generate
+from app.demo import showcase
+from app.demo.generator import END, generate
 from app.demo.loader import load
-from app.experiments.models import Experiment
-from app.insights.models import Finding
-from app.tasks.models import Task
 from app.tenancy.context import load_access_context
 from app.tenancy.models import Restaurant, Role, RoleAssignment, Tenant, User
 
 DEMO_TENANT = "Демо-сеть"
+DEMO_TODAY = END + timedelta(days=2)  # the demo's «today»: Tuesday after the last day of data
+HISTORY_WEEKS = 12
 DEMO_RESTAURANTS = [
     ("R01", "Ресторан на Тверской", "Москва"),
     ("R02", "Ресторан на Арбате", "Москва"),
@@ -73,136 +73,8 @@ def seed_demo(password: str) -> None:
             session.flush()
             restaurants[code] = restaurant.id
             add_user(f"director{i}@demo.local", f"Директор {code}", Role.RESTAURANT_DIRECTOR, restaurant)
-        seed_work(session, tenant.id, restaurants, date.today())
         print(f"Password for all demo users: {password}")
     engine.dispose()
-
-
-def seed_work(session: Session, tenant_id: UUID, r: dict[str, UUID], today: date) -> None:
-    """A few findings, checks and tasks to click the work loop through before the analytics engine exists.
-
-    Dates are relative to today, so the demo never goes stale.
-    """
-
-    def day(offset: int) -> date:
-        return today + timedelta(days=offset)
-
-    def finding(
-        code: str | None,
-        kind: str,
-        process: str,
-        title: str,
-        effect: str | None,
-        actions: list[str],
-        key: str | None = None,
-    ) -> Finding:
-        # The key is the one the analytics engine gives the same problem: its run takes these findings over.
-        f = Finding(
-            key=key,
-            tenant_id=tenant_id,
-            restaurant_id=r[code] if code else None,
-            kind=kind,
-            process=process,
-            title=title,
-            effect_rub_month=Decimal(effect) if effect else None,
-            effect_note=None if effect else "искажает фудкост сети",
-            actions=actions,
-            found_on=day(-22),
-        )
-        session.add(f)
-        session.flush()
-        return f
-
-    moz = finding(
-        "R01",
-        "problem",
-        "production",
-        "Перерасход моцареллы по ТТК",
-        "38000",
-        ["Взвешивать сыр на раздаче", "Фото-стандарт порции"],
-        "M1:R01:P01",
-    )
-    beef = finding(
-        "R02",
-        "problem",
-        "purchasing",
-        "Говядина дороже среднего по сети",
-        "31000",
-        ["Заказывать заранее у основного поставщика"],
-        "M3:R02:P08",
-    )
-    salmon = finding(
-        "R03",
-        "problem",
-        "production",
-        "Перерасход лосося по ТТК",
-        "27000",
-        ["Проверить выход при разделке"],
-        "M1:R03:P09",
-    )
-    finding(
-        None,
-        "problem",
-        "accounting",
-        "ТТК картофеля фри, вероятно, устарела",
-        None,
-        ["Контрольная обжарка и новая ТТК"],
-        "M1:net:P11",
-    )
-    moz.status, beef.status, salmon.status = "in_experiment", "new", "in_work"
-
-    running = Experiment(
-        tenant_id=tenant_id,
-        finding_id=moz.id,
-        title="Контрольное взвешивание сыра",
-        hypothesis="Если две недели взвешивать моцареллу на раздаче, перерасход снизится с 9% до 3%.",
-        metric="Расход сверх ТТК, %",
-        test_restaurant_ids=[r["R01"]],
-        starts_on=day(-10),
-        ends_on=day(18),
-        expected_rub_month=Decimal("25500"),
-        status="running",
-    )
-    proposed = Experiment(
-        tenant_id=tenant_id,
-        finding_id=beef.id,
-        title="Плановый заказ говядины",
-        hypothesis="Если заказывать говядину заранее у основного поставщика, цена упадет до средней по сети.",
-        metric="Цена говядины, ₽/кг",
-        test_restaurant_ids=[r["R02"]],
-        control_restaurant_ids=[r["R01"], r["R03"]],
-        starts_on=day(4),
-        ends_on=day(32),
-        expected_rub_month=Decimal("18600"),
-    )
-    session.add_all([running, proposed])
-    session.flush()
-    session.add_all(
-        [
-            Task(
-                tenant_id=tenant_id,
-                restaurant_id=r["R01"],
-                finding_id=moz.id,
-                experiment_id=running.id,
-                title=running.title,
-                checklist=["Весы на станции пиццы", "Пересчет моцареллы каждый понедельник"],
-                assigned_by="hq",
-                created_on=day(-10),
-                due_on=day(18),
-                status="in_progress",
-            ),
-            Task(
-                tenant_id=tenant_id,
-                restaurant_id=r["R03"],
-                finding_id=salmon.id,
-                title="Проверить выход филе при разделке",
-                assigned_by="director",
-                created_on=day(-9),
-                due_on=day(-3),
-            ),
-        ]
-    )
-    print("  work loop: 5 findings, 2 checks, 2 tasks")
 
 
 def generate_demo(out: str, seed: int) -> None:
@@ -215,23 +87,29 @@ def generate_demo(out: str, seed: int) -> None:
 
 
 def load_demo(seed: int) -> None:
-    """Loads the synthetic network into the demo tenant as its HQ admin, with row-level security on."""
+    """Loads the synthetic network into the demo tenant as its HQ admin, with row-level security on.
+
+    The engine then runs as it would have every Monday of the last quarter, on the data known by then, and an
+    analyst confirms what it found (except the last week's findings: they wait in «Проверка находок»).
+    """
     owner = create_engine(get_settings().migrations_database_url)
     with Session(owner) as session:
         admin = session.execute(select(User).where(User.email == "admin@demo.local")).scalar_one_or_none()
-        if admin is None:
+        analyst = session.execute(select(User).where(User.email == "analyst@demo.local")).scalar_one_or_none()
+        if admin is None or analyst is None:
             raise SystemExit("Run seed-demo first")
-        user_id, tenant_id = admin.id, admin.tenant_id
+        user_id, tenant_id, analyst_id = admin.id, admin.tenant_id, analyst.id
     owner.dispose()
+    today = DEMO_TODAY
     with get_sessionmaker()() as session:
         ctx = load_access_context(session, user_id, tenant_id)
         assert ctx is not None
-        rows = load(session, ctx, generate(seed=seed), today=date.today())
-        result = engine.run(session, ctx, date.today())
+        rows = load(session, ctx, generate(seed=seed), today=today)
+        result = showcase.build(session, ctx, analyst_id, today, HISTORY_WEEKS)
         session.commit()
     for template, count in rows.items():
         print(f"  {template:<18} {count:>7} rows")
-    print(f"  findings: {result.created} new, {result.updated} updated, {result.removed} removed")
+    print(f"  history: {HISTORY_WEEKS} weekly runs; today ({today}): {result.created} new findings")
 
 
 def analyze() -> None:
@@ -244,7 +122,7 @@ def analyze() -> None:
     with get_sessionmaker()() as session:
         ctx = load_access_context(session, user_id, tenant_id)
         assert ctx is not None
-        result = engine.run(session, ctx, date.today())
+        result = engine.run(session, ctx, DEMO_TODAY)
         session.commit()
     print(f"findings: {result.created} new, {result.updated} updated, {result.removed} removed")
 

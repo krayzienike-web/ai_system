@@ -6,8 +6,10 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from app.analytics.verify import verify
+from app.core import words
 from app.core.deps import SessionDep, require
 from app.core.errors import ForbiddenError, NotFoundError
 from app.core.period import TodayDep
@@ -16,9 +18,9 @@ from app.insights.models import Finding, ReviewStatus
 from app.insights.review import RejectReason, Verdict
 from app.insights.service import FindingWork
 from app.insights.work import WorkStage
-from app.tasks.api import TaskOut
+from app.tasks.api import TaskOut, tasks_out
 from app.tenancy.context import AccessContext
-from app.tenancy.models import User
+from app.tenancy.models import Restaurant, User
 from app.tenancy.permissions import Permission
 
 router = APIRouter(tags=["findings"])
@@ -44,6 +46,7 @@ class CheckRef(BaseModel):
     expected_rub_month: Decimal
     starts_on: date
     ends_on: date
+    progress_text: str | None = None
 
 
 class FindingOut(BaseModel):
@@ -68,11 +71,16 @@ class FindingOut(BaseModel):
     status: str
     found_on: date
     work: WorkOut
+    restaurant_code: str | None = None
+    restaurant_name: str | None = None
+    # How it is shown: summary, causes, metric, confidence_note, scale, composition, chart, table (ADR 0007).
+    view: dict[str, Any] | None = None
 
 
 class FindingDetailOut(FindingOut):
     tasks: list[TaskOut]
     check: CheckRef | None  # HQ only: a director follows a check through its tasks
+    result_answer: str | None  # «Что сделали и что получилось?» in words; None while nothing is done
 
 
 def _out(fw: FindingWork, ctx: AccessContext) -> dict[str, object]:
@@ -99,7 +107,49 @@ def _out(fw: FindingWork, ctx: AccessContext) -> dict[str, object]:
         "status": f.status,
         "found_on": f.found_on,
         "work": WorkOut(**fw.work.__dict__),
+        "view": f.view,
     }
+
+
+def findings_out(session: Session, ctx: AccessContext, items: list[FindingWork]) -> list[FindingOut]:
+    """Findings as the screens get them: with the reviewer's name (HQ) and the restaurant's code and name."""
+    reviewers = _reviewer_names(session, [fw.finding for fw in items])
+    places = {r.id: r for r in session.execute(select(Restaurant)).scalars()}
+    out = []
+    for fw in items:
+        place = places.get(fw.finding.restaurant_id) if fw.finding.restaurant_id else None
+        out.append(
+            FindingOut(
+                **_out(fw, ctx),
+                reviewed_by_name=reviewers.get(fw.finding.reviewed_by),
+                restaurant_code=place.code if place else None,
+                restaurant_name=place.name if place else None,
+            )
+        )
+    return out
+
+
+def result_answer(fw: FindingWork) -> str | None:
+    """What came of the work on a finding, measured by the system, not by the people who did it."""
+    tasks, e = fw.tasks, fw.experiment
+    if not tasks and not e:
+        return None
+    confirmed = sum(
+        (t.outcome_effect_rub_month or Decimal(0) for t in tasks if t.outcome_verdict == "confirmed"),
+        Decimal(0),
+    )
+    if e and e.verdict == "confirmed" and e.effect_rub_month:
+        return f"Проверка подтвердила эффект +{words.per_month(e.effect_rub_month)}."
+    if confirmed:
+        return f"Сработало: +{words.per_month(confirmed)} — посчитано по данным после выполнения."
+    done = sum(1 for t in tasks if t.status == "done")
+    if done:
+        return (
+            f"Задачи выполнены ({done} из {len(tasks)}), результат в рублях посчитаем после "
+            "ближайшей инвентаризации."
+        )
+    what = f"задач — {len(tasks)}" if tasks else "идет проверка"
+    return f"В работе: {what}. Как только выполнят — здесь появится отчет и результат."
 
 
 @router.get("/findings")
@@ -117,11 +167,10 @@ def list_findings(
     items = service.list_findings(
         session, today=today, stage=stage, restaurant_id=restaurant_id, late_only=late_only, review=review
     )
-    names = _reviewer_names(session, [fw.finding for fw in items])
-    return [FindingOut(**_out(fw, ctx), reviewed_by_name=names.get(fw.finding.reviewed_by)) for fw in items]
+    return findings_out(session, ctx, items)
 
 
-def _reviewer_names(session: SessionDep, findings: list[Finding]) -> dict[UUID | None, str]:
+def _reviewer_names(session: Session, findings: list[Finding]) -> dict[UUID | None, str]:
     """Names of the people who reviewed these findings (row-level security hides them from a director)."""
     ids = {f.reviewed_by for f in findings if f.reviewed_by}
     if not ids:
@@ -143,11 +192,18 @@ def get_finding(finding_id: UUID, ctx: CanRead, session: SessionDep, today: Toda
             expected_rub_month=e.expected_rub_month,
             starts_on=e.starts_on,
             ends_on=e.ends_on,
+            progress_text=e.progress_text,
         )
-        if e
+        if e and ctx.can(Permission.NETWORK_COMPARE)
         else None
     )
-    return FindingDetailOut(**_out(fw, ctx), tasks=[TaskOut.of(t, today) for t in fw.tasks], check=check)
+    (base,) = findings_out(session, ctx, [fw])
+    return FindingDetailOut(
+        **base.model_dump(),
+        tasks=tasks_out(session, fw.tasks, today),
+        check=check,
+        result_answer=result_answer(fw),
+    )
 
 
 CanReview = Annotated[AccessContext, Depends(require(Permission.FINDINGS_REVIEW))]
@@ -174,6 +230,6 @@ def review_finding(
 ) -> FindingOut:
     review.review(session, ctx, finding_id, body.verdict, reason=body.reason, note=body.note, today=today)
     fw = service.get_finding(session, finding_id, today=today)
-    names = _reviewer_names(session, [fw.finding])
+    (out,) = findings_out(session, ctx, [fw])
     session.commit()
-    return FindingOut(**_out(fw, ctx), reviewed_by_name=names.get(fw.finding.reviewed_by))
+    return out

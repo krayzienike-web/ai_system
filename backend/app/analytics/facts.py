@@ -1,6 +1,6 @@
 """Everything the engine reads, loaded once per run under the caller's row-level security."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date
 from decimal import Decimal
 from uuid import UUID
@@ -93,6 +93,7 @@ class ContractRow:
 @dataclass
 class Facts:
     restaurants: dict[UUID, str] = field(default_factory=dict)  # id -> code
+    restaurant_names: dict[str, str] = field(default_factory=dict)  # code -> name, for what people read
     products: dict[UUID, ProductInfo] = field(default_factory=dict)
     suppliers: dict[UUID, str] = field(default_factory=dict)  # id -> name
     menu: dict[UUID, MenuInfo] = field(default_factory=dict)
@@ -104,10 +105,24 @@ class Facts:
     counts: list[CountRow] = field(default_factory=list)
     contracts: list[ContractRow] = field(default_factory=list)
 
+    def until(self, day: date) -> "Facts":
+        """The facts as they were known at the end of `day`: for recomputing the past (the demo's history)."""
+        return replace(
+            self,
+            sales=[r for r in self.sales if r.day <= day],
+            receipts=[r for r in self.receipts if r.day <= day],
+            transfers=[r for r in self.transfers if r.day <= day],
+            write_offs=[r for r in self.write_offs if r.day <= day],
+            counts=[r for r in self.counts if r.day <= day],
+            contracts=[c for c in self.contracts if c.valid_from <= day],
+            recipe_lines=[r for r in self.recipe_lines if r.valid_from <= day],
+        )
+
 
 def load_facts(session: Session) -> Facts:
     f = Facts()
     f.restaurants = dict(session.execute(select(Restaurant.id, Restaurant.code)).all())
+    f.restaurant_names = dict(session.execute(select(Restaurant.code, Restaurant.name)).all())
     for p in session.execute(select(Product)).scalars():
         f.products[p.id] = ProductInfo(p.code, p.name, p.category, p.base_unit, p.shelf_life_days, p.is_semi)
     f.suppliers = dict(session.execute(select(Supplier.id, Supplier.name)).all())

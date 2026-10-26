@@ -10,7 +10,8 @@ class Permission(StrEnum):
     NETWORK_COMPARE = "network.compare"  # see other restaurants by name
     DATA_UPLOAD = "data.upload"
     CATALOG_MANAGE = "catalog.manage"
-    EXPERIMENTS_LAUNCH = "experiments.launch"  # launch or reject a proposed check
+    EXPERIMENTS_PROPOSE = "experiments.propose"  # draft a check of a finding for HQ admin to launch
+    EXPERIMENTS_LAUNCH = "experiments.launch"  # launch or reject a proposed check, roll a result out
     ANALYTICS_RUN = "analytics.run"  # recompute findings for the whole network
     FINDINGS_REVIEW = "findings.review"  # check engine findings against the data, confirm or reject
     NORMS_MANAGE = "norms.manage"  # food-cost targets, loss allowances, write-off reasons
@@ -27,6 +28,7 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
             Permission.NETWORK_COMPARE,
             Permission.DATA_UPLOAD,
             Permission.FINDINGS_REVIEW,
+            Permission.EXPERIMENTS_PROPOSE,
             Permission.AI_CHAT,
         }
     ),

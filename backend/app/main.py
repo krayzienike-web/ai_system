@@ -6,6 +6,7 @@ from sqlalchemy import text
 from app.analytics.api import router as analytics_router
 from app.auth.api import router as auth_router
 from app.catalog.api import router as catalog_router
+from app.chat.api import router as chat_router
 from app.core.config import get_settings
 from app.core.deps import SessionDep
 from app.core.errors import RuleError
@@ -13,6 +14,7 @@ from app.experiments.api import router as checks_router
 from app.imports.api import router as imports_router
 from app.insights.api import router as findings_router
 from app.norms.api import router as norms_router
+from app.overview.api import router as overview_router
 from app.reports.api import router as reports_router
 from app.tasks.api import router as tasks_router
 from app.tenancy.api import router as tenancy_router
@@ -50,6 +52,8 @@ def create_app() -> FastAPI:
     api.include_router(catalog_router)
     api.include_router(norms_router)
     api.include_router(analytics_router)
+    api.include_router(overview_router)
+    api.include_router(chat_router)
     app.include_router(api)
     return app
 

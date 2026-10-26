@@ -7,11 +7,12 @@ started working on it; otherwise it stays as it is for a person to close.
 
 from dataclasses import dataclass
 from datetime import date
+from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from app.analytics import m1, m2, m3, params
+from app.analytics import kpi, m1, m2, m3, params, views
 from app.analytics.costs import CostBook
 from app.analytics.drafts import Draft
 from app.analytics.facts import Facts, load_facts
@@ -21,6 +22,8 @@ from app.core.errors import ForbiddenError
 from app.experiments.models import Experiment
 from app.insights.models import Finding, FindingStatus, ReviewStatus
 from app.norms.service import Norms, load_norms
+from app.overview import trend
+from app.overview.models import KpiSnapshot
 from app.tasks.models import Task
 from app.tenancy.audit import audit
 from app.tenancy.context import AccessContext
@@ -38,16 +41,25 @@ class RunResult:
     drafts: int
 
 
-def detect(facts: Facts, norms: Norms, cfg: EngineParams = DEFAULT) -> list[Draft]:
+def analyse(facts: Facts, norms: Norms, cfg: EngineParams = DEFAULT) -> tuple[list[Draft], list[kpi.Kpi]]:
+    """Findings of every module and the restaurants' KPIs, from one pass over the facts."""
     usage = Usage(facts)
     costs = CostBook(facts.receipts)
-    return (
-        m1.detect(facts, m1.rows(facts, usage, costs, cfg), norms, cfg)
+    m1_rows = m1.rows(facts, usage, costs, cfg)
+    drafts = (
+        m1.detect(facts, m1_rows, norms, cfg)
         + m2.detect(facts, norms, cfg)
         + m3.detect(facts, cfg)
         + m3.detect_contracts(facts, cfg)
         + m3.detect_network_growth(facts, cfg)
     )
+    for d in drafts:
+        d.view = views.build(d, facts)
+    return drafts, kpi.compute(facts, m1_rows, costs)
+
+
+def detect(facts: Facts, norms: Norms, cfg: EngineParams = DEFAULT) -> list[Draft]:
+    return analyse(facts, norms, cfg)[0]
 
 
 def _changed_much(f: Finding, d: Draft, cfg: EngineParams) -> bool:
@@ -64,12 +76,36 @@ def _changed_much(f: Finding, d: Draft, cfg: EngineParams) -> bool:
     return abs(new - old) / abs(old) > cfg.REVIEW_RECHECK_CHANGE
 
 
-def run(session: Session, ctx: AccessContext, today: date) -> RunResult:
+def _store_kpis(session: Session, tenant_id: UUID, kpis: list[kpi.Kpi], today: date) -> None:
+    """The snapshot is replaced as a whole: the same data gives the same rows (idempotent)."""
+    session.execute(delete(KpiSnapshot))
+    session.add_all(
+        KpiSnapshot(
+            tenant_id=tenant_id,
+            restaurant_id=k.restaurant,
+            computed_on=today,
+            food_cost_from=k.food_cost_from,
+            food_cost_to=k.food_cost_to,
+            revenue=k.revenue,
+            food_cost_actual=k.food_cost_actual,
+            food_cost_theory=k.food_cost_theory,
+            write_offs_from=k.write_offs_from,
+            write_offs_to=k.write_offs_to,
+            write_offs_share=k.write_offs_share,
+        )
+        for k in kpis
+    )
+    session.flush()
+
+
+def run(session: Session, ctx: AccessContext, today: date, *, as_of: date | None = None) -> RunResult:
+    """Recomputes the findings. `as_of`: only the data up to that day (recomputing the past: the demo)."""
     if not ctx.can(Permission.ANALYTICS_RUN) or not ctx.role.is_hq:
         raise ForbiddenError("Пересчет находок запускает администратор управляющей компании")
     norms = load_norms(session)
     cfg = params.load(session)
-    drafts = detect(load_facts(session), norms, cfg)
+    facts = load_facts(session)
+    drafts, kpis = analyse(facts.until(as_of) if as_of else facts, norms, cfg)
     keys = [d.key for d in drafts]
     if len(keys) != len(set(keys)):
         raise RuntimeError(
@@ -110,7 +146,7 @@ def run(session: Session, ctx: AccessContext, today: date) -> RunResult:
         f.title, f.headline = d.title, d.headline
         f.effect_rub_month, f.effect_note = d.effect_rub_month, d.effect_note
         f.confidence, f.period_from, f.period_to = d.confidence, d.period_from, d.period_to
-        f.actions, f.evidence = d.actions, d.evidence
+        f.actions, f.evidence, f.view = d.actions, d.evidence, d.view
         f.algorithm_version = ALGORITHM_VERSION
     stale = [f.id for f in existing.values()]
     worked_on = set(session.execute(select(Task.finding_id).where(Task.finding_id.in_(stale))).scalars())
@@ -127,6 +163,8 @@ def run(session: Session, ctx: AccessContext, today: date) -> RunResult:
             session.delete(f)
             removed += 1
     session.flush()
+    _store_kpis(session, ctx.tenant_id, kpis, today)
+    trend.record_week(session, ctx.tenant_id, today)
     audit(
         session,
         tenant_id=ctx.tenant_id,

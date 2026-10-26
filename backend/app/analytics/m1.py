@@ -59,6 +59,10 @@ class M1Row:
         return self.start + timedelta(days=1)
 
 
+def _network_share(group: list[M1Row]) -> str | None:
+    return str(med([r.share for r in group]).quantize(Decimal("0.0001"))) if len(group) >= 2 else None
+
+
 def rows(facts: Facts, usage: Usage, costs: CostBook, cfg: EngineParams = DEFAULT) -> list[M1Row]:
     counts: dict[UUID, dict[date, dict[UUID, Decimal]]] = defaultdict(lambda: defaultdict(dict))
     for c in facts.counts:
@@ -233,6 +237,8 @@ def detect(facts: Facts, all_rows: list[M1Row], norms: Norms, cfg: EngineParams 
                             "actual": str(r.actual.quantize(Decimal("0.001"))),
                             "write_off": str(r.write_off.quantize(Decimal("0.001"))),
                             "share": str(r.share.quantize(Decimal("0.0001"))),
+                            # The network's median for the same period (2+ restaurants counted on these days).
+                            "network_share": _network_share(by_period.get((product, r.start, r.end), [])),
                             "unit_cost": None
                             if r.unit_cost is None
                             else str(r.unit_cost.quantize(Decimal("0.01"))),

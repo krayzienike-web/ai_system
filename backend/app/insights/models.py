@@ -75,6 +75,9 @@ class Finding(IdMixin, TenantMixin, TimestampMixin, Base):
     review_note: Mapped[str | None] = mapped_column(Text)
     reviewed_by: Mapped[UUID | None] = mapped_column(ForeignKey("users.id"))
     reviewed_on: Mapped[date | None] = mapped_column(Date)
+    # How the finding is shown (ADR 0007): summary, causes, metric, confidence_note, scale, composition,
+    # chart, table. Built by the engine from its evidence; for findings made by hand — entered with them.
+    view: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
 
     @property
     def checked(self) -> bool:
