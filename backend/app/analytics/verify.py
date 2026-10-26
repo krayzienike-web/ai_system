@@ -38,6 +38,8 @@ def verify(session: Session, finding: Finding) -> dict[str, Any]:
         return _m1_restaurant(session, finding)
     if finding.module == "M1":
         return _m1_network(session, finding)
+    if finding.module == "M2":
+        return _m2(session, finding)
     if finding.module == "M3" and finding.restaurant_id is not None:
         return _m3(session, finding)
     return {
@@ -576,4 +578,173 @@ INTERPRETATION_M3 = [
     "Тот же поставщик продает дороже, чем другим ресторанам: повод запросить единую цену или договор "
     "на всю сеть.",
     "Прежде чем подтверждать: проверьте, что сравниваются одинаковые товары (тот же вид, фасовка, качество).",
+]
+
+
+def _network_prices(session: Session, start: date, end: date) -> dict[UUID, Decimal]:
+    totals: dict[UUID, list[Decimal]] = defaultdict(lambda: [Decimal(0), Decimal(0)])
+    for product, amount, qty in session.execute(
+        select(Receipt.product_id, Receipt.amount, Receipt.qty).where(
+            Receipt.day >= start, Receipt.day <= end
+        )
+    ).all():
+        totals[product][0] += amount
+        totals[product][1] += qty
+    return {p: a / q for p, (a, q) in totals.items() if q > 0}
+
+
+def _m2(session: Session, f: Finding) -> dict[str, Any]:
+    ev = f.evidence or {}
+    item = session.execute(select(MenuItem).where(MenuItem.code == ev["menu_item"])).scalar_one()
+    assert f.period_from and f.period_to
+    start, end = f.period_from, f.period_to
+    before_start, before_end = (date.fromisoformat(d) for d in ev["before"])
+    lines = [
+        Line(r.menu_item_id or r.semi_product_id, r.product_id, r.gross_qty, r.valid_from)  # type: ignore[arg-type]
+        for r in session.execute(select(RecipeLine)).scalars()
+    ]
+    need = explode(item.id, Decimal(1), lines_on(lines, end))
+    need_before = explode(item.id, Decimal(1), lines_on(lines, before_end))
+    now, before = _network_prices(session, start, end), _network_prices(session, before_start, before_end)
+    products = {
+        p.id: p for p in session.execute(select(Product).where(Product.id.in_(need.keys()))).scalars()
+    }
+    rows = []
+    for pid, qty in sorted(need.items(), key=lambda kv: -(kv[1] * now.get(kv[0], Decimal(0)))):
+        p = products[pid]
+        unit = UNITS.get(p.base_unit, p.base_unit)
+        rows.append(
+            {
+                "product": p.name,
+                "per_portion": f"{_q(qty)} {unit}",
+                "price": None if pid not in now else _q(now[pid], Decimal("0.01")),
+                "cost": None if pid not in now else _q(qty * now[pid], Decimal("0.01")),
+                "price_before": None if pid not in before else _q(before[pid], Decimal("0.01")),
+                "cost_before": None
+                if pid not in before
+                else _q(need_before.get(pid, qty) * before[pid], Decimal("0.01")),
+            }
+        )
+    revenue = sum(
+        (
+            r
+            for (r,) in session.execute(
+                select(Sale.revenue).where(Sale.menu_item_id == item.id, Sale.day >= start, Sale.day <= end)
+            ).all()
+        ),
+        Decimal(0),
+    )
+    steps: list[dict[str, Any]] = [
+        {
+            "id": "recipe",
+            "label": f"Себестоимость порции по техкарте: цены сети за {start:%d.%m}–{end:%d.%m} "
+            f"и квартал назад ({before_start:%d.%m}–{before_end:%d.%m})",
+            "value": None,
+            "unit": "",
+            "rows": rows,
+        },
+        {
+            "id": "revenue",
+            "label": "Выручка блюда по сети за то же время",
+            "value": rub(revenue),
+            "unit": "",
+            "rows": [],
+        },
+    ]
+    if any(p not in now for p in need) or not need:
+        return {
+            "module": "M2",
+            "supported": True,
+            "steps": steps,
+            "result": [],
+            "rules": [],
+            "checks": [{"check": "Есть цены закупки всех ингредиентов", "ok": False}],
+        }
+    cost = sum((q * now[p] for p, q in need.items()), Decimal(0))
+    cost_before = (
+        sum((q * before[p] for p, q in need_before.items()), Decimal(0))
+        if all(p in before for p in need_before)
+        else None
+    )
+    price = item.price or Decimal(ev["price"])
+    food_cost = cost / price
+    norms = load_norms(session)
+    target = norms.food_cost_target(item.category) / 100
+    days = (end - start).days + 1
+    potential = (food_cost - target) * revenue * params.M2_KEEP * 30 / days
+    result = [
+        {"label": "Себестоимость порции сейчас", "value": rub(cost), "unit": ""},
+        {
+            "label": "Себестоимость порции квартал назад",
+            "value": None if cost_before is None else rub(cost_before),
+            "unit": "",
+        },
+        {"label": "Цена в меню", "value": rub(price), "unit": ""},
+        {"label": "Фудкост блюда", "value": pct(food_cost), "unit": ""},
+        {
+            "label": f"Цель для категории «{item.category or 'без категории'}»",
+            "value": pct(target, 0),
+            "unit": "",
+        },
+        {
+            "label": "Цена, при которой фудкост вернется к цели",
+            "value": rub(Decimal(ev["suggested_price"])),
+            "unit": "",
+        },
+        {
+            "label": "Потенциал в месяц (половина разницы — консервативно)",
+            "value": rub(potential),
+            "unit": "",
+        },
+    ]
+    rules = [
+        {
+            "rule": "Фудкост блюда выше цели",
+            "value": pct(food_cost),
+            "threshold": pct(target, 0),
+            "passed": food_cost > target,
+        },
+        {
+            "rule": "Потенциал существенный, ₽ в месяц",
+            "value": rub(potential),
+            "threshold": rub(params.M2_MATERIALITY_RUB_MONTH),
+            "passed": potential >= params.M2_MATERIALITY_RUB_MONTH,
+        },
+    ]
+    checks = [
+        {
+            "check": "Пересчет из исходных строк совпадает с тем, что посчитал движок",
+            "ok": abs(Decimal(ev["food_cost"]) - food_cost) < Decimal("0.0005"),
+            "note": f"движок: {pct(Decimal(ev['food_cost']))}, пересчет: {pct(food_cost)}",
+        },
+        {
+            "check": "Сумма в находке совпадает с пересчетом",
+            "ok": f.effect_rub_month is not None
+            and abs(potential - f.effect_rub_month) <= max(Decimal(50), f.effect_rub_month / 100),
+            "note": f"в находке: {rub(f.effect_rub_month or Decimal(0))}, пересчет: {rub(potential)}",
+        },
+    ]
+    return {
+        "module": "M2",
+        "supported": True,
+        "formula": FORMULA_M2,
+        "object": item.name,
+        "restaurant": "Вся сеть",
+        "period": [start.isoformat(), end.isoformat()],
+        "steps": steps,
+        "result": result,
+        "rules": rules,
+        "checks": checks,
+        "interpretation": INTERPRETATION_M2,
+    }
+
+
+FORMULA_M2 = (
+    "Фудкост блюда = себестоимость порции по техкарте и текущим ценам закупки / цена в меню; "
+    "потенциал = (фудкост − цель) × выручка блюда × 0,5"
+)
+INTERPRETATION_M2 = [
+    "Цена в меню едина для сети, поэтому находка — для управляющей компании.",
+    "Половина разницы — консервативная оценка: после подорожания часть гостей закажет другое блюдо.",
+    "Прежде чем подтверждать: убедитесь, что рост цены ингредиента не разовый (одна дорогая поставка).",
 ]

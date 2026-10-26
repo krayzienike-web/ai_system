@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
-from app.analytics import engine, m1, m3
+from app.analytics import engine, m1, m2, m3
 from app.analytics.costs import CostBook
 from app.analytics.facts import (
     CountRow,
@@ -147,6 +147,34 @@ def test_m3_overpay_against_the_network_with_the_supplier_named() -> None:
     assert m3.detect(f) == []
 
 
+def test_m2_dish_food_cost_above_target_names_the_cause() -> None:
+    f, (r,), cheese, pizza = _facts()
+    sup = uuid4()
+    # 0.11 kg of cheese per pizza (0.1 directly + 0.05 kg of sauce × 0.2).
+    # A quarter ago 600 ₽/kg, now 1 800 ₽/kg.
+    _receipts(f, r, cheese, sup, "600", n=4)
+    f.receipts = [
+        ReceiptRow(x.restaurant, x.day - timedelta(days=91), x.product, x.supplier, x.qty, x.amount)
+        for x in f.receipts
+    ]
+    _receipts(f, r, cheese, sup, "1800", n=4)
+    f.sales = [
+        SaleRow(r, date(2026, 9, 20) + timedelta(days=i), pizza, Decimal(100), Decimal(58000))
+        for i in range(5)
+    ]
+    (d,) = m2.detect(f, Norms())
+    # 0.11 × 1 800 = 198 ₽ per portion / 580 ₽ = 34.1 % against 30 %
+    assert d.key == "M2:net:M01" and d.restaurant is None and d.kind == "opportunity"
+    assert (
+        "34,1% при цели 30%" in d.headline
+        and "с 66\u00a0₽ до 198\u00a0₽" in d.headline
+        and "сыр: +200%" in d.headline
+    )
+    assert "Цена 660\u00a0₽ вместо 580\u00a0₽" in d.headline  # 198 / 0.30 = 660
+    # A pizza target of 35 % (set by HQ for the category): nothing to say.
+    assert m2.detect(f, Norms(food_cost_by_category={"Пицца": Decimal(35)})) == []
+
+
 @pytest.fixture
 def demo(network: Network, owner_engine: Engine) -> dict[str, UUID]:
     """The 12-restaurant demo network loaded into tenant A, plus a director for its R01."""
@@ -182,25 +210,30 @@ def test_engine_finds_planted_problems_and_review_gates_directors(
         )
         assert client.post("/api/analytics/run", headers=analyst).status_code == 403
         run = client.post("/api/analytics/run", headers=hq).json()
-        assert run["created"] == 5
+        assert run["created"] == 6
         # Idempotent: the same data gives the same findings, updated in place.
         assert client.post("/api/analytics/run", headers=hq).json() | {} == {
             "created": 0,
-            "updated": 5,
+            "updated": 6,
             "removed": 0,
-            "drafts": 5,
+            "drafts": 6,
         }
 
         pending = client.get("/api/findings", headers=hq, params={"review": "pending"}).json()
         by_key = {(f["module"], f["title"]): f for f in pending}
-        assert len(pending) == 5 and all(f["review_status"] == "pending" for f in pending)
+        assert len(pending) == 6 and all(f["review_status"] == "pending" for f in pending)
         assert {t for _, t in by_key} == {
             "Перерасход по техкарте: Сыр Моцарелла",
             "Перерасход по техкарте: Лосось охлажденный",
             "Техкарта, вероятно, устарела: Картофель фри замороженный",
             "Закупка у дорогого поставщика: Говядина вырезка",
             "Поставщик продает дороже, чем другим: Сливки 33%",
+            "Фудкост выше целевого: Лосось на гриле",
         }
+        salmon_dish = by_key[("M2", "Фудкост выше целевого: Лосось на гриле")]
+        assert salmon_dish["restaurant_id"] is None and "+40% к цене закупки" in salmon_dish["headline"]
+        vs = client.get(f"/api/findings/{salmon_dish['id']}/verification", headers=analyst).json()
+        assert all(c["ok"] for c in vs["checks"]) and all(r["passed"] for r in vs["rules"])
         beef = by_key[("M3", "Закупка у дорогого поставщика: Говядина вырезка")]
         assert beef["headline"].startswith("С 27.07 говядина вырезка покупают у «Мясной экспресс»")
         vb = client.get(f"/api/findings/{beef['id']}/verification", headers=analyst).json()

@@ -141,15 +141,6 @@ def seed_work(session: Session, tenant_id: UUID, r: dict[str, UUID], today: date
         "M1:R03:P09",
     )
     finding(
-        "R01",
-        "opportunity",
-        "production",
-        "Пересмотреть цену пиццы «Маргарита»",
-        "20700",
-        ["Поднять цену на 30 ₽"],
-        "M2:R01:M01",
-    )
-    finding(
         None,
         "problem",
         "accounting",

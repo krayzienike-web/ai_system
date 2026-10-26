@@ -247,6 +247,18 @@ def generate(seed: int = 42, restaurants: int = 12, start: date = START, end: da
         supplier="S3",
     )
     planted(
+        id="net-salmon-price",
+        restaurant=None,
+        module="M2",
+        product="P09",
+        menu_item="M07",
+        kind="opportunity",
+        description="С 01.09 лосось подорожал у поставщика на 40% для всей сети, а цена «Лосося на гриле» "
+        "в меню прежняя — фудкост блюда выше целевого",
+        since="2026-09-01",
+        price_premium=0.40,
+    )
+    planted(
         id="r01-greens-write-offs",
         restaurant="R01",
         module="M5",
@@ -411,6 +423,8 @@ def generate(seed: int = 42, restaurants: int = 12, start: date = START, end: da
                             sup, unit_price = "S8", base_price * 1.11
                         if code == "R05" and p_code == "P04" and day >= date(2026, 8, 1):
                             unit_price = base_price * 1.14
+                        if p_code == "P09" and day >= date(2026, 9, 1):
+                            unit_price *= 1.40  # the market moved: the whole network pays more
                         doc += 1
                         amount = _q(float(delivered) * unit_price, "0.01")
                         vat_rate = VAT.get(category, Decimal("0.20"))

@@ -11,7 +11,7 @@ from datetime import date
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.analytics import m1, m3
+from app.analytics import m1, m2, m3
 from app.analytics.costs import CostBook
 from app.analytics.drafts import Draft
 from app.analytics.facts import Facts, load_facts
@@ -26,7 +26,7 @@ from app.tenancy.context import AccessContext
 from app.tenancy.permissions import Permission
 
 ALGORITHM_VERSION = "engine-1"
-MODULES = ("M1", "M3")  # modules this version runs; findings of other modules are left alone
+MODULES = ("M1", "M2", "M3")  # modules this version runs; findings of other modules are left alone
 
 
 @dataclass(frozen=True)
@@ -40,7 +40,7 @@ class RunResult:
 def detect(facts: Facts, norms: Norms) -> list[Draft]:
     usage = Usage(facts)
     costs = CostBook(facts.receipts)
-    return m1.detect(facts, m1.rows(facts, usage, costs), norms) + m3.detect(facts)
+    return m1.detect(facts, m1.rows(facts, usage, costs), norms) + m2.detect(facts, norms) + m3.detect(facts)
 
 
 def run(session: Session, ctx: AccessContext, today: date) -> RunResult:

@@ -22,3 +22,10 @@ M3_OVERPAY = Decimal("0.05")  # 5 % above the typical price of the network
 M3_MATERIALITY_RUB_MONTH = Decimal(3000)
 M3_Z = Decimal(2)
 M3_Z_FLOOR = Decimal("0.01")  # 1 %: the smallest price spread the z-score assumes
+
+# M2 — food cost of dishes
+M2_WINDOW_DAYS = 28  # current ingredient prices: the network's purchases over the last 4 weeks
+M2_COMPARE_DAYS = 91  # «before»: the same window a quarter earlier
+M2_KEEP = Decimal("0.5")  # conservative: half of the extra margin survives guests ordering less
+M2_MATERIALITY_RUB_MONTH = Decimal(3000)
+M2_PRICE_STEP = Decimal(10)  # suggested menu prices are rounded up to 10 ₽
