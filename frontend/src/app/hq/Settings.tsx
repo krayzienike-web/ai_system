@@ -12,6 +12,7 @@ import {
   Skeleton,
 } from "../../ds/primitives";
 import { useViewer } from "../../lib/useViewer";
+import { EngineParamsSection } from "./EngineParams";
 import { usePrototype } from "../../state/prototype";
 
 const KINDS: { kind: ReasonKind; title: string }[] = [
@@ -75,6 +76,7 @@ export function SettingsPage() {
       ) : (
         <Skeleton className="h-64" />
       )}
+      <EngineParamsSection />
     </div>
   );
 }

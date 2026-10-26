@@ -27,3 +27,7 @@ class NormSettings(IdMixin, TenantMixin, TimestampMixin, Base):
     updated_by: Mapped[str | None] = mapped_column(String(64))
     # Engine findings wait for a manual check before directors see them (on while the engine is new).
     review_findings: Mapped[bool] = mapped_column(default=True, server_default=text("true"))
+    # The network's own engine thresholds in engine units, as strings (analytics/params.py); {} = defaults.
+    engine_params: Mapped[dict[str, str]] = mapped_column(
+        JSONB, server_default=text("'{}'::jsonb"), default=dict
+    )

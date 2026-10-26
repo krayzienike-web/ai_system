@@ -36,6 +36,7 @@ import {
 import { perMonth, plural } from "../../lib/format";
 import { useViewer } from "../../lib/useViewer";
 import { usePrototype } from "../../state/prototype";
+import { ReviewTrace } from "../findings/EngineFindings";
 
 const TABS: { status: ReviewStatus; title: string }[] = [
   { status: "pending", title: "На проверке" },
@@ -444,6 +445,14 @@ export function ReviewFindingPage() {
         subtitle={`${name(f.restaurant_id)} · ${f.module} ${MODULE_TITLE[f.module ?? ""] ?? ""}${f.period_from ? ` · ${dateRu(f.period_from)} – ${dateRu(f.period_to)}` : ""}`}
       />
       {f.headline && <p className="text-ink-2">{f.headline}</p>}
+      <Card className="flex flex-wrap items-end justify-between gap-3 p-4">
+        <ReviewTrace f={f} />
+        {f.review_status === "confirmed" && (
+          <Link to="/findings" className="text-sm font-medium text-brand-strong hover:underline">
+            Открыть в находках →
+          </Link>
+        )}
+      </Card>
       <VerdictForm f={f} />
 
       {!data?.supported ? (

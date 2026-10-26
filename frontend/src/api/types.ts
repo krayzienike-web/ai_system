@@ -150,6 +150,7 @@ export interface ApiFinding {
   review_reason: RejectReason | null;
   review_note: string | null;
   reviewed_on: string | null;
+  reviewed_by_name?: string | null;
   title: string;
   headline: string | null;
   effect_rub_month: string | null;
@@ -197,4 +198,17 @@ export interface AnalyticsRun {
   updated: number;
   removed: number;
   drafts: number;
+}
+
+/** An engine threshold as people see it (75 %, 3 000 ₽); decimal strings. */
+export interface EngineParam {
+  key: string;
+  module: "ALL" | "M1" | "M2" | "M3" | string;
+  title: string;
+  unit: string;
+  meaning: string;
+  low: string;
+  high: string;
+  value: string;
+  default: string;
 }

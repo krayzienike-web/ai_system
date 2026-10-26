@@ -12,11 +12,21 @@ const items = (
 }));
 const today = () => new Date().toISOString().slice(0, 10);
 
+/** The working list (`GET /findings`): checked engine findings; a director sees only those of their restaurant. */
+export function demoCheckedFindings(restaurantCode: string | null): ApiFinding[] {
+  return items
+    .map((x) => x.finding)
+    .filter((f) => f.review_status === "confirmed")
+    .filter((f) => restaurantCode === null || f.restaurant_id === restaurantCode)
+    .map((f) => (restaurantCode === null ? f : { ...f, reviewed_by_name: null }));
+}
+
 export function demoReview(
   path: string,
   init: RequestInit,
   isHq: boolean,
   isAdmin: boolean,
+  viewerName = "",
 ): unknown {
   if (!isHq) throw new ApiError(403, "Находки проверяет управляющая компания");
   const list = /^\/findings\?review=(pending|confirmed|rejected)$/.exec(path);
@@ -66,5 +76,6 @@ export function demoReview(
   f.review_reason = body.verdict === "reject" ? (body.reason ?? null) : null;
   f.review_note = body.note?.trim() || null;
   f.reviewed_on = body.verdict === "reopen" ? null : today();
+  f.reviewed_by_name = body.verdict === "reopen" ? null : viewerName;
   return f;
 }

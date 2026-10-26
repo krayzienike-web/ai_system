@@ -62,6 +62,7 @@ def _files(session: Session, ids: set[UUID]) -> dict[UUID, str]:
 
 
 def _m1_restaurant(session: Session, f: Finding) -> dict[str, Any]:
+    cfg = params.load(session)
     ev = f.evidence or {}
     product = session.execute(select(Product).where(Product.code == ev["product"])).scalar_one()
     restaurant = session.get(Restaurant, f.restaurant_id)
@@ -307,8 +308,8 @@ def _m1_restaurant(session: Session, f: Finding) -> dict[str, Any]:
             {
                 "rule": "Ресторан выбивается из сети (robust z-score)",
                 "value": ev["z"],
-                "threshold": str(params.M1_Z),
-                "passed": Decimal(ev["z"]) > params.M1_Z,
+                "threshold": str(cfg.M1_Z),
+                "passed": Decimal(ev["z"]) > cfg.M1_Z,
             }
         )
     if effect is not None:
@@ -316,8 +317,8 @@ def _m1_restaurant(session: Session, f: Finding) -> dict[str, Any]:
             {
                 "rule": "Потери существенны, ₽ в месяц сверх ориентира",
                 "value": rub(effect),
-                "threshold": rub(params.M1_MATERIALITY_RUB_MONTH),
-                "passed": effect >= params.M1_MATERIALITY_RUB_MONTH,
+                "threshold": rub(cfg.M1_MATERIALITY_RUB_MONTH),
+                "passed": effect >= cfg.M1_MATERIALITY_RUB_MONTH,
             }
         )
 
@@ -363,6 +364,7 @@ def _m1_restaurant(session: Session, f: Finding) -> dict[str, Any]:
 
 
 def _m1_network(session: Session, f: Finding) -> dict[str, Any]:
+    cfg = params.load(session)
     ev = f.evidence or {}
     allowance = Decimal(ev["allowance"])
     shares = {code: Decimal(v) for code, v in ev.get("restaurants", {}).items()}
@@ -394,14 +396,14 @@ def _m1_network(session: Session, f: Finding) -> dict[str, Any]:
             {
                 "rule": "Доля ресторанов сверх допуска",
                 "value": f"{len(over)} из {len(shares)}",
-                "threshold": f"{pct(params.M1_NET_SHARE, 0)}",
-                "passed": len(shares) > 0 and Decimal(len(over)) / len(shares) >= params.M1_NET_SHARE,
+                "threshold": f"{pct(cfg.M1_NET_SHARE, 0)}",
+                "passed": len(shares) > 0 and Decimal(len(over)) / len(shares) >= cfg.M1_NET_SHARE,
             },
             {
                 "rule": "Медиана сети выше допуска",
                 "value": pct(m - allowance),
-                "threshold": pct(params.M1_NET_EXCESS),
-                "passed": m - allowance >= params.M1_NET_EXCESS,
+                "threshold": pct(cfg.M1_NET_EXCESS),
+                "passed": m - allowance >= cfg.M1_NET_EXCESS,
             },
         ],
         "checks": [],
@@ -428,6 +430,7 @@ INTERPRETATION_M1_NET = [
 
 
 def _m3(session: Session, f: Finding) -> dict[str, Any]:
+    cfg = params.load(session)
     ev = f.evidence or {}
     product = session.execute(select(Product).where(Product.code == ev["product"])).scalar_one()
     restaurant = session.get(Restaurant, f.restaurant_id)
@@ -453,9 +456,7 @@ def _m3(session: Session, f: Finding) -> dict[str, Any]:
         t[1] += r.qty
         t[2] += 1
     others = {
-        rid: t[0] / t[1]
-        for rid, t in totals.items()
-        if rid != restaurant.id and t[2] >= params.M3_MIN_RECEIPTS
+        rid: t[0] / t[1] for rid, t in totals.items() if rid != restaurant.id and t[2] >= cfg.M3_MIN_RECEIPTS
     }
     qty = sum((r.qty for r in own), Decimal(0))
     paid = sum((r.amount for r in own), Decimal(0))
@@ -523,14 +524,14 @@ def _m3(session: Session, f: Finding) -> dict[str, Any]:
         {
             "rule": "Цена выше типичной цены сети",
             "value": pct(share),
-            "threshold": pct(params.M3_OVERPAY, 0),
-            "passed": share > params.M3_OVERPAY,
+            "threshold": pct(cfg.M3_OVERPAY, 0),
+            "passed": share > cfg.M3_OVERPAY,
         },
         {
             "rule": "Переплата существенна, ₽ в месяц",
             "value": rub(effect),
-            "threshold": rub(params.M3_MATERIALITY_RUB_MONTH),
-            "passed": effect >= params.M3_MATERIALITY_RUB_MONTH,
+            "threshold": rub(cfg.M3_MATERIALITY_RUB_MONTH),
+            "passed": effect >= cfg.M3_MATERIALITY_RUB_MONTH,
         },
     ]
     if ev.get("z") is not None:
@@ -539,12 +540,12 @@ def _m3(session: Session, f: Finding) -> dict[str, Any]:
             {
                 "rule": "Цена выбивается из сети (robust z-score)",
                 "value": ev["z"],
-                "threshold": str(params.M3_Z),
-                "passed": Decimal(ev["z"]) > params.M3_Z,
+                "threshold": str(cfg.M3_Z),
+                "passed": Decimal(ev["z"]) > cfg.M3_Z,
             },
         )
     checks = [
-        {"check": f"Закупок ресторана в окне: {len(own)}", "ok": len(own) >= params.M3_MIN_RECEIPTS},
+        {"check": f"Закупок ресторана в окне: {len(own)}", "ok": len(own) >= cfg.M3_MIN_RECEIPTS},
         {
             "check": "Пересчет из исходных строк совпадает с тем, что посчитал движок",
             "ok": abs(Decimal(ev["share"]) - share) < Decimal("0.0005"),
@@ -598,6 +599,7 @@ def _network_prices(session: Session, start: date, end: date) -> dict[UUID, Deci
 
 
 def _m2(session: Session, f: Finding) -> dict[str, Any]:
+    cfg = params.load(session)
     ev = f.evidence or {}
     item = session.execute(select(MenuItem).where(MenuItem.code == ev["menu_item"])).scalar_one()
     assert f.period_from and f.period_to
@@ -675,7 +677,7 @@ def _m2(session: Session, f: Finding) -> dict[str, Any]:
     norms = load_norms(session)
     target = norms.food_cost_target(item.category) / 100
     days = (end - start).days + 1
-    potential = (food_cost - target) * revenue * params.M2_KEEP * 30 / days
+    potential = (food_cost - target) * revenue * cfg.M2_KEEP * 30 / days
     result = [
         {"label": "Себестоимость порции сейчас", "value": rub(cost), "unit": ""},
         {
@@ -711,8 +713,8 @@ def _m2(session: Session, f: Finding) -> dict[str, Any]:
         {
             "rule": "Потенциал существенный, ₽ в месяц",
             "value": rub(potential),
-            "threshold": rub(params.M2_MATERIALITY_RUB_MONTH),
-            "passed": potential >= params.M2_MATERIALITY_RUB_MONTH,
+            "threshold": rub(cfg.M2_MATERIALITY_RUB_MONTH),
+            "passed": potential >= cfg.M2_MATERIALITY_RUB_MONTH,
         },
     ]
     checks = [
@@ -755,6 +757,7 @@ INTERPRETATION_M2 = [
 
 
 def _m3_growth(session: Session, f: Finding) -> dict[str, Any]:
+    cfg = params.load(session)
     ev = f.evidence or {}
     product = session.execute(select(Product).where(Product.code == ev["product"])).scalar_one()
     assert f.period_from and f.period_to
@@ -811,14 +814,14 @@ def _m3_growth(session: Session, f: Finding) -> dict[str, Any]:
         {
             "rule": "Цена выросла по всей сети",
             "value": pct(growth),
-            "threshold": pct(params.M3_NET_GROWTH, 0),
-            "passed": growth > params.M3_NET_GROWTH,
+            "threshold": pct(cfg.M3_NET_GROWTH, 0),
+            "passed": growth > cfg.M3_NET_GROWTH,
         },
         {
             "rule": "Сумма существенная, ₽ в месяц",
             "value": rub(effect),
-            "threshold": rub(params.M3_MATERIALITY_RUB_MONTH),
-            "passed": effect >= params.M3_MATERIALITY_RUB_MONTH,
+            "threshold": rub(cfg.M3_MATERIALITY_RUB_MONTH),
+            "passed": effect >= cfg.M3_MATERIALITY_RUB_MONTH,
         },
     ]
     checks = [

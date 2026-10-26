@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
 from app.core.deps import SessionDep, require
-from app.norms import service
+from app.norms import engine_settings, service
 from app.norms.service import Norms
 from app.tenancy.context import AccessContext
 from app.tenancy.permissions import Permission
@@ -62,5 +62,33 @@ def get_norms(ctx: CanRead, session: SessionDep) -> NormsOut:
 def put_norms(body: NormsIn, ctx: CanRead, session: SessionDep) -> NormsOut:
     norms = service.save_norms(session, ctx, body.model_dump(mode="json"))
     out = _out(norms, session)
+    session.commit()
+    return out
+
+
+class EngineParamOut(BaseModel):
+    key: str
+    module: str
+    title: str
+    unit: str
+    meaning: str
+    low: Decimal
+    high: Decimal
+    value: Decimal
+    default: Decimal
+
+
+class EngineParamsIn(BaseModel):
+    values: dict[str, Decimal | None]  # shown units; None returns a parameter to its default
+
+
+@router.get("/settings/engine")
+def get_engine_params(ctx: CanRead, session: SessionDep) -> list[EngineParamOut]:
+    return [EngineParamOut(**p) for p in engine_settings.describe(session)]
+
+
+@router.put("/settings/engine")
+def put_engine_params(body: EngineParamsIn, ctx: CanRead, session: SessionDep) -> list[EngineParamOut]:
+    out = [EngineParamOut(**p) for p in engine_settings.save(session, ctx, body.values)]
     session.commit()
     return out

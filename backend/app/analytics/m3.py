@@ -12,9 +12,9 @@ from datetime import date, timedelta
 from decimal import Decimal
 from uuid import UUID
 
-from app.analytics import params
 from app.analytics.drafts import Draft, dmy, pct, per_month, rub
 from app.analytics.facts import Facts, ReceiptRow
+from app.analytics.params import DEFAULT, EngineParams
 from app.analytics.stats import med, robust_z
 
 ACTIONS_SUPPLIER = [
@@ -46,11 +46,11 @@ class PriceRow:
         return max(by, key=lambda s: by[s])
 
 
-def window(facts: Facts) -> tuple[date, date] | None:
+def window(facts: Facts, cfg: EngineParams = DEFAULT) -> tuple[date, date] | None:
     if not facts.receipts:
         return None
     end = max(r.day for r in facts.receipts)
-    return end - timedelta(days=params.M3_WINDOW_DAYS - 1), end
+    return end - timedelta(days=cfg.M3_WINDOW_DAYS - 1), end
 
 
 def rows(facts: Facts, start: date, end: date) -> dict[UUID, dict[UUID, PriceRow]]:
@@ -76,8 +76,8 @@ def since(receipts: list[ReceiptRow], threshold: Decimal) -> date:
     return first
 
 
-def detect(facts: Facts) -> list[Draft]:
-    span = window(facts)
+def detect(facts: Facts, cfg: EngineParams = DEFAULT) -> list[Draft]:
+    span = window(facts, cfg)
     if span is None:
         return []
     start, end = span
@@ -88,7 +88,7 @@ def detect(facts: Facts) -> list[Draft]:
             history[(r.restaurant, r.product)].append(r)
     drafts: list[Draft] = []
     for product, by_restaurant in rows(facts, start, end).items():
-        valid = {r: row for r, row in by_restaurant.items() if len(row.receipts) >= params.M3_MIN_RECEIPTS}
+        valid = {r: row for r, row in by_restaurant.items() if len(row.receipts) >= cfg.M3_MIN_RECEIPTS}
         if len(valid) < 3:
             continue
         info = facts.products[product]
@@ -97,22 +97,22 @@ def detect(facts: Facts) -> list[Draft]:
             others = [o for r, o in valid.items() if r != restaurant]
             bench = med([o.price for o in others])
             share = row.price / bench - 1
-            if share <= params.M3_OVERPAY:
+            if share <= cfg.M3_OVERPAY:
                 continue
             z = None
-            if len(valid) >= params.NETWORK_Z_MIN_RESTAURANTS:
-                z = robust_z(row.price / med(prices), [p / med(prices) for p in prices], params.M3_Z_FLOOR)
-                if z <= params.M3_Z:
+            if len(valid) >= cfg.NETWORK_Z_MIN_RESTAURANTS:
+                z = robust_z(row.price / med(prices), [p / med(prices) for p in prices], cfg.M3_Z_FLOOR)
+                if z <= cfg.M3_Z:
                     continue
             effect = per_month((row.price - bench) * row.qty, start, end)
-            if effect < params.M3_MATERIALITY_RUB_MONTH:
+            if effect < cfg.M3_MATERIALITY_RUB_MONTH:
                 continue
             supplier = row.main_supplier()
             others_suppliers = {o.main_supplier() for o in others}
             own_name = facts.suppliers.get(supplier, "поставщик") if supplier else "поставщик"
             different = supplier not in others_suppliers
             # Since when: over the whole purchase history, not only the window.
-            start_day = since(history[(restaurant, product)], bench * (1 + params.M3_OVERPAY / 2))
+            start_day = since(history[(restaurant, product)], bench * (1 + cfg.M3_OVERPAY / 2))
             unit = {"kg": "кг", "l": "л", "pcs": "шт"}.get(info.unit, info.unit)
             price_text = f"{rub(row.price)}/{unit}"
             if different:
@@ -186,9 +186,9 @@ def _network_price(receipts: list[ReceiptRow]) -> Decimal | None:
     return None if qty <= 0 else sum((r.amount for r in receipts), Decimal(0)) / qty
 
 
-def detect_contracts(facts: Facts) -> list[Draft]:
+def detect_contracts(facts: Facts, cfg: EngineParams = DEFAULT) -> list[Draft]:
     """Invoices above the price agreed with the supplier (when contract prices are loaded)."""
-    span = window(facts)
+    span = window(facts, cfg)
     if span is None or not facts.contracts:
         return []
     start, end = span
@@ -205,12 +205,12 @@ def detect_contracts(facts: Facts) -> list[Draft]:
             by_pair[(r.supplier, r.product)].append((r, price))
     drafts = []
     for (supplier, product), rows in by_pair.items():
-        over = [(r, p) for r, p in rows if r.amount / r.qty > p * (1 + params.M3_CONTRACT_TOLERANCE)]
+        over = [(r, p) for r, p in rows if r.amount / r.qty > p * (1 + cfg.M3_CONTRACT_TOLERANCE)]
         if not over:
             continue
         overpay = sum((r.amount - p * r.qty for r, p in over), Decimal(0))
         effect = per_month(overpay, start, end)
-        if effect < params.M3_MATERIALITY_RUB_MONTH:
+        if effect < cfg.M3_MATERIALITY_RUB_MONTH:
             continue
         info = facts.products[product]
         name = facts.suppliers.get(supplier, "поставщик")
@@ -257,14 +257,14 @@ def detect_contracts(facts: Facts) -> list[Draft]:
     return drafts
 
 
-def detect_network_growth(facts: Facts) -> list[Draft]:
+def detect_network_growth(facts: Facts, cfg: EngineParams = DEFAULT) -> list[Draft]:
     """The whole network pays noticeably more than a quarter ago (no contract price to compare with)."""
     if not facts.receipts:
         return []
     end = max(r.day for r in facts.receipts)
-    start = end - timedelta(days=params.M3_NET_WINDOW_DAYS - 1)
-    before_end = end - timedelta(days=params.M3_NET_COMPARE_DAYS)
-    before_start = before_end - timedelta(days=params.M3_NET_WINDOW_DAYS - 1)
+    start = end - timedelta(days=cfg.M3_NET_WINDOW_DAYS - 1)
+    before_end = end - timedelta(days=cfg.M3_NET_COMPARE_DAYS)
+    before_start = before_end - timedelta(days=cfg.M3_NET_WINDOW_DAYS - 1)
     with_contract = {c.product for c in facts.contracts}
     now: dict[UUID, list[ReceiptRow]] = defaultdict(list)
     before: dict[UUID, list[ReceiptRow]] = defaultdict(list)
@@ -286,11 +286,11 @@ def detect_network_growth(facts: Facts) -> list[Draft]:
         if not p_now or not p_before:
             continue
         growth = p_now / p_before - 1
-        if growth <= params.M3_NET_GROWTH:
+        if growth <= cfg.M3_NET_GROWTH:
             continue
         qty = sum((r.qty for r in rows), Decimal(0))
         effect = per_month((p_now - p_before) * qty, start, end)
-        if effect < params.M3_MATERIALITY_RUB_MONTH:
+        if effect < cfg.M3_MATERIALITY_RUB_MONTH:
             continue
         info = facts.products[product]
         restaurants = {r.restaurant for r in rows}
@@ -299,7 +299,7 @@ def detect_network_growth(facts: Facts) -> list[Draft]:
             by_supplier[r.supplier] += r.amount
         main = max(by_supplier, key=lambda s: by_supplier[s])
         name = facts.suppliers.get(main, "поставщик") if main else "поставщик"
-        start_day = since(history[product], p_before * (1 + params.M3_NET_GROWTH / 2))
+        start_day = since(history[product], p_before * (1 + cfg.M3_NET_GROWTH / 2))
         unit = {"kg": "кг", "l": "л", "pcs": "шт"}.get(info.unit, info.unit)
         drafts.append(
             Draft(

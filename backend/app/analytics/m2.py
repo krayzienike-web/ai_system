@@ -11,9 +11,9 @@ from datetime import date, timedelta
 from decimal import ROUND_CEILING, Decimal
 from uuid import UUID
 
-from app.analytics import params
 from app.analytics.drafts import Draft, pct, per_month, rub
 from app.analytics.facts import Facts
+from app.analytics.params import DEFAULT, EngineParams
 from app.catalog.recipes import explode, lines_on
 from app.norms.service import Norms
 
@@ -40,18 +40,18 @@ def portion_cost(need: dict[UUID, Decimal], prices: dict[UUID, Decimal]) -> Deci
     return sum((q * prices[p] for p, q in need.items()), Decimal(0))
 
 
-def suggested_price(cost: Decimal, target: Decimal) -> Decimal:
-    step = params.M2_PRICE_STEP
+def suggested_price(cost: Decimal, target: Decimal, cfg: EngineParams = DEFAULT) -> Decimal:
+    step = cfg.M2_PRICE_STEP
     return (cost / target / step).to_integral_value(rounding=ROUND_CEILING) * step
 
 
-def detect(facts: Facts, norms: Norms) -> list[Draft]:
+def detect(facts: Facts, norms: Norms, cfg: EngineParams = DEFAULT) -> list[Draft]:
     if not facts.receipts:
         return []
     end = max(r.day for r in facts.receipts)
-    start = end - timedelta(days=params.M2_WINDOW_DAYS - 1)
-    before_end = end - timedelta(days=params.M2_COMPARE_DAYS)
-    before_start = before_end - timedelta(days=params.M2_WINDOW_DAYS - 1)
+    start = end - timedelta(days=cfg.M2_WINDOW_DAYS - 1)
+    before_end = end - timedelta(days=cfg.M2_COMPARE_DAYS)
+    before_start = before_end - timedelta(days=cfg.M2_WINDOW_DAYS - 1)
     now, before = unit_prices(facts, start, end), unit_prices(facts, before_start, before_end)
     recipes_now, recipes_before = lines_on(facts.recipe_lines, end), lines_on(facts.recipe_lines, before_end)
     revenue: dict[UUID, Decimal] = defaultdict(Decimal)
@@ -72,8 +72,8 @@ def detect(facts: Facts, norms: Norms) -> list[Draft]:
         target = norms.food_cost_target(info.category) / 100
         if food_cost <= target:
             continue
-        potential = per_month((food_cost - target) * revenue[item] * params.M2_KEEP, start, end)
-        if potential < params.M2_MATERIALITY_RUB_MONTH:
+        potential = per_month((food_cost - target) * revenue[item] * cfg.M2_KEEP, start, end)
+        if potential < cfg.M2_MATERIALITY_RUB_MONTH:
             continue
         need_before = explode(item, Decimal(1), recipes_before) if item in recipes_before else {}
         cost_before = portion_cost(need_before, before)
@@ -90,7 +90,7 @@ def detect(facts: Facts, norms: Norms) -> list[Draft]:
                 f"({facts.products[top].name.lower()}: +{pct(growth, 0)} к цене закупки), "
                 "а цена в меню прежняя"
             )
-        new_price = suggested_price(cost, target)
+        new_price = suggested_price(cost, target, cfg)
         drafts.append(
             Draft(
                 key=f"M2:net:{info.code}",

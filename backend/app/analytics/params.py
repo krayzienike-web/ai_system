@@ -1,35 +1,225 @@
-"""Engine parameters that are not the network's norms (those live in app/norms and are set by HQ).
+"""Engine parameters: thresholds and windows of the detectors (docs/12-analytics-engine.md, «Параметры»).
 
-Every value here is documented in docs/12-analytics-engine.md; changing one is a change of the engine's
-logic and goes through that document (and the project workspace) first.
+The values below are the defaults. A network's HQ admin may set its own in «Нормы и настройки» → «Параметры
+движка» (`norm_settings.engine_params`); every run and every verification reads them with `load(session)`.
+The network's norms (food-cost target, loss allowances) live in app/norms.
 """
 
+from dataclasses import dataclass, fields, replace
 from decimal import Decimal
+from typing import Any
 
-# M1 — recipe execution
-M1_MATERIALITY_RUB_MONTH = Decimal(3000)  # smaller losses are not worth a director's attention
-M1_Z = Decimal(2)  # how far from the network a restaurant must be (robust z-score)
-M1_Z_FLOOR = Decimal("0.005")  # 0.5 p.p.: the smallest spread the z-score assumes
-NETWORK_Z_MIN_RESTAURANTS = 8  # below this the network is too small for a z-score (pilot of 3)
-M1_NET_SHARE = Decimal("0.75")  # share of restaurants over the allowance → the recipe, not the kitchens
-M1_NET_EXCESS = Decimal("0.02")  # … and the median is at least 2 p.p. over the allowance
-M1_MIN_THEORY_DAYS = 14  # a period between counts shorter than this is not judged
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
-# M3 — purchase prices
-M3_WINDOW_DAYS = 56  # the last 8 weeks of purchases are compared
-M3_MIN_RECEIPTS = 2  # fewer purchases of a product in the window: no conclusion
-M3_OVERPAY = Decimal("0.05")  # 5 % above the typical price of the network
-M3_MATERIALITY_RUB_MONTH = Decimal(3000)
-M3_Z = Decimal(2)
-M3_Z_FLOOR = Decimal("0.01")  # 1 %: the smallest price spread the z-score assumes
-M3_CONTRACT_TOLERANCE = Decimal("0.01")  # rounding in invoices: up to 1 % above the contract is not a finding
-M3_NET_WINDOW_DAYS = 28  # network-wide growth: the last 4 weeks …
-M3_NET_COMPARE_DAYS = 91  # … against the same 4 weeks a quarter earlier
-M3_NET_GROWTH = Decimal("0.10")  # 10 % more for the whole network
 
-# M2 — food cost of dishes
-M2_WINDOW_DAYS = 28  # current ingredient prices: the network's purchases over the last 4 weeks
-M2_COMPARE_DAYS = 91  # «before»: the same window a quarter earlier
-M2_KEEP = Decimal("0.5")  # conservative: half of the extra margin survives guests ordering less
-M2_MATERIALITY_RUB_MONTH = Decimal(3000)
-M2_PRICE_STEP = Decimal(10)  # suggested menu prices are rounded up to 10 ₽
+@dataclass(frozen=True)
+class EngineParams:
+    # Shared
+    NETWORK_Z_MIN_RESTAURANTS: int = 8  # below this the network is too small for a z-score (pilot of 3)
+    # M1 — recipe execution
+    M1_MATERIALITY_RUB_MONTH: Decimal = Decimal(3000)  # smaller losses are not worth a director's attention
+    M1_Z: Decimal = Decimal(2)  # how far from the network a restaurant must be (robust z-score)
+    M1_Z_FLOOR: Decimal = Decimal("0.005")  # 0.5 p.p.: the smallest spread the z-score assumes
+    M1_NET_SHARE: Decimal = Decimal("0.75")  # share of restaurants over the allowance → the recipe is wrong
+    M1_NET_EXCESS: Decimal = Decimal("0.02")  # … and the median is at least 2 p.p. over the allowance
+    M1_MIN_THEORY_DAYS: int = 14  # a period between counts shorter than this is not judged
+    # M2 — food cost of dishes
+    M2_WINDOW_DAYS: int = 28  # current ingredient prices: the network's purchases over the last 4 weeks
+    M2_COMPARE_DAYS: int = 91  # «before»: the same window a quarter earlier
+    M2_KEEP: Decimal = Decimal("0.5")  # conservative: half of the extra margin survives guests ordering less
+    M2_MATERIALITY_RUB_MONTH: Decimal = Decimal(3000)
+    M2_PRICE_STEP: Decimal = Decimal(10)  # suggested menu prices are rounded up to 10 ₽
+    # M3 — purchase prices
+    M3_WINDOW_DAYS: int = 56  # the last 8 weeks of purchases are compared
+    M3_MIN_RECEIPTS: int = 2  # fewer purchases of a product in the window: no conclusion
+    M3_OVERPAY: Decimal = Decimal("0.05")  # 5 % above the typical price of the network
+    M3_MATERIALITY_RUB_MONTH: Decimal = Decimal(3000)
+    M3_Z: Decimal = Decimal(2)
+    M3_Z_FLOOR: Decimal = Decimal("0.01")  # 1 %: the smallest price spread the z-score assumes
+    M3_CONTRACT_TOLERANCE: Decimal = Decimal("0.01")  # rounding in invoices: up to 1 % over the contract
+    M3_NET_WINDOW_DAYS: int = 28  # network-wide growth: the last 4 weeks …
+    M3_NET_COMPARE_DAYS: int = 91  # … against the same 4 weeks a quarter earlier
+    M3_NET_GROWTH: Decimal = Decimal("0.10")  # 10 % more for the whole network
+
+
+DEFAULT = EngineParams()
+
+
+@dataclass(frozen=True)
+class ParamDef:
+    """How a parameter is shown and edited: people see 75 %, the engine uses 0.75 (`scale` = 100)."""
+
+    key: str
+    module: str  # ALL | M1 | M2 | M3
+    title: str
+    unit: str
+    meaning: str
+    low: Decimal  # in the units people see
+    high: Decimal
+    scale: Decimal = Decimal(1)
+
+    def shown(self, value: Decimal | int) -> Decimal:
+        v = Decimal(value) * self.scale
+        return v.quantize(Decimal(1)) if v == v.to_integral_value() else v.normalize()
+
+    def stored(self, shown: Decimal) -> Decimal | int:
+        value = Decimal(shown) / self.scale
+        return int(value) if isinstance(getattr(DEFAULT, self.key), int) else value
+
+
+D = Decimal
+PCT = D(100)
+DEFS: tuple[ParamDef, ...] = (
+    ParamDef(
+        "NETWORK_Z_MIN_RESTAURANTS",
+        "ALL",
+        "Сравнение с сетью (z-score) включается с",
+        "ресторанов",
+        "меньше — сравниваем только с допусками и нормами",
+        D(3),
+        D(50),
+    ),
+    ParamDef(
+        "M1_MATERIALITY_RUB_MONTH",
+        "M1",
+        "Ниже какой суммы потерь не показываем",
+        "₽ в месяц",
+        "по одному товару в ресторане",
+        D(0),
+        D(100000),
+    ),
+    ParamDef(
+        "M1_Z",
+        "M1",
+        "Насколько ресторан должен выделяться (z-score)",
+        "",
+        "больше — реже находки, только явные случаи",
+        D(1),
+        D(5),
+    ),
+    ParamDef(
+        "M1_Z_FLOOR",
+        "M1",
+        "Минимальный разброс для z-score",
+        "п.п.",
+        "чтобы почти одинаковая сеть не делала тревогу из мелочи",
+        D("0.1"),
+        D(5),
+        PCT,
+    ),
+    ParamDef(
+        "M1_NET_SHARE",
+        "M1",
+        "«Виновата техкарта»: доля ресторанов выше нормы",
+        "%",
+        "от всех ресторанов, закупающих товар",
+        D(50),
+        D(100),
+        PCT,
+    ),
+    ParamDef(
+        "M1_NET_EXCESS",
+        "M1",
+        "«Виновата техкарта»: типичный ресторан выше допуска на",
+        "п.п.",
+        "",
+        D("0.5"),
+        D(20),
+        PCT,
+    ),
+    ParamDef(
+        "M1_MIN_THEORY_DAYS",
+        "M1",
+        "Минимальный период между инвентаризациями",
+        "дней",
+        "короче — слишком мало данных",
+        D(7),
+        D(90),
+    ),
+    ParamDef("M2_WINDOW_DAYS", "M2", "Текущие цены закупки — за последние", "дней", "", D(7), D(90)),
+    ParamDef(
+        "M2_COMPARE_DAYS",
+        "M2",
+        "С чем сравниваем, чтобы назвать причину",
+        "дней назад",
+        "«квартал назад»",
+        D(28),
+        D(365),
+    ),
+    ParamDef(
+        "M2_KEEP",
+        "M2",
+        "Доля разницы в потенциале",
+        "%",
+        "консервативно: часть гостей после подорожания закажет другое",
+        D(10),
+        D(100),
+        PCT,
+    ),
+    ParamDef(
+        "M2_MATERIALITY_RUB_MONTH",
+        "M2",
+        "Ниже какого потенциала не показываем",
+        "₽ в месяц",
+        "",
+        D(0),
+        D(100000),
+    ),
+    ParamDef("M3_WINDOW_DAYS", "M3", "Окно сравнения цен ресторанов", "дней", "", D(14), D(180)),
+    ParamDef("M3_OVERPAY", "M3", "Насколько дороже типичной цены сети", "%", "", D(1), D(50), PCT),
+    ParamDef(
+        "M3_MATERIALITY_RUB_MONTH",
+        "M3",
+        "Ниже какой переплаты не показываем",
+        "₽ в месяц",
+        "",
+        D(0),
+        D(100000),
+    ),
+    ParamDef("M3_Z", "M3", "Насколько цена должна выделяться (z-score)", "", "", D(1), D(5)),
+    ParamDef("M3_Z_FLOOR", "M3", "Минимальный разброс цен для z-score", "%", "", D("0.1"), D(10), PCT),
+    ParamDef(
+        "M3_MIN_RECEIPTS", "M3", "Минимум закупок товара в окне", "накладных", "у ресторана", D(1), D(20)
+    ),
+    ParamDef(
+        "M3_CONTRACT_TOLERANCE",
+        "M3",
+        "Допуск к договорной цене",
+        "%",
+        "округления в накладных",
+        D(0),
+        D(10),
+        PCT,
+    ),
+    ParamDef(
+        "M3_NET_GROWTH",
+        "M3",
+        "Рост цены по всей сети, при котором это находка",
+        "%",
+        "к тем же неделям квартал назад",
+        D(1),
+        D(100),
+        PCT,
+    ),
+    ParamDef("M3_NET_WINDOW_DAYS", "M3", "Окно для роста цены по сети", "дней", "", D(7), D(90)),
+    ParamDef("M3_NET_COMPARE_DAYS", "M3", "Сравниваем с периодом", "дней назад", "", D(28), D(365)),
+)
+BY_KEY = {d.key: d for d in DEFS}
+assert set(BY_KEY) <= {f.name for f in fields(EngineParams)}
+
+
+def from_overrides(overrides: dict[str, Any] | None) -> EngineParams:
+    """Defaults with a network's own values on top (stored in engine units, as strings)."""
+    known = {k: v for k, v in (overrides or {}).items() if k in BY_KEY}
+    values: dict[str, Any] = {}
+    for key, raw in known.items():
+        values[key] = int(raw) if isinstance(getattr(DEFAULT, key), int) else Decimal(str(raw))
+    return replace(DEFAULT, **values)
+
+
+def load(session: Session) -> EngineParams:
+    from app.norms.models import NormSettings  # norms own the table; analytics only reads it
+
+    overrides = session.execute(select(NormSettings.engine_params)).scalar_one_or_none()
+    return from_overrides(overrides)

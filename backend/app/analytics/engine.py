@@ -11,10 +11,11 @@ from datetime import date
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.analytics import m1, m2, m3
+from app.analytics import m1, m2, m3, params
 from app.analytics.costs import CostBook
 from app.analytics.drafts import Draft
 from app.analytics.facts import Facts, load_facts
+from app.analytics.params import DEFAULT, EngineParams
 from app.analytics.usage import Usage
 from app.core.errors import ForbiddenError
 from app.experiments.models import Experiment
@@ -37,15 +38,15 @@ class RunResult:
     drafts: int
 
 
-def detect(facts: Facts, norms: Norms) -> list[Draft]:
+def detect(facts: Facts, norms: Norms, cfg: EngineParams = DEFAULT) -> list[Draft]:
     usage = Usage(facts)
     costs = CostBook(facts.receipts)
     return (
-        m1.detect(facts, m1.rows(facts, usage, costs), norms)
-        + m2.detect(facts, norms)
-        + m3.detect(facts)
-        + m3.detect_contracts(facts)
-        + m3.detect_network_growth(facts)
+        m1.detect(facts, m1.rows(facts, usage, costs, cfg), norms, cfg)
+        + m2.detect(facts, norms, cfg)
+        + m3.detect(facts, cfg)
+        + m3.detect_contracts(facts, cfg)
+        + m3.detect_network_growth(facts, cfg)
     )
 
 
@@ -53,7 +54,7 @@ def run(session: Session, ctx: AccessContext, today: date) -> RunResult:
     if not ctx.can(Permission.ANALYTICS_RUN) or not ctx.role.is_hq:
         raise ForbiddenError("Пересчет находок запускает администратор управляющей компании")
     norms = load_norms(session)
-    drafts = detect(load_facts(session), norms)
+    drafts = detect(load_facts(session), norms, params.load(session))
     existing = {
         f.key: f
         for f in session.execute(select(Finding).where(Finding.key.is_not(None))).scalars()

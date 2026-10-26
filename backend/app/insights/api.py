@@ -5,6 +5,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 
 from app.analytics.verify import verify
 from app.core.deps import SessionDep, require
@@ -17,6 +18,7 @@ from app.insights.service import FindingWork
 from app.insights.work import WorkStage
 from app.tasks.api import TaskOut
 from app.tenancy.context import AccessContext
+from app.tenancy.models import User
 from app.tenancy.permissions import Permission
 
 router = APIRouter(tags=["findings"])
@@ -57,6 +59,7 @@ class FindingOut(BaseModel):
     review_reason: str | None
     review_note: str | None
     reviewed_on: date | None
+    reviewed_by_name: str | None = None  # who confirmed or rejected it (HQ sees names; a director gets none)
     title: str
     headline: str | None
     effect_rub_month: Decimal | None
@@ -113,7 +116,16 @@ def list_findings(
     items = service.list_findings(
         session, today=today, stage=stage, restaurant_id=restaurant_id, late_only=late_only, review=review
     )
-    return [FindingOut(**_out(fw)) for fw in items]
+    names = _reviewer_names(session, [fw.finding for fw in items])
+    return [FindingOut(**_out(fw), reviewed_by_name=names.get(fw.finding.reviewed_by)) for fw in items]
+
+
+def _reviewer_names(session: SessionDep, findings: list[Finding]) -> dict[UUID | None, str]:
+    """Names of the people who reviewed these findings (row-level security hides them from a director)."""
+    ids = {f.reviewed_by for f in findings if f.reviewed_by}
+    if not ids:
+        return {}
+    return dict(session.execute(select(User.id, User.full_name).where(User.id.in_(ids))).all())
 
 
 @router.get("/findings/{finding_id}")
@@ -161,5 +173,6 @@ def review_finding(
 ) -> FindingOut:
     review.review(session, ctx, finding_id, body.verdict, reason=body.reason, note=body.note, today=today)
     fw = service.get_finding(session, finding_id, today=today)
+    names = _reviewer_names(session, [fw.finding])
     session.commit()
-    return FindingOut(**_out(fw))
+    return FindingOut(**_out(fw), reviewed_by_name=names.get(fw.finding.reviewed_by))

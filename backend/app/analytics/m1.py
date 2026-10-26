@@ -12,10 +12,10 @@ from decimal import Decimal
 from itertools import pairwise
 from uuid import UUID
 
-from app.analytics import params
 from app.analytics.costs import CostBook
 from app.analytics.drafts import Draft, dmy, pct, per_month, rub
 from app.analytics.facts import Facts
+from app.analytics.params import DEFAULT, EngineParams
 from app.analytics.stats import med, robust_z
 from app.analytics.usage import Usage
 from app.norms.service import Norms
@@ -59,7 +59,7 @@ class M1Row:
         return self.start + timedelta(days=1)
 
 
-def rows(facts: Facts, usage: Usage, costs: CostBook) -> list[M1Row]:
+def rows(facts: Facts, usage: Usage, costs: CostBook, cfg: EngineParams = DEFAULT) -> list[M1Row]:
     counts: dict[UUID, dict[date, dict[UUID, Decimal]]] = defaultdict(lambda: defaultdict(dict))
     for c in facts.counts:
         counts[c.restaurant][c.day][c.product] = c.actual
@@ -80,7 +80,7 @@ def rows(facts: Facts, usage: Usage, costs: CostBook) -> list[M1Row]:
     for restaurant, by_day in counts.items():
         days = sorted(by_day)
         for start, end in pairwise(days):
-            if (end - start).days < params.M1_MIN_THEORY_DAYS:
+            if (end - start).days < cfg.M1_MIN_THEORY_DAYS:
                 continue
             for product in by_day[start].keys() & by_day[end].keys():
                 info = facts.products.get(product)
@@ -107,7 +107,7 @@ def rows(facts: Facts, usage: Usage, costs: CostBook) -> list[M1Row]:
     return out
 
 
-def detect(facts: Facts, all_rows: list[M1Row], norms: Norms) -> list[Draft]:
+def detect(facts: Facts, all_rows: list[M1Row], norms: Norms, cfg: EngineParams = DEFAULT) -> list[Draft]:
     by_period: dict[tuple[UUID, date, date], list[M1Row]] = defaultdict(list)
     history: dict[tuple[UUID, UUID], list[M1Row]] = defaultdict(list)
     for r in all_rows:
@@ -130,8 +130,8 @@ def detect(facts: Facts, all_rows: list[M1Row], norms: Norms) -> list[Draft]:
         over = [r for r in group if r.share > tol]
         if (
             len(group) >= 2
-            and Decimal(len(over)) / len(group) >= params.M1_NET_SHARE
-            and med(shares) - tol >= params.M1_NET_EXCESS
+            and Decimal(len(over)) / len(group) >= cfg.M1_NET_SHARE
+            and med(shares) - tol >= cfg.M1_NET_EXCESS
         ):
             recipe_suspects[product] = (start, end)
 
@@ -179,13 +179,13 @@ def detect(facts: Facts, all_rows: list[M1Row], norms: Norms) -> list[Draft]:
         tol = norms.loss_allowance(info.category) / 100
         group = by_period[(product, last.start, last.end)]
         network_median = med([r.share for r in group])
-        use_network = len(group) >= params.NETWORK_Z_MIN_RESTAURANTS or product in recipe_suspects
+        use_network = len(group) >= cfg.NETWORK_Z_MIN_RESTAURANTS or product in recipe_suspects
         benchmark = max(tol, network_median) if use_network else tol
         if last.share <= benchmark:
             continue
-        if len(group) >= params.NETWORK_Z_MIN_RESTAURANTS:
-            z = robust_z(last.share, [r.share for r in group], params.M1_Z_FLOOR)
-            if z <= params.M1_Z:
+        if len(group) >= cfg.NETWORK_Z_MIN_RESTAURANTS:
+            z = robust_z(last.share, [r.share for r in group], cfg.M1_Z_FLOOR)
+            if z <= cfg.M1_Z:
                 continue
         else:
             z = None
@@ -195,7 +195,7 @@ def detect(facts: Facts, all_rows: list[M1Row], norms: Norms) -> list[Draft]:
             effect = per_month(
                 (last.share - benchmark) * last.theory * last.unit_cost, last.first_day, last.end
             )
-            if effect < params.M1_MATERIALITY_RUB_MONTH:
+            if effect < cfg.M1_MATERIALITY_RUB_MONTH:
                 continue
         trend = [r.share for r in hist]
         growing = len(trend) >= 2 and all(b > a for a, b in pairwise(trend))

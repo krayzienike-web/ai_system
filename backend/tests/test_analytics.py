@@ -267,6 +267,11 @@ def test_engine_finds_planted_problems_and_review_gates_directors(
         )
         assert client.post(url, headers=director, json={"verdict": "reopen"}).status_code == 403
         assert [f["id"] for f in client.get("/api/findings", headers=director).json()] == [moz["id"]]
+        # The path is traceable: found by the engine → checked by a person → in the working list.
+        in_list = next(f for f in client.get("/api/findings", headers=hq).json() if f["id"] == moz["id"])
+        assert in_list["module"] == "M1" and in_list["found_on"] == "2026-10-20"
+        assert in_list["review_status"] == "confirmed" and in_list["reviewed_on"] == "2026-10-20"
+        assert in_list["reviewed_by_name"] == "analyst@a.ru"
 
         fries = by_key[("M1", "Техкарта, вероятно, устарела: Картофель фри замороженный")]
         rejected = client.post(
@@ -332,3 +337,41 @@ def test_m3_contract_prices_and_network_growth() -> None:
     assert breach.key == "M3:net:P01:contract" and "при договорной 600" in breach.headline
     # 4 invoices × 30 kg × 100 ₽ over the contract in each restaurant
     assert breach.evidence["restaurants"] == {"R01": "12000.00", "R02": "12000.00", "R03": "12000.00"}
+
+
+def test_engine_params_are_set_per_network_and_change_the_findings(
+    client: TestClient, network: Network, demo: dict[str, UUID]
+) -> None:
+    hq, director = login(client, "admin@a.ru"), login(client, "r01@a.ru")
+    params = {p["key"]: p for p in client.get("/api/settings/engine", headers=director).json()}
+    # Shown in the units people use: 75 %, 3 000 ₽, 0,5 п.п.
+    assert params["M1_NET_SHARE"]["value"] == "75" and params["M1_MATERIALITY_RUB_MONTH"]["value"] == "3000"
+    assert params["M1_Z_FLOOR"]["value"] == "0.5" and params["M1_Z_FLOOR"]["unit"] == "п.п."
+    assert (
+        client.put("/api/settings/engine", headers=director, json={"values": {"M1_Z": 3}}).status_code == 403
+    )
+    assert client.put("/api/settings/engine", headers=hq, json={"values": {"M1_Z": 9}}).status_code == 422
+    assert client.put("/api/settings/engine", headers=hq, json={"values": {"NOPE": 1}}).status_code == 422
+
+    def keys() -> set[str]:
+        return {
+            f["module"] + ":" + f["title"]
+            for f in client.get("/api/findings", headers=hq, params={"review": "pending"}).json()
+        }
+
+    client.post("/api/analytics/run", headers=hq)
+    assert "M3:Поставщик продает дороже, чем другим: Сливки 33%" in keys()
+    # Overpaying is a finding only above 20 % now: the 14 % cream disappears, the 40 % salmon growth stays.
+    saved = client.put("/api/settings/engine", headers=hq, json={"values": {"M3_OVERPAY": 20}}).json()
+    assert {p["key"]: p["value"] for p in saved}["M3_OVERPAY"] == "20"
+    client.post("/api/analytics/run", headers=hq)
+    assert "M3:Поставщик продает дороже, чем другим: Сливки 33%" not in keys()
+    assert "M3:Цена выросла по всей сети: Лосось охлажденный" in keys()
+    # Another network keeps the defaults; None returns a parameter to its default.
+    other = {
+        p["key"]: p["value"]
+        for p in client.get("/api/settings/engine", headers=login(client, "admin@b.ru")).json()
+    }
+    assert other["M3_OVERPAY"] == "5"
+    back = client.put("/api/settings/engine", headers=hq, json={"values": {"M3_OVERPAY": None}}).json()
+    assert {p["key"]: p["value"] for p in back}["M3_OVERPAY"] == "5"

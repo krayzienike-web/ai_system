@@ -17,6 +17,7 @@ import type {
   RejectReason,
   ReviewStatus,
   Verification,
+  EngineParam,
 } from "./types";
 
 export const useMe = () =>
@@ -166,6 +167,10 @@ export const useVerification = (id: string) =>
     queryFn: () => api<Verification>(`/findings/${id}/verification`),
   });
 
+/** The working list of findings from the API: checked engine findings (and ones made by hand). */
+export const useCheckedFindings = () =>
+  useQuery({ queryKey: ["checked-findings"], queryFn: () => api<ApiFinding[]>("/findings") });
+
 export function useReviewFinding() {
   const client = useQueryClient();
   return useMutation({
@@ -182,7 +187,10 @@ export function useReviewFinding() {
         method: "POST",
         body: JSON.stringify(body),
       }),
-    onSuccess: () => client.invalidateQueries({ queryKey: ["review"] }),
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: ["review"] });
+      void client.invalidateQueries({ queryKey: ["checked-findings"] });
+    },
   });
 }
 
@@ -190,6 +198,29 @@ export function useRunAnalytics() {
   const client = useQueryClient();
   return useMutation({
     mutationFn: () => api<AnalyticsRun>("/analytics/run", { method: "POST" }),
-    onSuccess: () => client.invalidateQueries({ queryKey: ["review"] }),
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: ["review"] });
+      void client.invalidateQueries({ queryKey: ["checked-findings"] });
+    },
+  });
+}
+
+// ------------------------------------------------------------------ engine parameters
+
+export const useEngineParams = () =>
+  useQuery({
+    queryKey: ["engine-params"],
+    queryFn: () => api<EngineParam[]>("/settings/engine"),
+  });
+
+export function useSaveEngineParams() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (values: Record<string, string | null>) =>
+      api<EngineParam[]>("/settings/engine", {
+        method: "PUT",
+        body: JSON.stringify({ values }),
+      }),
+    onSuccess: (saved) => client.setQueryData(["engine-params"], saved),
   });
 }

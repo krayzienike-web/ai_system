@@ -8,6 +8,7 @@ import { PROCESS_ICON } from "../../ds/viz";
 import { plural, rub } from "../../lib/format";
 import { useViewer } from "../../lib/useViewer";
 import { FINDINGS, RESTAURANTS } from "../../mock/data";
+import { CheckedFindingsSection } from "./EngineFindings";
 import { PROCESSES, processTitle, restaurantByCode } from "../../mock/selectors";
 import type { Finding, FindingKind, ProcessKey } from "../../mock/types";
 import { useWork, type WorkStage } from "../counts";
@@ -155,6 +156,8 @@ export function FindingsPage() {
             : "Что су-шеф нашел в данных: где теряем деньги и где можно заработать. Самые дорогие — сверху."
         }
       />
+
+      <CheckedFindingsSection />
 
       {/* Kind switch: two summary cards that also filter */}
       <Reveal>
