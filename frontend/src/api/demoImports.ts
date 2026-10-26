@@ -43,10 +43,15 @@ const complete = (found: Record<string, number>, t: ImportTemplate) =>
 
 async function readCsv(file: File): Promise<string[][]> {
   const buffer = await file.arrayBuffer();
-  let text = new TextDecoder("utf-8").decode(buffer);
-  if (text.includes("\uFFFD")) text = new TextDecoder("windows-1251").decode(buffer);
+  let text: string;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true }).decode(buffer);
+  } catch {
+    text = new TextDecoder("windows-1251").decode(buffer);
+  }
   const delimiter = [";", ",", "\t"].sort((a, b) => text.split(b).length - text.split(a).length)[0]!;
-  return text.replace(/^\uFEFF/, "").split(/\r?\n/).map((line) => line.split(delimiter));
+  if (text.charCodeAt(0) === 0xfeff) text = text.slice(1); // byte order mark
+  return text.split(/\r?\n/).map((line) => line.split(delimiter));
 }
 
 function failed(base: Omit<ImportBatch, "status" | "errors">, message: string): ImportBatch {
