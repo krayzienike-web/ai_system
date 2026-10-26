@@ -29,6 +29,12 @@ def _proposal(session: Session, ctx: AccessContext, experiment_id: UUID) -> Expe
 
 def launch(session: Session, ctx: AccessContext, experiment_id: UUID, *, today: date) -> list[Task]:
     exp = _proposal(session, ctx, experiment_id)
+    if exp.finding_id is not None:
+        finding = session.get(Finding, exp.finding_id)
+        if finding is not None and not finding.checked:
+            raise InvalidError(
+                "Находка еще не прошла проверку: проверку изменений запускают после подтверждения"
+            )
     if exp.ends_on <= today:
         raise InvalidError("The check would end before it starts; change its dates")
     exp.status = ExperimentStatus.RUNNING

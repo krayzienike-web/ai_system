@@ -23,7 +23,7 @@ import {
 import { motion } from "motion/react";
 import { useEffect } from "react";
 
-import { tokens } from "../api/client";
+import { ApiError, tokens } from "../api/client";
 import { useMe } from "../api/hooks";
 import { ROLE_LABELS } from "../api/types";
 import { Logo, LogoMark } from "../brand/Logo";
@@ -138,7 +138,7 @@ function Badge({ count }: { count: number }) {
 }
 
 export function Shell() {
-  const { data: me, isError } = useMe();
+  const { data: me, error: meError } = useMe();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { openChat } = usePrototype();
@@ -158,9 +158,10 @@ export function Shell() {
   }
 
   useEffect(() => {
-    if (isError) logout();
+    // Only an expired or revoked session signs out; a network blip or a server error must not.
+    if (meError instanceof ApiError && meError.status === 401) logout();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isError]);
+  }, [meError]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -247,11 +248,14 @@ export function Shell() {
             <PeriodPicker />
             <div className="hidden min-w-0 items-center gap-2 text-sm text-ink-2 md:flex">
               <span>данные обновлены {PERIOD.dataUntil.slice(0, 5)}</span>
-              {DEMO && (
-                <span className="rounded-full bg-spark/25 px-2 py-0.5 text-[11px] font-medium text-ink">
-                  Прототип · демо-данные
-                </span>
-              )}
+              {/* Overview screens still show the prototype's figures until their APIs exist (docs/06):
+                  say so in the real product too, so nobody takes them for their network's numbers. */}
+              <span
+                className="rounded-full bg-spark/25 px-2 py-0.5 text-[11px] font-medium text-ink"
+                title={DEMO ? undefined : "Реальные данные — в «Данных», «Проверке находок», «Нормах и настройках» и в блоке «Найдено движком и проверено»"}
+              >
+                {DEMO ? "Прототип · демо-данные" : "Обзорные экраны · демо-данные"}
+              </span>
             </div>
             <button
               type="button"

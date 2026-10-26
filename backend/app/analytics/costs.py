@@ -23,6 +23,15 @@ class Cost:
     source: str  # "own" | "own_history" | "network"
 
 
+_EMPTY: tuple[list[ReceiptRow], list[date]] = ([], [])
+
+
+def _by_day(rows: list[ReceiptRow]) -> tuple[list[ReceiptRow], list[date]]:
+    """Purchases sorted by day, with the days alongside for a binary search."""
+    ordered = sorted(rows, key=lambda r: r.day)
+    return ordered, [r.day for r in ordered]
+
+
 class CostBook:
     def __init__(self, receipts: list[ReceiptRow]) -> None:
         own: dict[tuple[UUID, UUID], list[ReceiptRow]] = defaultdict(list)
@@ -30,12 +39,12 @@ class CostBook:
         for r in receipts:
             own[(r.restaurant, r.product)].append(r)
             net[r.product].append(r)
-        self._own = {k: sorted(v, key=lambda r: r.day) for k, v in own.items()}
-        self._net = {k: sorted(v, key=lambda r: r.day) for k, v in net.items()}
+        self._own = {k: _by_day(v) for k, v in own.items()}
+        self._net = {k: _by_day(v) for k, v in net.items()}
 
     @staticmethod
-    def _avg(rows: list[ReceiptRow], start: date, end: date) -> Decimal | None:
-        days = [r.day for r in rows]
+    def _avg(series: tuple[list[ReceiptRow], list[date]], start: date, end: date) -> Decimal | None:
+        rows, days = series
         chosen = rows[bisect_left(days, start) : bisect_right(days, end)]
         qty = sum((r.qty for r in chosen), Decimal(0))
         if qty <= 0:
@@ -43,11 +52,11 @@ class CostBook:
         return sum((r.amount for r in chosen), Decimal(0)) / qty
 
     def cost(self, restaurant: UUID, product: UUID, start: date, end: date) -> Cost | None:
-        own = self._own.get((restaurant, product), [])
+        own = self._own.get((restaurant, product), _EMPTY)
         if (value := self._avg(own, start, end)) is not None:
             return Cost(value, "own")
         if (value := self._avg(own, end - timedelta(days=LOOKBACK_DAYS), end)) is not None:
             return Cost(value, "own_history")
-        if (value := self._avg(self._net.get(product, []), start, end)) is not None:
+        if (value := self._avg(self._net.get(product, _EMPTY), start, end)) is not None:
             return Cost(value, "network")
         return None

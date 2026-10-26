@@ -33,7 +33,7 @@ import {
   Pill,
   Skeleton,
 } from "../../ds/primitives";
-import { perMonth, plural } from "../../lib/format";
+import { MODULE_TITLE, perMonth, plural } from "../../lib/format";
 import { useViewer } from "../../lib/useViewer";
 import { usePrototype } from "../../state/prototype";
 import { ReviewTrace } from "../findings/EngineFindings";
@@ -66,15 +66,6 @@ const REASON_TITLE = Object.fromEntries(
   REASONS.map((r) => [r.reason, r.title]),
 ) as Record<RejectReason, string>;
 
-const MODULE_TITLE: Record<string, string> = {
-  M1: "Потери по техкартам",
-  M2: "Фудкост",
-  M3: "Закупочные цены",
-  M4: "Инвентаризации",
-  M5: "Списания",
-  M6: "Риск дефицита",
-  M7: "Качество данных",
-};
 
 /** "617.65" → "617,65", "2026-08-04" → "04.08.2026": numbers and dates as people read them. */
 const ru = (v: unknown): string => {
@@ -299,8 +290,13 @@ function VerdictForm({ f }: { f: ApiFinding }) {
   const [rejecting, setRejecting] = useState(false);
   const [reason, setReason] = useState<RejectReason | null>(null);
   const [note, setNote] = useState("");
+  const [noteError, setNoteError] = useState(false);
   if (!viewer?.isHq) return null;
-  const send = (verdict: "confirm" | "reject" | "reopen") =>
+  const send = (verdict: "confirm" | "reject" | "reopen") => {
+    // The server asks the same: a logic error or «other» needs a description to fix the engine by.
+    const needsNote = verdict === "reject" && (reason === "logic" || reason === "other");
+    setNoteError(needsNote && !note.trim());
+    if (needsNote && !note.trim()) return;
     review.mutate(
       {
         id: f.id,
@@ -322,6 +318,7 @@ function VerdictForm({ f }: { f: ApiFinding }) {
         },
       },
     );
+  };
 
   return (
     <Card className="space-y-3 p-4">
@@ -408,7 +405,12 @@ function VerdictForm({ f }: { f: ApiFinding }) {
           </Button>
         </div>
       )}
-      {review.isError && (
+      {noteError && (
+        <p className="text-sm text-loss">
+          Опишите, что не так, — по этому описанию поправим движок
+        </p>
+      )}
+      {review.isError && !noteError && (
         <p className="text-sm text-loss">
           {review.error instanceof ApiError
             ? review.error.message
@@ -430,6 +432,17 @@ export function ReviewFindingPage() {
   const v = useVerification(findingId);
   const name = useRestaurantName();
 
+  if (all.some((q) => q.isError) || v.isError || (!f && all.every((q) => q.isSuccess)))
+    return (
+      <div className="mx-auto max-w-[920px] space-y-5">
+        <Link to="/review" className="text-sm text-brand-strong hover:underline">
+          ← Все находки на проверке
+        </Link>
+        <EmptyState title="Находка не найдена">
+          Возможно, после пересчета ее больше нет в данных или ссылка устарела.
+        </EmptyState>
+      </div>
+    );
   if (!f || v.isLoading)
     return <Skeleton className="mx-auto h-96 max-w-[920px]" />;
   const data = v.data;

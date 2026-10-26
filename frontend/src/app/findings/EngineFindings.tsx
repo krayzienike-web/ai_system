@@ -4,18 +4,9 @@ import { Check, Clock, ShieldCheck, XCircle } from "lucide-react";
 import { useCheckedFindings, useRestaurants, useReviewFindings } from "../../api/hooks";
 import type { ApiFinding } from "../../api/types";
 import { cx, Reveal } from "../../ds/primitives";
-import { perMonth } from "../../lib/format";
+import { MODULE_TITLE, perMonth } from "../../lib/format";
 import { useViewer } from "../../lib/useViewer";
 
-const MODULE_TITLE: Record<string, string> = {
-  M1: "потери по техкартам",
-  M2: "фудкост",
-  M3: "закупочные цены",
-  M4: "инвентаризации",
-  M5: "списания",
-  M6: "риск дефицита",
-  M7: "качество данных",
-};
 
 const day = (iso: string | null | undefined) =>
   iso ? new Date(`${iso}T00:00:00`).toLocaleDateString("ru-RU", { day: "numeric", month: "short" }).replace(".", "") : "";
@@ -33,13 +24,13 @@ const DOT: Record<StepState, string> = {
  * Every step says when and who, so a finding can always be traced back to its check.
  */
 export function ReviewTrace({ f, compact = false }: { f: ApiFinding; compact?: boolean }) {
-  const confirmed = f.review_status === "confirmed";
+  const confirmed = f.review_status === "confirmed" || f.review_status === null;
   const rejected = f.review_status === "rejected";
   const steps: { title: string; note: string; state: StepState }[] = [
-    { title: "Найдено движком", note: `${day(f.found_on)}${f.module ? ` · ${f.module} ${MODULE_TITLE[f.module] ?? ""}` : ""}`, state: "done" },
+    { title: "Найдено движком", note: `${day(f.found_on)}${f.module ? ` · ${f.module} ${(MODULE_TITLE[f.module] ?? "").toLowerCase()}` : ""}`, state: "done" },
     {
-      title: rejected ? "Отклонено при проверке" : confirmed ? "Проверено" : "На проверке",
-      note: confirmed || rejected ? `${day(f.reviewed_on)}${f.reviewed_by_name ? ` · ${f.reviewed_by_name}` : ""}` : "ждет решения управляющей компании",
+      title: rejected ? "Отклонено при проверке" : f.review_status === null ? "Без ручной проверки" : confirmed ? "Проверено" : "На проверке",
+      note: f.review_status === null ? "проверка выключена в настройках" : confirmed || rejected ? `${day(f.reviewed_on)}${f.reviewed_by_name ? ` · ${f.reviewed_by_name}` : ""}` : "ждет решения управляющей компании",
       state: confirmed ? "done" : rejected ? "bad" : "now",
     },
     {
@@ -72,7 +63,8 @@ export function CheckedFindingsSection() {
   const pending = useReviewFindings("pending", Boolean(viewer?.isHq));
   const restaurants = useRestaurants();
   if (!viewer) return null;
-  const items = (checked.data ?? []).filter((f) => f.module && f.review_status === "confirmed");
+  // Engine findings in the working list: confirmed, or published without a check when the review is off.
+  const items = (checked.data ?? []).filter((f) => f.module && f.review_status !== "pending" && f.review_status !== "rejected");
   const waiting = pending.data?.length ?? 0;
   if (!items.length && !(viewer.isHq && waiting)) return null;
   const name = (id: string | null) => (id ? (restaurants.data?.find((r) => r.id === id)?.name ?? id) : "Вся сеть");

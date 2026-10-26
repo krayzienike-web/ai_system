@@ -50,11 +50,31 @@ def detect(facts: Facts, norms: Norms, cfg: EngineParams = DEFAULT) -> list[Draf
     )
 
 
+def _changed_much(f: Finding, d: Draft, cfg: EngineParams) -> bool:
+    """Whether a checked finding no longer says what the reviewer saw."""
+    if f.review_status not in (ReviewStatus.CONFIRMED, ReviewStatus.REJECTED):
+        return False
+    if f.kind != d.kind or f.restaurant_id != d.restaurant:
+        return True
+    old, new = f.effect_rub_month, d.effect_rub_month
+    if old is None or new is None:
+        return (old is None) != (new is None)
+    if not old:
+        return bool(new)
+    return abs(new - old) / abs(old) > cfg.REVIEW_RECHECK_CHANGE
+
+
 def run(session: Session, ctx: AccessContext, today: date) -> RunResult:
     if not ctx.can(Permission.ANALYTICS_RUN) or not ctx.role.is_hq:
         raise ForbiddenError("Пересчет находок запускает администратор управляющей компании")
     norms = load_norms(session)
-    drafts = detect(load_facts(session), norms, params.load(session))
+    cfg = params.load(session)
+    drafts = detect(load_facts(session), norms, cfg)
+    keys = [d.key for d in drafts]
+    if len(keys) != len(set(keys)):
+        raise RuntimeError(
+            f"Engine produced duplicate finding keys: {sorted({k for k in keys if keys.count(k) > 1})}"
+        )
     existing = {
         f.key: f
         for f in session.execute(select(Finding).where(Finding.key.is_not(None))).scalars()
@@ -78,6 +98,13 @@ def run(session: Session, ctx: AccessContext, today: date) -> RunResult:
             if f.review_status is None:
                 # Made by hand and already worked on: a person has checked it.
                 f.review_status = ReviewStatus.CONFIRMED
+            elif norms.review_findings and _changed_much(f, d, cfg):
+                # New data changed what was checked: a director must not see an amount nobody confirmed,
+                # and a rejected finding that got much bigger deserves another look.
+                was = f.effect_rub_month
+                f.review_status = ReviewStatus.PENDING
+                f.review_reason, f.reviewed_on, f.reviewed_by = None, None, None
+                f.review_note = f"Снова на проверке: эффект изменился с {was} до {d.effect_rub_month} ₽/мес"
         f.restaurant_id = d.restaurant
         f.module, f.kind, f.process = d.module, d.kind, d.process
         f.title, f.headline = d.title, d.headline

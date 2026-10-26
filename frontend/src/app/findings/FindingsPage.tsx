@@ -210,7 +210,7 @@ export function FindingsPage() {
               </option>
             ))}
           </select>
-          <div className="flex rounded-[10px] border border-line-strong bg-surface p-0.5" role="group" aria-label="Этап">
+          <div className="flex max-w-full overflow-x-auto rounded-[10px] border border-line-strong bg-surface p-0.5" role="group" aria-label="Этап">
             {STAGES.map((s) => (
               <button
                 key={s.key}
@@ -218,7 +218,7 @@ export function FindingsPage() {
                 onClick={() => setStage(s.key)}
                 aria-pressed={stage === s.key}
                 className={cx(
-                  "relative h-9 rounded-[8px] px-3 text-sm transition-colors",
+                  "relative h-9 shrink-0 whitespace-nowrap rounded-[8px] px-3 text-sm transition-colors",
                   stage === s.key ? "text-white" : "text-ink-2 hover:text-ink",
                 )}
               >

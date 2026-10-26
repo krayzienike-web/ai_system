@@ -3,11 +3,13 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { motion } from "motion/react";
 import { type FormEvent, useState } from "react";
 
-import { ApiError, login } from "../api/client";
+import { ApiError, DEMO, login } from "../api/client";
 import { Logo } from "../brand/Logo";
 import { Button, EASE } from "../ds/primitives";
 
-const DEMO = [
+// Demo accounts are offered in the prototype and in development only, never in a production build.
+const SHOW_DEMO = DEMO || import.meta.env.DEV;
+const DEMO_USERS = [
   { email: "admin@demo.local", label: "Управляющая компания", hint: "вся сеть" },
   { email: "director1@demo.local", label: "Директор ресторана", hint: "Тверская" },
 ];
@@ -107,10 +109,11 @@ export function LoginPage() {
           <Button type="submit" variant="primary" size="lg" className="w-full" disabled={pending}>
             {pending ? "Входим…" : "Войти"}
           </Button>
+          {SHOW_DEMO && (
           <div className="rounded-[16px] border border-line bg-surface p-4">
             <div className="text-sm font-medium">Посмотреть демо</div>
             <div className="mt-3 grid gap-2">
-              {DEMO.map((d) => (
+              {DEMO_USERS.map((d) => (
                 <button
                   key={d.email}
                   type="button"
@@ -131,6 +134,7 @@ export function LoginPage() {
               Или вручную: логины admin@demo.local, director1@demo.local … director3@demo.local, пароль demo12345
             </div>
           </div>
+          )}
           <Link to="/design" className="block text-center text-sm text-brand-strong hover:underline">
             Бренд и дизайн-система →
           </Link>

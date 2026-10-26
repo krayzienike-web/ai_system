@@ -88,20 +88,27 @@ def detect(facts: Facts, cfg: EngineParams = DEFAULT) -> list[Draft]:
             history[(r.restaurant, r.product)].append(r)
     drafts: list[Draft] = []
     for product, by_restaurant in rows(facts, start, end).items():
-        valid = {r: row for r, row in by_restaurant.items() if len(row.receipts) >= cfg.M3_MIN_RECEIPTS}
+        valid = {
+            r: row
+            for r, row in by_restaurant.items()
+            if len(row.receipts) >= cfg.M3_MIN_RECEIPTS and row.qty > 0 and row.amount > 0
+        }
         if len(valid) < 3:
             continue
         info = facts.products[product]
         prices = [row.price for row in valid.values()]
+        network_median = med(prices)
         for restaurant, row in valid.items():
             others = [o for r, o in valid.items() if r != restaurant]
             bench = med([o.price for o in others])
+            if bench <= 0:
+                continue
             share = row.price / bench - 1
             if share <= cfg.M3_OVERPAY:
                 continue
             z = None
             if len(valid) >= cfg.NETWORK_Z_MIN_RESTAURANTS:
-                z = robust_z(row.price / med(prices), [p / med(prices) for p in prices], cfg.M3_Z_FLOOR)
+                z = robust_z(row.price / network_median, [p / network_median for p in prices], cfg.M3_Z_FLOOR)
                 if z <= cfg.M3_Z:
                     continue
             effect = per_month((row.price - bench) * row.qty, start, end)

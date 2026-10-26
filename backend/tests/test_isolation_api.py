@@ -1,7 +1,13 @@
 """Data isolation through the API: directors see only their restaurant, tenants never see each other."""
 
-from fastapi.testclient import TestClient
+from datetime import date
+from decimal import Decimal
 
+from fastapi.testclient import TestClient
+from sqlalchemy import Engine
+from sqlalchemy.orm import Session
+
+from app.insights.models import Finding
 from tests.conftest import Network, login
 
 
@@ -110,3 +116,47 @@ def test_email_of_another_tenant_is_rejected(client: TestClient, network: Networ
         json={"email": "admin@b.ru", "full_name": "X", "password": "long-password", "role": "hq_analyst"},
     )
     assert response.status_code == 409
+
+
+def test_engine_findings_and_settings_stay_within_the_tenant(
+    client: TestClient, network: Network, owner_engine: Engine
+) -> None:
+    """Review, verification and engine parameters of one network are invisible to another."""
+    with Session(owner_engine, expire_on_commit=False) as s, s.begin():
+        pending = Finding(
+            tenant_id=network.a.id,
+            restaurant_id=network.a.restaurants["A1"],
+            kind="problem",
+            process="production",
+            title="Перерасход по техкарте",
+            effect_rub_month=Decimal(5000),
+            actions=[],
+            found_on=date(2026, 10, 1),
+            key="M1:A1:P01",
+            module="M1",
+            review_status="pending",
+        )
+        s.add(pending)
+    foreign = login(client, "admin@b.ru")
+    for path in (f"/api/findings/{pending.id}", f"/api/findings/{pending.id}/verification"):
+        assert client.get(path, headers=foreign).status_code == 404
+    review = client.post(f"/api/findings/{pending.id}/review", headers=foreign, json={"verdict": "confirm"})
+    assert review.status_code == 404
+    assert client.get("/api/findings", headers=foreign, params={"review": "pending"}).json() == []
+    # A director of the same network does not see it either while it waits for the check.
+    director = login(client, "director1@a.ru")
+    assert client.get(f"/api/findings/{pending.id}", headers=director).status_code == 404
+
+    # Engine parameters: tenant B's change does not touch tenant A.
+    assert (
+        client.put("/api/settings/engine", headers=foreign, json={"values": {"M3_OVERPAY": 10}}).status_code
+        == 200
+    )
+    mine = {
+        p["key"]: p for p in client.get("/api/settings/engine", headers=login(client, "admin@a.ru")).json()
+    }
+    assert mine["M3_OVERPAY"]["value"] == mine["M3_OVERPAY"]["default"]
+    assert (
+        client.put("/api/settings/engine", headers=director, json={"values": {"M3_OVERPAY": 10}}).status_code
+        == 403
+    )

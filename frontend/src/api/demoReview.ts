@@ -10,15 +10,19 @@ const items = (
   finding: { ...x.finding },
   verification: x.verification,
 }));
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
 
 /** The working list (`GET /findings`): checked engine findings; a director sees only those of their restaurant. */
 export function demoCheckedFindings(restaurantCode: string | null): ApiFinding[] {
   return items
     .map((x) => x.finding)
-    .filter((f) => f.review_status === "confirmed")
+    // Like the server: confirmed findings and those published without a check (review switched off).
+    .filter((f) => f.review_status === "confirmed" || f.review_status === null)
     .filter((f) => restaurantCode === null || f.restaurant_id === restaurantCode)
-    .map((f) => (restaurantCode === null ? f : { ...f, reviewed_by_name: null }));
+    .map((f) => ({ ...f, reviewed_by_name: restaurantCode === null ? f.reviewed_by_name : null }));
 }
 
 export function demoReview(
@@ -33,7 +37,7 @@ export function demoReview(
   if (list)
     return items
       .filter((x) => x.finding.review_status === (list[1] as ReviewStatus))
-      .map((x) => x.finding);
+      .map((x) => ({ ...x.finding }));
   if (path === "/analytics/run") {
     if (!isAdmin) throw new ApiError(403, "Пересчет запускает администратор");
     return {
@@ -77,5 +81,5 @@ export function demoReview(
   f.review_note = body.note?.trim() || null;
   f.reviewed_on = body.verdict === "reopen" ? null : today();
   f.reviewed_by_name = body.verdict === "reopen" ? null : viewerName;
-  return f;
+  return { ...f };
 }

@@ -11,19 +11,26 @@ import {
   Reveal,
   Skeleton,
 } from "../../ds/primitives";
+import { MODULE_TITLE } from "../../lib/format";
 import { useViewer } from "../../lib/useViewer";
 import { usePrototype } from "../../state/prototype";
 
 const MODULES: { code: string; title: string }[] = [
   { code: "ALL", title: "Общие для всех модулей" },
-  { code: "M1", title: "M1 · Потери по техкартам" },
-  { code: "M2", title: "M2 · Фудкост блюд" },
-  { code: "M3", title: "M3 · Закупочные цены" },
+  ...["M1", "M2", "M3"].map((code) => ({ code, title: `${code} · ${MODULE_TITLE[code]}` })),
 ];
 
 const show = (v: string) => v.replace(".", ",");
 const same = (a: string, b: string) =>
   Number(a.replace(",", ".")) === Number(b.replace(",", "."));
+/** Error text for a typed value, or null: the same range the server checks. */
+export function rangeError(p: EngineParam, typed: string): string | null {
+  const n = Number(typed.trim().replace(",", "."));
+  if (!typed.trim() || !Number.isFinite(n)) return "нужно число";
+  if (n < Number(p.low) || n > Number(p.high))
+    return `от ${show(p.low)} до ${show(p.high)}`;
+  return null;
+}
 
 /** The detectors' thresholds of this network: a block per module, folded; saved values apply at the next run. */
 export function EngineParamsSection() {
@@ -33,9 +40,7 @@ export function EngineParamsSection() {
       <p className="text-loss">Не получилось загрузить параметры движка</p>
     );
   if (!params.data) return <Skeleton className="h-40" />;
-  return (
-    <EngineParamsForm key={JSON.stringify(params.data)} params={params.data} />
-  );
+  return <EngineParamsForm params={params.data} />;
 }
 
 function EngineParamsForm({ params }: { params: EngineParam[] }) {
@@ -44,9 +49,11 @@ function EngineParamsForm({ params }: { params: EngineParam[] }) {
   const { notify } = usePrototype();
   const [draft, setDraft] = useState<Record<string, string>>({});
   const readOnly = !viewer?.isAdmin;
+  const byKey = new Map(params.map((p) => [p.key, p]));
   const changed = Object.entries(draft).filter(
-    ([k, v]) => !same(v, params.find((p) => p.key === k)!.value),
+    ([k, v]) => v.trim() === "" || !same(v, byKey.get(k)!.value),
   );
+  const invalid = changed.filter(([k, v]) => rangeError(byKey.get(k)!, v));
 
   const submit = (values: Record<string, string | null>) =>
     save.mutate(values, {
@@ -96,7 +103,11 @@ function EngineParamsForm({ params }: { params: EngineParam[] }) {
                     const value = draft[p.key] ?? show(p.value);
                     const edited =
                       p.key in draft && !same(draft[p.key]!, p.value);
+                    const atDefault = same(value, p.default);
                     const custom = !same(p.value, p.default);
+                    const error = edited || (p.key in draft && draft[p.key]!.trim() === "")
+                      ? rangeError(p, draft[p.key]!)
+                      : null;
                     return (
                       <li
                         key={p.key}
@@ -117,25 +128,41 @@ function EngineParamsForm({ params }: { params: EngineParam[] }) {
                             value={value}
                             inputMode="decimal"
                             disabled={readOnly}
+                            aria-invalid={Boolean(error)}
+                            aria-describedby={error ? `ep-${p.key}-error` : undefined}
                             onChange={(e) =>
                               setDraft((d) => ({
                                 ...d,
                                 [p.key]: e.target.value,
                               }))
                             }
-                            className="num h-9 w-24 rounded-[10px] border border-line-strong bg-surface px-2 text-right text-sm outline-none focus:border-brand disabled:bg-paper"
+                            className={cx(
+                              "num h-9 w-24 rounded-[10px] border bg-surface px-2 text-right text-sm outline-none focus:border-brand disabled:bg-paper",
+                              error ? "border-loss" : "border-line-strong",
+                            )}
                           />
                           <span className="w-20 text-xs text-ink-3">
                             {p.unit}
                           </span>
                         </span>
+                        {error && (
+                          <span
+                            id={`ep-${p.key}-error`}
+                            className="col-span-2 text-xs text-loss"
+                          >
+                            {error}
+                          </span>
+                        )}
                         <span className="col-span-2 text-xs text-ink-3">
                           {p.meaning && `${p.meaning} · `}по умолчанию{" "}
                           {show(p.default)} {p.unit}
-                          {custom && !readOnly && (
+                          {(custom || edited) && !atDefault && !readOnly && (
                             <button
                               type="button"
-                              onClick={() => submit({ [p.key]: null })}
+                              // Only fills in the default: saved together with the other edits.
+                              onClick={() =>
+                                setDraft((d) => ({ ...d, [p.key]: show(p.default) }))
+                              }
                               className="ml-2 inline-flex items-center gap-1 text-brand-strong hover:underline"
                             >
                               <RotateCcw size={11} /> вернуть
@@ -153,11 +180,15 @@ function EngineParamsForm({ params }: { params: EngineParam[] }) {
             <div className="flex flex-wrap items-center gap-3">
               <Button
                 variant="primary"
-                disabled={!changed.length || save.isPending}
+                disabled={!changed.length || invalid.length > 0 || save.isPending}
                 onClick={() =>
                   submit(
                     Object.fromEntries(
-                      changed.map(([k, v]) => [k, v.replace(",", ".")]),
+                      changed.map(([k, v]) => {
+                        const p = byKey.get(k)!;
+                        // The default typed back in: the network has no own value any more.
+                        return [k, same(v, p.default) ? null : v.replace(",", ".")];
+                      }),
                     ),
                   )
                 }

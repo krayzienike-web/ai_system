@@ -50,7 +50,12 @@ def _open_on(f: Finding, day: date) -> bool:
 
 
 def head_report(session: Session, period: Period, *, today: date) -> HeadReport:
-    findings = [f for f in session.execute(select(Finding)).scalars() if f.status != FindingStatus.DISMISSED]
+    # Like the working lists: what has not passed the review is not counted (docs/12, «Проверка находок»).
+    findings = [
+        f
+        for f in session.execute(select(Finding)).scalars()
+        if f.status != FindingStatus.DISMISSED and f.checked
+    ]
     tasks = list(session.execute(select(Task)).scalars())
     experiments = list(session.execute(select(Experiment)).scalars())
 

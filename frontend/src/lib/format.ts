@@ -38,3 +38,14 @@ export const gainWords = (value: number) => `можно заработать ${p
 /** Thousands with one decimal for big animated figures: 128 400 → "128,4". */
 export const thousands = (value: number) =>
   (value / 1000).toLocaleString("ru-RU", { maximumFractionDigits: value >= 100_000 ? 0 : 1 });
+
+/** Engine modules as people call them (docs/12-analytics-engine.md). */
+export const MODULE_TITLE: Record<string, string> = {
+  M1: "Потери по техкартам",
+  M2: "Фудкост блюд",
+  M3: "Закупочные цены",
+  M4: "Инвентаризации",
+  M5: "Списания",
+  M6: "Риск дефицита",
+  M7: "Качество данных",
+};

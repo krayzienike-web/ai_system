@@ -172,6 +172,10 @@ def test_m2_dish_food_cost_above_target_names_the_cause() -> None:
         and "сыр: +200%" in d.headline
     )
     assert "Цена 660\u00a0₽ вместо 580\u00a0₽" in d.headline  # 198 / 0.30 = 660
+    # Free portions (staff meals, 100 % discounts) and no menu price: skipped, not a division by zero.
+    free = Facts(**{**f.__dict__, "menu": {pizza: MenuInfo("M01", "Пицца", "Пицца", None)}})
+    free.sales = [SaleRow(r, date(2026, 9, 20), pizza, Decimal(10), Decimal(0))]
+    assert m2.detect(free, Norms()) == []
     # A pizza target of 35 % (set by HQ for the category): nothing to say.
     assert m2.detect(f, Norms(food_cost_by_category={"Пицца": Decimal(35)})) == []
 
@@ -200,7 +204,7 @@ def demo(network: Network, owner_engine: Engine) -> dict[str, UUID]:
 
 
 def test_engine_finds_planted_problems_and_review_gates_directors(
-    client: TestClient, network: Network, demo: dict[str, UUID]
+    client: TestClient, network: Network, demo: dict[str, UUID], owner_engine: Engine
 ) -> None:
     app.dependency_overrides[get_today] = lambda: date(2026, 10, 20)
     try:
@@ -240,8 +244,13 @@ def test_engine_finds_planted_problems_and_review_gates_directors(
         assert beef["headline"].startswith("С 27.07 говядина вырезка покупают у «Мясной экспресс»")
         vb = client.get(f"/api/findings/{beef['id']}/verification", headers=analyst).json()
         assert all(c["ok"] for c in vb["checks"]) and all(r["passed"] for r in vb["rules"])
-        # Not checked yet: not in the working lists, invisible to the director.
+        # Not checked yet: not in the working lists or the head report, invisible to the director,
+        # and no one can be given a task on it.
         assert client.get("/api/findings", headers=hq).json() == []
+        report = client.get("/api/reports/head", headers=hq).json()
+        assert Decimal(report["found_rub_month"]) == 0 and report["open_findings_now"] == 0
+        task = {"title": "Разобраться", "due_on": "2026-10-27", "finding_id": beef["id"]}
+        assert client.post("/api/tasks", headers=hq, json=task).status_code == 422
         assert client.get("/api/findings", headers=director).json() == []
         assert client.get("/api/findings", headers=director, params={"review": "pending"}).status_code == 403
 
@@ -280,6 +289,11 @@ def test_engine_finds_planted_problems_and_review_gates_directors(
             json={"verdict": "reject", "reason": "false_alarm", "note": "Знаем, техкарту уже меняем"},
         ).json()
         assert rejected["review_status"] == "rejected" and rejected["review_reason"] == "false_alarm"
+        # Why HQ rejected or reopened a finding is HQ's note, not the director's.
+        client.post(url, headers=analyst, json={"verdict": "reopen", "note": "Сверить с инвентаризацией"})
+        client.post(url, headers=analyst, json={"verdict": "confirm", "note": "Сверили"})
+        (seen,) = client.get("/api/findings", headers=director).json()
+        assert seen["review_note"] is None and seen["reviewed_by_name"] is None
         # A re-run keeps the reviewers' decisions.
         client.post("/api/analytics/run", headers=hq)
         assert {
@@ -287,6 +301,22 @@ def test_engine_finds_planted_problems_and_review_gates_directors(
             for f in client.get("/api/findings", headers=hq, params={"review": "rejected"}).json()
         } == {"rejected"}
         assert [f["id"] for f in client.get("/api/findings", headers=director).json()] == [moz["id"]]
+
+        # New data that changes the amount a lot sends a checked finding back to the check:
+        # the director must not see a sum nobody confirmed (here the stored effect plays the old data).
+        with Session(owner_engine) as s, s.begin():
+            row = s.get(Finding, UUID(moz["id"]))
+            assert row is not None
+            row.effect_rub_month = Decimal(5000)
+        client.post("/api/analytics/run", headers=hq)
+        back = next(
+            f
+            for f in client.get("/api/findings", headers=hq, params={"review": "pending"}).json()
+            if f["id"] == moz["id"]
+        )
+        assert back["review_note"].startswith("Снова на проверке: эффект изменился с 5000")
+        assert back["reviewed_on"] is None
+        assert client.get("/api/findings", headers=director).json() == []
     finally:
         app.dependency_overrides.pop(get_today, None)
 

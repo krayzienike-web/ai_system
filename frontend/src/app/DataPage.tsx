@@ -68,11 +68,13 @@ function Matching({ batch, onMatched }: { batch: ImportBatch; onMatched: (b: Imp
   const menu = useCatalog("menu_item");
   const suppliers = useCatalog("supplier");
   const options = { product: products.data ?? [], menu_item: menu.data ?? [], supplier: suppliers.data ?? [] };
+  // A supplier and a product may share a spelling: a choice belongs to the pair (kind, key), like on the server.
+  const idOf = (u: { kind: string; key: string }) => `${u.kind}:${u.key}`;
   // The best suggestion is preselected, but nothing is remembered until the person presses the button.
   const [chosen, setChosen] = useState<Record<string, string>>(() =>
-    Object.fromEntries(batch.unmatched.filter((u) => u.candidates[0]).map((u) => [u.key, u.candidates[0]!.id])),
+    Object.fromEntries(batch.unmatched.filter((u) => u.candidates[0]).map((u) => [idOf(u), u.candidates[0]!.id])),
   );
-  const ready = batch.unmatched.every((u) => chosen[u.key]);
+  const ready = batch.unmatched.every((u) => chosen[idOf(u)]);
   const scope = viewer?.isAdmin || !batch.restaurant_id ? "для всей сети" : "для вашего ресторана";
 
   return (
@@ -93,8 +95,8 @@ function Matching({ batch, onMatched }: { batch: ImportBatch; onMatched: (b: Imp
               </span>
             </span>
             <select
-              value={chosen[u.key] ?? ""}
-              onChange={(e) => setChosen((c) => ({ ...c, [u.key]: e.target.value }))}
+              value={chosen[idOf(u)] ?? ""}
+              onChange={(e) => setChosen((c) => ({ ...c, [idOf(u)]: e.target.value }))}
               aria-label={`Что такое «${u.name ?? u.code}»`}
               className="h-10 w-full rounded-[10px] border border-line-strong bg-surface px-2 outline-none focus:border-brand"
             >
@@ -130,7 +132,7 @@ function Matching({ batch, onMatched }: { batch: ImportBatch; onMatched: (b: Imp
         disabled={!ready || matchNames.isPending}
         onClick={() =>
           matchNames.mutate(
-            { id: batch.id, matches: batch.unmatched.map((u) => ({ kind: u.kind, key: u.key, target_id: chosen[u.key]! })) },
+            { id: batch.id, matches: batch.unmatched.map((u) => ({ kind: u.kind, key: u.key, target_id: chosen[idOf(u)]! })) },
             { onSuccess: onMatched },
           )
         }

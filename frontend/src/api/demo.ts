@@ -5,8 +5,10 @@ import {
   DEMO_PRODUCTS,
   DEMO_TEMPLATES,
   demoAliasEdit,
+  demoAliasRestaurant,
   demoAliases,
   demoBatchAction,
+  demoBatchRestaurant,
   demoBatches,
   demoFreshness,
   demoMatch,
@@ -15,6 +17,7 @@ import {
 import { demoEngineParams } from "./demoEngine";
 import { demoNorms } from "./demoNorms";
 import { demoCheckedFindings, demoReview } from "./demoReview";
+import { ApiError } from "./client";
 import type { Me, Restaurant, Role } from "./types";
 
 export const DEMO_PASSWORD = "demo12345";
@@ -105,8 +108,20 @@ export function demoRequest(
   const own = viewer.restaurant?.code ?? null;
   if (path === "/imports/templates") return DEMO_TEMPLATES;
   if (path === "/imports/freshness") return demoFreshness(own);
-  if (path === "/imports" && init.method === "POST")
+  if (path === "/imports" && init.method === "POST") {
+    // Like the server: network reference data is HQ's, a director uploads only for their restaurant.
+    const target = (init.body as FormData).get("restaurant_id") || null;
+    if (own && target !== own)
+      throw new ApiError(403, "Можно загружать данные только своего ресторана");
     return demoUpload(init.body as FormData);
+  }
+  // A director does not see other restaurants' files and network names (RLS on the server): not found.
+  const batchId = /^\/imports\/([^/]+)\/(match|publish|rollback|reprocess)$/.exec(path)?.[1];
+  if (own && batchId && demoBatchRestaurant(batchId) !== own)
+    throw new ApiError(404, "Загрузка не найдена");
+  const aliasId = /^\/aliases\/([^/]+)$/.exec(path)?.[1];
+  if (own && aliasId && demoAliasRestaurant(aliasId) !== own)
+    throw new ApiError(404, "Соответствие не найдено");
   if (path === "/imports") return demoBatches(own);
   if (path === "/catalog/product") return DEMO_PRODUCTS;
   if (path === "/findings") return demoCheckedFindings(own);

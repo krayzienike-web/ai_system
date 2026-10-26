@@ -1,4 +1,4 @@
-.PHONY: up down migrate seed demo-data load-demo test lint check dev-backend dev-frontend
+.PHONY: up down migrate seed demo-data load-demo test e2e lint check dev-backend dev-frontend
 
 up:            ## Start everything in Docker (db, redis, backend, frontend) and seed demo data
 	docker compose up --build -d
@@ -20,8 +20,12 @@ demo-data:     ## Write the files of the synthetic 12-restaurant network to demo
 load-demo:     ## Load the synthetic network into the demo tenant through the import pipeline
 	cd backend && uv run python -m app.cli load-demo
 
-test:
-	cd backend && uv run pytest -q
+test:          ## Backend tests with the coverage gate (90 %) and frontend unit tests
+	cd backend && uv run pytest -q --cov
+	cd frontend && npm test
+
+e2e:           ## End-to-end scenarios on the demo build (docs/13-testing.md)
+	cd frontend && npm run e2e
 
 lint:
 	cd backend && uv run ruff check . && uv run ruff format --check . && uv run mypy app tests

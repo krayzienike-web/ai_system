@@ -77,6 +77,8 @@ def create_tasks(
         finding = session.get(Finding, finding_id)
         if finding is None:
             raise NotFoundError("Finding not found")
+        if not finding.checked:
+            raise InvalidError("Находка еще не прошла проверку: задачи по ней ставят после подтверждения")
     targets, assigned_by = _targets(session, ctx, finding, restaurant_ids)
 
     tasks = [

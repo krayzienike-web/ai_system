@@ -5,6 +5,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, File, Form, UploadFile, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
+from starlette.concurrency import run_in_threadpool
 
 from app.catalog.models import AliasKind
 from app.core.deps import SessionDep, require
@@ -112,7 +113,9 @@ async def upload(
     restaurant_id: Annotated[UUID | None, Form()] = None,
 ) -> BatchOut:
     raw = await file.read(service.MAX_BYTES + 1)
-    batch = service.upload(
+    # Parsing up to 20 MB is synchronous work: keep it off the event loop.
+    batch = await run_in_threadpool(
+        service.upload,
         session,
         ctx,
         template_name=template,

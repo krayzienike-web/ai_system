@@ -75,8 +75,9 @@ class FindingDetailOut(FindingOut):
     check: CheckRef | None  # HQ only: a director follows a check through its tasks
 
 
-def _out(fw: FindingWork) -> dict[str, object]:
+def _out(fw: FindingWork, ctx: AccessContext) -> dict[str, object]:
     f = fw.finding
+    hq = ctx.can(Permission.FINDINGS_REVIEW)  # why a finding was rejected or reopened is HQ's working note
     return {
         "id": f.id,
         "restaurant_id": f.restaurant_id,
@@ -87,8 +88,8 @@ def _out(fw: FindingWork) -> dict[str, object]:
         "period_from": f.period_from,
         "period_to": f.period_to,
         "review_status": f.review_status,
-        "review_reason": f.review_reason,
-        "review_note": f.review_note,
+        "review_reason": f.review_reason if hq else None,
+        "review_note": f.review_note if hq else None,
         "reviewed_on": f.reviewed_on,
         "title": f.title,
         "headline": f.headline,
@@ -117,7 +118,7 @@ def list_findings(
         session, today=today, stage=stage, restaurant_id=restaurant_id, late_only=late_only, review=review
     )
     names = _reviewer_names(session, [fw.finding for fw in items])
-    return [FindingOut(**_out(fw), reviewed_by_name=names.get(fw.finding.reviewed_by)) for fw in items]
+    return [FindingOut(**_out(fw, ctx), reviewed_by_name=names.get(fw.finding.reviewed_by)) for fw in items]
 
 
 def _reviewer_names(session: SessionDep, findings: list[Finding]) -> dict[UUID | None, str]:
@@ -146,7 +147,7 @@ def get_finding(finding_id: UUID, ctx: CanRead, session: SessionDep, today: Toda
         if e
         else None
     )
-    return FindingDetailOut(**_out(fw), tasks=[TaskOut.of(t, today) for t in fw.tasks], check=check)
+    return FindingDetailOut(**_out(fw, ctx), tasks=[TaskOut.of(t, today) for t in fw.tasks], check=check)
 
 
 CanReview = Annotated[AccessContext, Depends(require(Permission.FINDINGS_REVIEW))]
@@ -175,4 +176,4 @@ def review_finding(
     fw = service.get_finding(session, finding_id, today=today)
     names = _reviewer_names(session, [fw.finding])
     session.commit()
-    return FindingOut(**_out(fw), reviewed_by_name=names.get(fw.finding.reviewed_by))
+    return FindingOut(**_out(fw, ctx), reviewed_by_name=names.get(fw.finding.reviewed_by))

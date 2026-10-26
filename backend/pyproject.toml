@@ -25,6 +25,7 @@ dev = [
     "httpx",
     "ruff",
     "mypy",
+    "pytest-cov>=7.1.0",
 ]
 
 [tool.uv]
@@ -62,3 +63,13 @@ disallow_untyped_defs = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["app"]
+branch = true
+omit = ["app/cli.py"]
+
+[tool.coverage.report]
+skip_empty = true
+fail_under = 90
+show_missing = false

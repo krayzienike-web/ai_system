@@ -17,6 +17,8 @@ from sqlalchemy.orm import Session
 class EngineParams:
     # Shared
     NETWORK_Z_MIN_RESTAURANTS: int = 8  # below this the network is too small for a z-score (pilot of 3)
+    # A checked finding goes back to the check when its effect changes by more than this share
+    REVIEW_RECHECK_CHANGE: Decimal = Decimal("0.25")
     # M1 — recipe execution
     M1_MATERIALITY_RUB_MONTH: Decimal = Decimal(3000)  # smaller losses are not worth a director's attention
     M1_Z: Decimal = Decimal(2)  # how far from the network a restaurant must be (robust z-score)
@@ -79,6 +81,16 @@ DEFS: tuple[ParamDef, ...] = (
         "меньше — сравниваем только с допусками и нормами",
         D(3),
         D(50),
+    ),
+    ParamDef(
+        "REVIEW_RECHECK_CHANGE",
+        "ALL",
+        "Проверенная находка возвращается на проверку, если эффект изменился больше чем на",
+        "%",
+        "после новых данных директор не увидит без проверки сумму, которую никто не подтверждал",
+        D(5),
+        D(200),
+        PCT,
     ),
     ParamDef(
         "M1_MATERIALITY_RUB_MONTH",

@@ -68,6 +68,8 @@ def detect(facts: Facts, norms: Norms, cfg: EngineParams = DEFAULT) -> list[Draf
         if cost is None or not portions[item]:
             continue
         price = info.price or revenue[item] / portions[item]
+        if price <= 0:  # free portions (staff meals, 100 % discounts): no food cost to speak of
+            continue
         food_cost = cost / price
         target = norms.food_cost_target(info.category) / 100
         if food_cost <= target:

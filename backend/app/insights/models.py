@@ -75,3 +75,8 @@ class Finding(IdMixin, TenantMixin, TimestampMixin, Base):
     review_note: Mapped[str | None] = mapped_column(Text)
     reviewed_by: Mapped[UUID | None] = mapped_column(ForeignKey("users.id"))
     reviewed_on: Mapped[date | None] = mapped_column(Date)
+
+    @property
+    def checked(self) -> bool:
+        """Passed the review (or needs none: made by hand): only such a finding may be worked on."""
+        return self.review_status is None or self.review_status == ReviewStatus.CONFIRMED

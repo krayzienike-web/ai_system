@@ -1,3 +1,4 @@
+import { ApiError } from "./client";
 // Data import in the standalone demo (no backend). A small copy of the server's rules
 // (backend/app/imports): the header is found by column names, totals are skipped, the file type is
 // recognised by its header. The server stays the source of truth; this only lets the prototype be clicked.
@@ -435,9 +436,15 @@ export async function demoUpload(form: FormData): Promise<ImportBatch> {
   return batch;
 }
 
+/** Whose a batch or a remembered name is: `undefined` when there is no such thing. */
+export const demoBatchRestaurant = (id: string) =>
+  batches.find((b) => b.id === id)?.restaurant_id;
+export const demoAliasRestaurant = (id: string) =>
+  [...remembered.values()].find((a) => a.id === id)?.restaurant;
+
 export function demoMatch(id: string, body: string): ImportBatch {
   const batch = batches.find((b) => b.id === id);
-  if (!batch) throw new Error("Загрузка не найдена");
+  if (!batch) throw new ApiError(404, "Загрузка не найдена");
   const { matches } = JSON.parse(body) as {
     matches: { key: string; target_id: string }[];
   };
@@ -480,7 +487,7 @@ export function demoAliases(restaurantId: string | null): NameAlias[] {
 
 export function demoAliasEdit(id: string, init: RequestInit): AffectedFiles {
   const entry = [...remembered.entries()].find(([, a]) => a.id === id);
-  if (!entry) throw new Error("Соответствие не найдено");
+  if (!entry) throw new ApiError(404, "Соответствие не найдено");
   const [key, alias] = entry;
   const affected = batches
     .filter((b) => alias.batches.has(b.id) && b.status === "published")
@@ -503,7 +510,7 @@ export function demoBatchAction(
   action: "publish" | "rollback" | "reprocess",
 ): ImportBatch {
   const batch = batches.find((b) => b.id === id);
-  if (!batch) throw new Error("Загрузка не найдена");
+  if (!batch) throw new ApiError(404, "Загрузка не найдена");
   if (action === "reprocess") return { ...batch };
   batch.status = action === "publish" ? "published" : "rolled_back";
   if (action === "publish") batch.published_at = new Date().toISOString();
