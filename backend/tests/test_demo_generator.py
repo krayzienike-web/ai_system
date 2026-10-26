@@ -65,7 +65,10 @@ def test_same_seed_same_bytes() -> None:
 def test_files_and_plan(net: DemoNetwork) -> None:
     plan = load_plan(net)
     assert [p[0] for p in plan[:5]] == ["restaurants", "products", "suppliers", "menu_items", "recipes"]
-    assert len(plan) == 5 + 6 * 4
+    assert len(plan) == 5 + 6 * 4 + 2  # + transfers of the sender R05 and the receiver R06
+    assert ("transfers", "R05", "transfers_R05.csv") in plan
+    assert ("transfers", "R06", "transfers_R06.csv") in plan
+    assert "п/ф" in net.files["products.csv"].decode("utf-8-sig")  # the tomato sauce is semi-finished
     assert "sales_R01.xlsx" in net.files and "sales_R02.csv" in net.files
     truth = json.loads(net.files["anomalies.json"])
     ids = {a["id"] for a in truth["anomalies"]}

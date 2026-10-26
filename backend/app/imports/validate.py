@@ -2,6 +2,7 @@
 «строка 154: неизвестная единица «кг.» у товара «Сыр Моцарелла»». Pure functions, no database."""
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
@@ -31,6 +32,7 @@ class Ref:
     id: UUID
     name: str
     base_unit: str | None = None
+    is_semi: bool = False
 
 
 @dataclass
@@ -46,6 +48,9 @@ class Lookups:
     supplier_names: dict[str, Ref] = field(default_factory=dict)
     aliases: dict[tuple[str, str], Ref] = field(default_factory=dict)  # (kind, source_key) -> ref
     used: set[str] = field(default_factory=set)  # "kind:source_key" of aliases the file relied on
+    # Transfers name other restaurants a director cannot see: the database resolves one name at a time.
+    resolve_restaurant: Callable[[str], UUID | None] = lambda _text: None
+    own_restaurant_id: UUID | None = None  # the restaurant the file is uploaded for
 
 
 @dataclass
@@ -71,6 +76,7 @@ class Result:
     period_from: date | None = None
     period_to: date | None = None
     unmatched: list[Unmatched] = field(default_factory=list)
+    skipped: int = 0  # incoming transfers: counted from the sender's export
 
 
 class _RowError(Exception):
@@ -78,6 +84,10 @@ class _RowError(Exception):
         super().__init__(message)
         self.column = column
         self.message = message
+
+
+class _Skip(Exception):
+    """A valid row that belongs to another file (an incoming transfer)."""
 
 
 class _NotFound(Exception):
@@ -111,6 +121,8 @@ UNITS = {
     "штук": ("pcs", Decimal(1)),
 }
 UNIT_TITLES = {"kg": "кг", "l": "л", "pcs": "шт"}
+SEMI_WORDS = {"п/ф", "пф", "полуфабрикат", "заготовка"}
+GOODS_WORDS = {"", "товар", "сырье", "продукт"}
 
 
 def unit_of(text: str) -> tuple[str, Decimal] | None:
@@ -231,6 +243,9 @@ def _record(template: str, v: dict[str, Any], lk: Lookups, warn: list[str]) -> d
     if template == "restaurants":
         return {"code": v["code"], "name": v["name"], "city": v["city"]}
     if template == "products":
+        kind = (v["kind"] or "").strip().lower().rstrip(".")
+        if kind not in SEMI_WORDS | GOODS_WORDS:
+            raise _RowError("Тип", f"«{v['kind']}» — укажите «товар» или «полуфабрикат»")
         unit = unit_of(v["unit"])
         if unit is None or unit[1] != 1:
             raise _RowError("Базовая ед.", f"«{v['unit']}» — базовая единица должна быть кг, л или шт")
@@ -240,6 +255,7 @@ def _record(template: str, v: dict[str, Any], lk: Lookups, warn: list[str]) -> d
             "category": v["category"],
             "base_unit": unit[0],
             "shelf_life_days": v["shelf_life_days"],
+            "is_semi": kind in SEMI_WORDS,
         }
     if template == "suppliers":
         inn = v["inn"]
@@ -249,13 +265,26 @@ def _record(template: str, v: dict[str, Any], lk: Lookups, warn: list[str]) -> d
     if template == "menu_items":
         return {"code": v["code"], "name": v["name"], "category": v["category"], "price": v["price"]}
     if template == "recipes":
-        item = _resolve("menu_item", v["menu_item_code"], None, lk.menu_items, lk.menu_item_names, lk)
+        parent_code = v["menu_item_code"]
+        parent: dict[str, UUID | None] = {"menu_item_id": None, "semi_product_id": None}
+        semi = lk.products.get(parent_code)
+        if parent_code not in lk.menu_items and semi is not None:
+            if not semi.is_semi:
+                raise _RowError(
+                    "Код блюда",
+                    f"«{semi.name}» — товар, а не полуфабрикат: отметьте его в номенклатуре (Тип: п/ф)",
+                )
+            parent["semi_product_id"] = semi.id
+        else:
+            parent["menu_item_id"] = _resolve(
+                "menu_item", parent_code, None, lk.menu_items, lk.menu_item_names, lk
+            ).id
         product = _product(v, lk)
         qty = _to_base(v["gross_qty"], v["unit"], product)
         if qty <= 0:
             raise _RowError("Брутто", "количество должно быть больше нуля")
         return {
-            "menu_item_id": item.id,
+            **parent,
             "product_id": product.id,
             "gross_qty": qty,
             "valid_from": v["valid_from"],
@@ -299,6 +328,22 @@ def _record(template: str, v: dict[str, Any], lk: Lookups, warn: list[str]) -> d
             "amount": v["amount"],
             "vat": v["vat"],
         }
+    if template == "transfers":
+        sender = lk.resolve_restaurant(v["from_restaurant"])
+        receiver = lk.resolve_restaurant(v["to_restaurant"])
+        if sender is None:
+            raise _RowError("Откуда", f"неизвестный ресторан «{v['from_restaurant']}»")
+        if receiver is None:
+            raise _RowError("Куда", f"неизвестный ресторан «{v['to_restaurant']}»")
+        if sender == receiver:
+            raise _RowError("Куда", "перемещение в тот же ресторан")
+        if sender != lk.own_restaurant_id:
+            raise _Skip
+        product = _product(v, lk)
+        qty = _to_base(v["qty"], v["unit"], product)
+        if qty <= 0:
+            raise _RowError("Количество", "количество должно быть больше нуля")
+        return {"day": v["day"], "to_restaurant_id": receiver, "product_id": product.id, "qty": qty}
     if template == "write_offs":
         product = _product(v, lk)
         qty = _to_base(v["qty"], v["unit"], product)
@@ -321,6 +366,7 @@ def validate(template: Template, table: Table, lookups: Lookups, *, today: date)
     warnings: list[Issue] = []
     unmatched: dict[tuple[str, str], Unmatched] = {}
     waiting_days: list[date] = []  # dates of rows that wait for a name match: still part of the file's period
+    skipped = 0
     for number, cells in table.rows:
         warn: list[str] = []
         try:
@@ -328,6 +374,9 @@ def validate(template: Template, table: Table, lookups: Lookups, *, today: date)
             record = _record(template.name, values, lookups, warn)
         except _RowError as e:
             errors.append(Issue(number, e.column, e.message))
+            continue
+        except _Skip:
+            skipped += 1
             continue
         except _NotFound as e:
             item = unmatched.setdefault(
@@ -343,12 +392,27 @@ def validate(template: Template, table: Table, lookups: Lookups, *, today: date)
             continue
         warnings.extend(Issue(number, None, w) for w in warn)
         records.append(record)
+    if skipped:
+        warnings.append(
+            Issue(
+                None,
+                None,
+                f"входящих перемещений: {skipped} — их учитываем по выгрузке ресторана-отправителя",
+            )
+        )
     if table.skipped_totals:
         warnings.append(Issue(None, None, f"пропущено строк итогов: {table.skipped_totals}"))
     if table.unmapped:
         warnings.append(Issue(None, None, "колонки не используются: " + ", ".join(table.unmapped)))
     days = [r["day"] for r in records if "day" in r] + waiting_days
-    result = Result(records, errors, warnings, rows_total=len(table.rows), unmatched=list(unmatched.values()))
+    result = Result(
+        records,
+        errors,
+        warnings,
+        rows_total=len(table.rows),
+        unmatched=list(unmatched.values()),
+        skipped=skipped,
+    )
     if days:
         result.period_from, result.period_to = min(days), max(days)
     if len(errors) > MAX_ISSUES:

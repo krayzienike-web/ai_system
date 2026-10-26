@@ -163,3 +163,48 @@ def test_period_includes_rows_waiting_for_a_name_match() -> None:
     )
     assert len(r.records) == 1 and r.unmatched[0].rows == [2]
     assert (r.period_from, r.period_to) == (date(2026, 10, 1), date(2026, 10, 5))
+
+
+def test_semi_finished_products_and_their_recipes() -> None:
+    p = run(
+        "products",
+        "Код;Наименование;Базовая ед.;Тип\nP20;Соус томатный;кг;п/ф\nP21;Мука;кг;товар\nP22;Соль;кг;смесь\n",
+    )
+    assert [r["is_semi"] for r in p.records] == [True, False]
+    assert p.errors[0].column == "Тип"
+    lk = lookups()
+    sauce = Ref(uuid4(), "Соус томатный", "kg", is_semi=True)
+    lk.products["P20"] = sauce
+    t = TEMPLATES["recipes"]
+    text = (
+        "Код блюда;Код товара;Брутто;Ед. изм.;Действует с\n"
+        "P20;P1;1250;г;01.08.2026\n"
+        "M1;P20;80;г;01.08.2026\n"
+        "P1;P2;1;л;01.08.2026\n"
+    )
+    r = validate(t, read_table(text.encode(), "r.csv", t), lk, today=TODAY)
+    assert r.records[0]["semi_product_id"] == sauce.id and r.records[0]["menu_item_id"] is None
+    assert r.records[1]["menu_item_id"] == MARG.id and r.records[1]["product_id"] == sauce.id
+    assert [(e.row, e.column) for e in r.errors] == [(4, "Код блюда")]
+    assert "не полуфабрикат" in r.errors[0].message
+
+
+def test_transfers_keep_outgoing_and_skip_incoming() -> None:
+    a1, a2 = uuid4(), uuid4()
+    lk = lookups()
+    lk.resolve_restaurant = {"R01": a1, "Ресторан на Арбате": a2}.get
+    lk.own_restaurant_id = a1
+    t = TEMPLATES["transfers"]
+    text = (
+        "Дата;Откуда;Куда;Код товара;Количество\n"
+        "01.10.2026;R01;Ресторан на Арбате;P1;2\n"
+        "02.10.2026;Ресторан на Арбате;R01;P1;1\n"
+        "03.10.2026;R01;R01;P1;1\n"
+        "04.10.2026;R01;Ресторан где-то;P1;1\n"
+    )
+    r = validate(t, read_table(text.encode(), "t.csv", t), lk, today=TODAY)
+    assert r.records == [
+        {"day": date(2026, 10, 1), "to_restaurant_id": a2, "product_id": MOZZ.id, "qty": Decimal(2)}
+    ]
+    assert r.skipped == 1 and any("отправителя" in w.message for w in r.warnings)
+    assert [(e.row, e.column) for e in r.errors] == [(4, "Куда"), (5, "Куда")]

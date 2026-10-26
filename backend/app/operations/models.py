@@ -51,6 +51,23 @@ class Receipt(_Fact, Base):
     vat: Mapped[Decimal | None] = mapped_column(MONEY)
 
 
+class Transfer(_Fact, Base):
+    """Goods moved between restaurants of the network. Stored once, from the sender's export
+    (`restaurant_id` is the sender); the receiver reads its incoming rows (row-level security)."""
+
+    __tablename__ = "transfers"
+    __table_args__ = (
+        Index("ix_transfers_restaurant_day", "restaurant_id", "day"),
+        Index("ix_transfers_to_day", "to_restaurant_id", "day"),
+        CheckConstraint("qty > 0", name="qty_positive"),
+        CheckConstraint("to_restaurant_id <> restaurant_id", name="not_to_itself"),
+    )
+
+    to_restaurant_id: Mapped[UUID] = mapped_column(ForeignKey("restaurants.id", ondelete="CASCADE"))
+    product_id: Mapped[UUID] = mapped_column(ForeignKey("products.id", ondelete="RESTRICT"))
+    qty: Mapped[Decimal] = mapped_column(QTY)
+
+
 class WriteOff(_Fact, Base):
     __tablename__ = "write_offs"
     __table_args__ = (

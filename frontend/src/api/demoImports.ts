@@ -9,12 +9,13 @@ const PRODUCT = [col("Код товара", false, "артикул"), col("То�
 
 export const DEMO_TEMPLATES: ImportTemplate[] = [
   { name: "restaurants", title: "Рестораны", scope: "network", one_of: [], columns: [col("Код", true), col("Название", true, "ресторан"), col("Город")] },
-  { name: "products", title: "Номенклатура", scope: "network", one_of: [], columns: [col("Код", true), col("Наименование", true, "товар"), col("Категория"), col("Базовая ед.", true, "ед. изм."), col("Срок годности, дней")] },
+  { name: "products", title: "Номенклатура", scope: "network", one_of: [], columns: [col("Код", true), col("Наименование", true, "товар"), col("Категория"), col("Базовая ед.", true, "ед. изм."), col("Срок годности, дней"), col("Тип", false, "вид")] },
   { name: "suppliers", title: "Поставщики", scope: "network", one_of: [], columns: [col("Код", true), col("Название", true, "поставщик"), col("ИНН")] },
   { name: "menu_items", title: "Блюда", scope: "network", one_of: [], columns: [col("Код", true), col("Блюдо", true, "наименование"), col("Категория"), col("Цена")] },
-  { name: "recipes", title: "Технологические карты (ТТК)", scope: "network", one_of: [["Код товара", "Товар"]], columns: [col("Код блюда", true), ...PRODUCT, col("Брутто", true, "кол-во брутто"), col("Ед. изм."), col("Действует с", true)] },
+  { name: "recipes", title: "Технологические карты (ТТК)", scope: "network", one_of: [["Код товара", "Товар"]], columns: [col("Код блюда", true, "код блюда или п/ф", "код полуфабриката"), ...PRODUCT, col("Брутто", true, "кол-во брутто"), col("Ед. изм."), col("Действует с", true)] },
   { name: "sales", title: "Продажи", scope: "restaurant", one_of: [["Код блюда", "Блюдо"]], columns: [col("Дата", true), col("Код блюда", false, "код"), col("Блюдо", false), col("Количество", true, "кол-во"), col("Выручка", true, "сумма"), col("Скидка")] },
   { name: "receipts", title: "Приходы (накладные)", scope: "restaurant", one_of: [["Код товара", "Товар"]], columns: [col("Дата", true), col("№ накладной"), col("Код поставщика"), col("Поставщик", false, "контрагент"), ...PRODUCT, col("Количество", true, "кол-во"), col("Ед. изм."), col("Цена"), col("Сумма", true, "сумма с ндс"), col("НДС")] },
+  { name: "transfers", title: "Перемещения", scope: "restaurant", one_of: [["Код товара", "Товар"]], columns: [col("Дата", true), col("Откуда", true, "отправитель"), col("Куда", true, "получатель"), ...PRODUCT, col("Количество", true, "кол-во"), col("Ед. изм.")] },
   { name: "write_offs", title: "Списания", scope: "restaurant", one_of: [["Код товара", "Товар"]], columns: [col("Дата", true), ...PRODUCT, col("Количество", true, "кол-во"), col("Ед. изм."), col("Причина", false, "статья списания")] },
   { name: "inventory_counts", title: "Инвентаризации", scope: "restaurant", one_of: [["Код товара", "Товар"]], columns: [col("Дата", true), ...PRODUCT, col("Учетный остаток"), col("Фактический остаток", true, "факт"), col("Ед. изм.")] },
 ];

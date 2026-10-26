@@ -82,6 +82,7 @@ TEMPLATES: dict[str, Template] = {
                 _c("category", "Категория", Kind.TEXT, False, "группа"),
                 _c("unit", "Базовая ед.", Kind.TEXT, True, "ед. изм.", "ед.", "единица измерения", "ед изм"),
                 _c("shelf_life_days", "Срок годности, дней", Kind.INT, False, "срок годности"),
+                _c("kind", "Тип", Kind.TEXT, False, "вид", "тип номенклатуры"),
             ),
         ),
         Template(
@@ -110,7 +111,17 @@ TEMPLATES: dict[str, Template] = {
             "Технологические карты (ТТК)",
             Scope.NETWORK,
             (
-                _c("menu_item_code", "Код блюда", Kind.TEXT, True, "блюдо код"),
+                # A recipe of a dish or of a semi-finished product (соус, тесто).
+                _c(
+                    "menu_item_code",
+                    "Код блюда",
+                    Kind.TEXT,
+                    True,
+                    "блюдо код",
+                    "код блюда или п/ф",
+                    "код полуфабриката",
+                    "код блюда/п/ф",
+                ),
                 *PRODUCT,
                 _c(
                     "gross_qty",
@@ -163,6 +174,28 @@ TEMPLATES: dict[str, Template] = {
                 _c("price", "Цена", Kind.DECIMAL, False, "цена за ед."),
                 _c("amount", "Сумма", Kind.DECIMAL, True, "сумма с ндс", "сумма, ₽"),
                 _c("vat", "НДС", Kind.DECIMAL, False, "сумма ндс"),
+            ),
+            one_of=(("product_code", "product_name"),),
+        ),
+        Template(
+            "transfers",
+            "Перемещения",
+            Scope.RESTAURANT,
+            (
+                DAY,
+                _c(
+                    "from_restaurant",
+                    "Откуда",
+                    Kind.TEXT,
+                    True,
+                    "отправитель",
+                    "со склада",
+                    "склад-отправитель",
+                ),
+                _c("to_restaurant", "Куда", Kind.TEXT, True, "получатель", "на склад", "склад-получатель"),
+                *PRODUCT,
+                _c("qty", "Количество", Kind.DECIMAL, True, "кол-во"),
+                UNIT,
             ),
             one_of=(("product_code", "product_name"),),
         ),

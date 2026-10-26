@@ -3,6 +3,7 @@
 from collections.abc import Iterator
 from datetime import date
 from typing import Any
+from uuid import UUID
 
 import httpx
 import pytest
@@ -171,7 +172,7 @@ def test_demo_network_loads_through_the_pipeline_with_rls(network: Network, owne
         assert ctx is not None
         rows = load(session, ctx, net, today=TODAY)
         session.commit()
-    assert rows["restaurants"] == 4 and rows["products"] == 16 and rows["sales"] > 7000
+    assert rows["restaurants"] == 4 and rows["products"] == 17 and rows["sales"] > 7000
     with Session(owner_engine) as s:
         # The generator's R01–R04 are new restaurants of tenant A next to A1–A3.
         codes = (
@@ -443,3 +444,62 @@ def test_alias_visibility_and_rights(client: TestClient, network: Network, catal
     assert client.delete(f"/api/aliases/{a1_alias['id']}", headers=director2).status_code == 404
     assert client.get("/api/aliases", headers=login(client, "admin@b.ru")).json() == []
     assert client.delete(f"/api/aliases/{network_alias['id']}", headers=hq).status_code == 200
+
+
+def test_recipe_cycle_through_semi_finished_products_is_refused(client: TestClient, network: Network) -> None:
+    hq = login(client, "admin@a.ru")
+    products = "Код;Наименование;Базовая ед.;Тип\nS1;Соус;кг;п/ф\nS2;Основа;кг;п/ф\nT1;Томаты;кг;\n"
+    publish(client, hq, upload(client, hq, "products", products).json()["id"])
+    ok = "Код блюда;Код товара;Брутто;Действует с\nS1;T1;1,2;01.08.2026\nS1;S2;0,2;01.08.2026\n"
+    publish(client, hq, upload(client, hq, "recipes", ok).json()["id"])
+    looped = upload(
+        client, hq, "recipes", "Код блюда;Код товара;Брутто;Действует с\nS2;S1;0,1;01.09.2026\n"
+    ).json()
+    assert looped["status"] == "failed"
+    assert (
+        "«Основа» → «Соус» → «Основа»" in looped["errors"][0]["message"]
+        or "«Соус» → «Основа» → «Соус»" in looped["errors"][0]["message"]
+    )
+
+
+def test_transfers_are_stored_once_and_seen_by_both_restaurants(
+    client: TestClient, network: Network, catalog: None, owner_engine: Engine
+) -> None:
+    from app.core.db import RlsContext, apply_rls_context, get_sessionmaker
+
+    a1, a2, a3 = (network.a.restaurants[c] for c in ("A1", "A2", "A3"))
+    d1, d2 = login(client, "director1@a.ru"), login(client, "director2@a.ru")
+    sent = (
+        "Дата;Откуда;Куда;Товар;Количество\n"
+        "01.10.2026;A1;A2;Сыр Моцарелла;2\n"
+        "02.10.2026;A2;A1;Сыр Моцарелла;1\n"
+    )
+    batch = upload(client, d1, "transfers", sent, a1).json()
+    assert (batch["status"], batch["rows_valid"]) == ("validated", 1)
+    publish(client, d1, batch["id"])
+    # The receiver's export of the same transfers — byte for byte the same file: not a duplicate for
+    # another restaurant; only incoming rows, so nothing is stored twice.
+    other = upload(client, d2, "transfers", sent, a2).json()
+    assert (other["status"], other["rows_valid"]) == ("validated", 1)  # A2's own outgoing row of 02.10
+    publish(client, d2, other["id"])
+    # Another tenant's restaurant cannot be named.
+    foreign = upload(client, d1, "transfers", sent.replace(";A2;Сыр", ";B1;Сыр"), a1).json()
+    assert foreign["status"] == "failed" and "неизвестный ресторан «B1»" in foreign["errors"][0]["message"]
+
+    with owner_engine.connect() as c:
+        assert c.execute(text("SELECT count(*) FROM transfers")).scalar_one() == 2  # 01.10 A1→A2, 02.10 A2→A1
+
+    def visible(director: str, restaurant: UUID) -> int:
+        session = get_sessionmaker()()
+        try:
+            apply_rls_context(
+                session, RlsContext(network.a.id, network.a.users[director], False, frozenset({restaurant}))
+            )
+            return int(session.execute(text("SELECT count(*) FROM transfers")).scalar_one())
+        finally:
+            session.rollback()
+            session.close()
+
+    assert visible("director1@a.ru", a1) == 2  # sent one, received one
+    assert visible("director2@a.ru", a2) == 2
+    assert visible("director3@a.ru", a3) == 0

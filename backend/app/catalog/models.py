@@ -32,6 +32,8 @@ class Product(IdMixin, TenantMixin, TimestampMixin, Base):
     category: Mapped[str | None] = mapped_column(String(100))
     base_unit: Mapped[str] = mapped_column(String(10))
     shelf_life_days: Mapped[int | None]
+    # A semi-finished product (соус, тесто) has its own recipe per 1 base unit.
+    is_semi: Mapped[bool] = mapped_column(default=False, server_default="false")
 
 
 class Supplier(IdMixin, TenantMixin, TimestampMixin, Base):
@@ -54,18 +56,24 @@ class MenuItem(IdMixin, TenantMixin, TimestampMixin, Base):
 
 
 class RecipeLine(IdMixin, TenantMixin, TimestampMixin, Base):
-    """One ingredient of a menu item's recipe (ТТК), gross quantity in the product's base unit.
+    """One ingredient of a recipe (ТТК), gross quantity in the product's base unit.
 
+    The recipe belongs to a menu item (per portion) or to a semi-finished product (per 1 base unit).
     A recipe version is the set of lines with the same valid_from; history is never rewritten (invariant 2).
     """
 
     __tablename__ = "recipe_lines"
     __table_args__ = (
-        UniqueConstraint("menu_item_id", "product_id", "valid_from"),
         CheckConstraint("gross_qty > 0", name="gross_positive"),
+        CheckConstraint("(menu_item_id IS NULL) <> (semi_product_id IS NULL)", name="one_parent"),
     )
 
-    menu_item_id: Mapped[UUID] = mapped_column(ForeignKey("menu_items.id", ondelete="CASCADE"), index=True)
+    menu_item_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("menu_items.id", ondelete="CASCADE"), index=True
+    )
+    semi_product_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("products.id", ondelete="CASCADE"), index=True
+    )
     product_id: Mapped[UUID] = mapped_column(ForeignKey("products.id", ondelete="RESTRICT"))
     gross_qty: Mapped[Decimal] = mapped_column(QTY)
     valid_from: Mapped[date] = mapped_column(Date)

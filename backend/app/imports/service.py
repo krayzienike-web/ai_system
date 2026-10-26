@@ -5,12 +5,13 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import delete, func, insert, select
+from sqlalchemy import delete, func, insert, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from app.catalog.aliases import TARGETS
 from app.catalog.models import MenuItem, NameAlias, Product, RecipeLine, Supplier
+from app.catalog.recipes import Line, find_cycle, lines_on
 from app.core.errors import ConflictError, ForbiddenError, InvalidError, NotFoundError
 from app.core.period import last_full_week_end
 from app.imports.matching import normalize, suggest
@@ -18,15 +19,16 @@ from app.imports.models import BatchStatus, ImportBatch
 from app.imports.reader import detect_template, read_table
 from app.imports.templates import TEMPLATES, Scope, Template
 from app.imports.validate import Lookups, Ref, Result, validate
-from app.operations.models import InventoryCount, Receipt, Sale, WriteOff
+from app.operations.models import InventoryCount, Receipt, Sale, Transfer, WriteOff
 from app.tenancy.audit import audit
 from app.tenancy.context import AccessContext
 from app.tenancy.models import Restaurant
 from app.tenancy.permissions import Permission
 
 MAX_BYTES = 20 * 1024 * 1024
-FACTS: dict[str, type[Sale] | type[Receipt] | type[WriteOff] | type[InventoryCount]] = {
+FACTS: dict[str, type[Sale] | type[Receipt] | type[WriteOff] | type[InventoryCount] | type[Transfer]] = {
     "sales": Sale,
+    "transfers": Transfer,
     "receipts": Receipt,
     "write_offs": WriteOff,
     "inventory_counts": InventoryCount,
@@ -40,9 +42,18 @@ REFERENCE: dict[str, type[Product] | type[Supplier] | type[MenuItem] | type[Rest
 
 
 def load_lookups(session: Session, restaurant_id: UUID | None = None) -> Lookups:
-    lk = Lookups()
+    cache: dict[str, UUID | None] = {}
+
+    def resolve_restaurant(text_value: str) -> UUID | None:
+        if text_value not in cache:
+            cache[text_value] = session.execute(
+                text("SELECT app.resolve_restaurant(:t)"), {"t": text_value}
+            ).scalar_one()
+        return cache[text_value]
+
+    lk = Lookups(resolve_restaurant=resolve_restaurant, own_restaurant_id=restaurant_id)
     for p in session.execute(select(Product)).scalars():
-        ref = Ref(p.id, p.name, p.base_unit)
+        ref = Ref(p.id, p.name, p.base_unit, p.is_semi)
         lk.products[p.code] = ref
         lk.product_names.setdefault(normalize(p.name), ref)
     for m in session.execute(select(MenuItem)).scalars():
@@ -150,7 +161,8 @@ def _apply(batch: ImportBatch, result: Result | None, file_errors: list[dict[str
         batch.status = BatchStatus.FAILED
     elif result.unmatched:
         batch.status = BatchStatus.NEEDS_MATCHING
-    elif result.records:
+    elif result.records or result.skipped:
+        # A file of only incoming transfers is fine: those rows are counted from the sender's file.
         batch.status = BatchStatus.VALIDATED
     else:
         batch.status = BatchStatus.FAILED
@@ -183,11 +195,15 @@ def upload(
         select(ImportBatch.id).where(
             ImportBatch.sha256 == sha,
             ImportBatch.template == template.name,
+            # The same file for another restaurant is not a duplicate (a transfer exported by both sides).
+            ImportBatch.restaurant_id.is_(None)
+            if restaurant_id is None
+            else ImportBatch.restaurant_id == restaurant_id,
             ImportBatch.status.in_([BatchStatus.VALIDATED, BatchStatus.PUBLISHED]),
         )
     ).first()
     if duplicate:
-        raise ConflictError("Этот файл уже загружен")
+        raise ConflictError("Этот файл уже загружен для этого ресторана")
 
     result, file_errors, column_map, lk = _run(session, template, raw, filename, today, restaurant_id)
     batch = ImportBatch(
@@ -201,6 +217,11 @@ def upload(
         created_by=ctx.user_id,
     )
     _apply(batch, result, file_errors, lk)
+    if template.name == "recipes" and result is not None and batch.status == BatchStatus.VALIDATED:
+        cycle = recipe_cycle(session, result.records)
+        if cycle:
+            batch.status = BatchStatus.FAILED
+            batch.errors = [{"row": None, "column": None, "message": cycle}]
     session.add(batch)
     session.flush()
     audit(
@@ -215,16 +236,42 @@ def upload(
     return batch
 
 
+def _parent(record: dict[str, Any]) -> UUID:
+    parent: UUID = record["menu_item_id"] or record["semi_product_id"]
+    return parent
+
+
+def recipe_cycle(session: Session, records: list[dict[str, Any]]) -> str | None:
+    """Would the recipes in the file, together with the stored ones, make a semi-finished product contain
+    itself? Checked on every date a recipe version starts. Returns the chain in words, or None."""
+    new_versions = {(_parent(r), r["valid_from"]) for r in records}
+    lines = [
+        Line(row.menu_item_id or row.semi_product_id, row.product_id, row.gross_qty, row.valid_from)  # type: ignore[arg-type]
+        for row in session.execute(select(RecipeLine)).scalars()
+        if ((row.menu_item_id or row.semi_product_id), row.valid_from) not in new_versions
+    ] + [Line(_parent(r), r["product_id"], r["gross_qty"], r["valid_from"]) for r in records]
+    names = {p.id: p.name for p in session.execute(select(Product)).scalars()}
+    for day in sorted({line.valid_from for line in lines}):
+        cycle = find_cycle(lines_on(lines, day))
+        if cycle:
+            chain = " → ".join(f"«{names.get(node, node)}»" for node in cycle)
+            return f"Полуфабрикат входит сам в себя: {chain}. Исправьте техкарты"
+    return None
+
+
 def _publish_reference(
     session: Session, batch: ImportBatch, template: Template, records: list[dict[str, Any]]
 ) -> None:
     if template.name == "recipes":
-        # A recipe version (menu item × valid_from) in the file replaces the same version in full.
-        versions = {(r["menu_item_id"], r["valid_from"]) for r in records}
-        for menu_item_id, valid_from in versions:
+        cycle = recipe_cycle(session, records)
+        if cycle:
+            raise InvalidError(cycle)
+        # A recipe version (dish or semi-finished product × valid_from) in the file replaces the same version.
+        for parent, valid_from in {(_parent(r), r["valid_from"]) for r in records}:
             session.execute(
                 delete(RecipeLine).where(
-                    RecipeLine.menu_item_id == menu_item_id, RecipeLine.valid_from == valid_from
+                    (RecipeLine.menu_item_id == parent) | (RecipeLine.semi_product_id == parent),
+                    RecipeLine.valid_from == valid_from,
                 )
             )
         session.execute(insert(RecipeLine), [{**r, "tenant_id": batch.tenant_id} for r in records])
@@ -297,25 +344,28 @@ def _write(session: Session, batch: ImportBatch, template: Template, today: date
     else:
         model = FACTS[template.name]
         # Idempotent: the restaurant's rows of this type for the file's period are replaced, never duplicated.
-        session.execute(
-            delete(model).where(
-                model.restaurant_id == batch.restaurant_id,
-                model.day >= batch.period_from,
-                model.day <= batch.period_to,
+        # A file with no rows of its own (only incoming transfers) has no period and replaces nothing.
+        if batch.period_from is not None and batch.period_to is not None:
+            session.execute(
+                delete(model).where(
+                    model.restaurant_id == batch.restaurant_id,
+                    model.day >= batch.period_from,
+                    model.day <= batch.period_to,
+                )
             )
-        )
-        session.execute(
-            insert(model),
-            [
-                {
-                    **r,
-                    "tenant_id": batch.tenant_id,
-                    "restaurant_id": batch.restaurant_id,
-                    "import_batch_id": batch.id,
-                }
-                for r in result.records
-            ],
-        )
+        if result.records:
+            session.execute(
+                insert(model),
+                [
+                    {
+                        **r,
+                        "tenant_id": batch.tenant_id,
+                        "restaurant_id": batch.restaurant_id,
+                        "import_batch_id": batch.id,
+                    }
+                    for r in result.records
+                ],
+            )
 
 
 def rollback(session: Session, ctx: AccessContext, batch_id: UUID) -> ImportBatch:

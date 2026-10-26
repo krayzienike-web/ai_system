@@ -80,7 +80,7 @@ SUPPLIER = {s[0]: s for s in SUPPLIERS}
 
 # code, name, category, price ₽, daily base sales, recipe {product: gross per portion in base unit}
 MENU = [
-    ("M01", "Пицца Маргарита", "Пицца", 580, 34, {"P01": 0.14, "P05": 0.18, "P06": 0.08, "P14": 0.01}),
+    ("M01", "Пицца Маргарита", "Пицца", 580, 34, {"P01": 0.14, "P05": 0.18, "P17": 0.08, "P14": 0.01}),
     ("M02", "Пицца Четыре сыра", "Пицца", 760, 16, {"P01": 0.10, "P02": 0.03, "P03": 0.03, "P05": 0.18}),
     ("M03", "Паста Карбонара", "Паста", 640, 22, {"P15": 0.12, "P04": 0.08, "P13": 2, "P02": 0.02}),
     ("M04", "Паста с лососем", "Паста", 890, 12, {"P15": 0.12, "P09": 0.09, "P04": 0.07}),
@@ -107,6 +107,11 @@ VAT = {
     "Овощи": Decimal("0.10"),
     "Зелень": Decimal("0.10"),
 }
+# Semi-finished products: made in the kitchen from raw products, per 1 base unit. Not stocked in the demo.
+SEMI = {"P17": ("Соус томатный (п/ф)", "Заготовки", "kg", 2, {"P06": 1.25, "P14": 0.03})}
+# Goods moved between restaurants: every Monday R05 sends R06 flour (sender, receiver, product, qty).
+TRANSFERS = [("R05", "R06", "P05", 5.0)]
+
 PERISHABLE_WRITE_OFF = {"P10": 0.05, "P16": 0.04, "P06": 0.02, "P04": 0.01, "P12": 0.04}
 
 
@@ -301,8 +306,9 @@ def generate(seed: int = 42, restaurants: int = 12, start: date = START, end: da
     )
     unit_title = {"kg": "кг", "l": "л", "pcs": "шт"}
     net.files["products.csv"] = _csv(
-        ["Код", "Наименование", "Категория", "Базовая ед.", "Срок годности, дней"],
-        [[p[0], p[1], p[2], unit_title[p[3]], p[4]] for p in PRODUCTS],
+        ["Код", "Наименование", "Категория", "Базовая ед.", "Срок годности, дней", "Тип"],
+        [[p[0], p[1], p[2], unit_title[p[3]], p[4], "товар"] for p in PRODUCTS]
+        + [[code, s[0], s[1], unit_title[s[2]], s[3], "п/ф"] for code, s in SEMI.items()],
     )
     net.files["suppliers.csv"] = _csv(["Код", "Название", "ИНН"], [[s[0], s[1], s[2]] for s in SUPPLIERS])
     net.files["menu_items.csv"] = _csv(
@@ -311,11 +317,37 @@ def generate(seed: int = 42, restaurants: int = 12, start: date = START, end: da
     net.files["recipes.csv"] = _csv(
         ["Код блюда", "Код товара", "Брутто", "Ед. изм.", "Действует с"],
         [
-            [m[0], p, _q(g), unit_title[PRODUCT[p][3]], date(2026, 1, 1)]
+            [m[0], p, _q(g), unit_title[(PRODUCT[p][3] if p in PRODUCT else SEMI[p][2])], date(2026, 1, 1)]
             for m in MENU
             for p, g in m[5].items()
+        ]
+        + [
+            [code, p, _q(g), unit_title[PRODUCT[p][3]], date(2026, 1, 1)]
+            for code, s in SEMI.items()
+            for p, g in s[4].items()
         ],
     )
+
+    # Transfers: the same goods leave one shelf and arrive on another.
+    moves: dict[tuple[str, str, date], float] = defaultdict(float)
+    transfer_rows: list[list[Any]] = []
+    for sender, receiver, p_code, qty in TRANSFERS:
+        if sender in codes and receiver in codes:
+            for day in _days(start, end):
+                if day.weekday() == 0:
+                    moves[(sender, p_code, day)] -= qty
+                    moves[(receiver, p_code, day)] += qty
+                    transfer_rows.append(
+                        [
+                            day,
+                            sender,
+                            receiver,
+                            p_code,
+                            PRODUCT[p_code][1],
+                            _q(qty),
+                            unit_title[PRODUCT[p_code][3]],
+                        ]
+                    )
 
     # ------------------------------------------------------------ restaurants
     for code, name, _city, size in chosen:
@@ -339,7 +371,9 @@ def generate(seed: int = 42, restaurants: int = 12, start: date = START, end: da
                 discount = _q(float(gross) * rnd.choice((0, 0, 0.03, 0.05)), "0.01")
                 sales_rows.append([day, m_code, m_name, qty, gross - discount, discount])
                 for p, g in recipe.items():
-                    usage_theory[p][day] = usage_theory[p].get(day, 0) + qty * g
+                    # A semi-finished product is used up as its raw products.
+                    for raw, share in SEMI[p][4].items() if p in SEMI else ((p, 1.0),):
+                        usage_theory[raw][day] = usage_theory[raw].get(day, 0) + qty * g * share
 
         # Stock simulation per product: the shelf (real) and the books (theory).
         for p_code, p_name, category, unit, _shelf, base_price, supplier, loss in PRODUCTS:
@@ -401,6 +435,9 @@ def generate(seed: int = 42, restaurants: int = 12, start: date = START, end: da
 
                 shelf_stock -= real
                 book_stock -= t_use
+                moved = moves.get((code, p_code, day), 0.0)
+                shelf_stock += moved
+                book_stock += moved
 
                 # Write-offs: perishables spoil; some restaurants have planted habits.
                 rate = PERISHABLE_WRITE_OFF.get(p_code, 0.0)
@@ -483,6 +520,12 @@ def generate(seed: int = 42, restaurants: int = 12, start: date = START, end: da
         net.files[f"write_offs_{code}.csv"] = _csv(
             ["Дата", "Код товара", "Товар", "Количество", "Ед. изм.", "Причина"], write_off_rows
         )
+        # Both sides export their transfers: the sender's file counts, the receiver's shows them as incoming.
+        own_moves = [r for r in transfer_rows if code in (r[1], r[2])]
+        if own_moves:
+            net.files[f"transfers_{code}.csv"] = _csv(
+                ["Дата", "Откуда", "Куда", "Код товара", "Товар", "Количество", "Ед. изм."], own_moves
+            )
         net.files[f"inventory_counts_{code}.csv"] = _csv(
             ["Дата", "Код товара", "Товар", "Учетный остаток", "Фактический остаток", "Ед. изм."], count_rows
         )
@@ -503,7 +546,7 @@ def generate(seed: int = 42, restaurants: int = 12, start: date = START, end: da
 
 # Order in which the files are loaded: reference data first, then each restaurant's facts.
 REFERENCE_ORDER = ("restaurants", "products", "suppliers", "menu_items", "recipes")
-FACT_ORDER = ("sales", "receipts", "write_offs", "inventory_counts")
+FACT_ORDER = ("sales", "receipts", "transfers", "write_offs", "inventory_counts")
 
 
 def load_plan(net: DemoNetwork) -> list[tuple[str, str | None, str]]:
@@ -512,6 +555,7 @@ def load_plan(net: DemoNetwork) -> list[tuple[str, str | None, str]]:
     codes = sorted({name.rsplit("_", 1)[1].split(".")[0] for name in net.files if name.startswith("sales_")})
     for code in codes:
         for t in FACT_ORDER:
-            name = next(n for n in net.files if n.startswith(f"{t}_{code}."))
-            plan.append((t, code, name))
+            name = next((n for n in net.files if n.startswith(f"{t}_{code}.")), None)
+            if name:  # not every restaurant has transfers
+                plan.append((t, code, name))
     return plan
