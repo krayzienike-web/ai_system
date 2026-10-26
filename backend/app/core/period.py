@@ -2,7 +2,8 @@
 
 See docs/02-analytics-spec.md, "Период отчета". A period is either a preset resolved against "today"
 or an explicit inclusive date range. Weeks run Monday to Sunday, and presets end on the last full week,
-so a weekly number never mixes a finished and an unfinished week.
+so a weekly number never mixes a finished and an unfinished week. «Прошлый месяц» is the last full
+calendar month (Q11 in docs/open-questions.md: «с последней инвентаризации» is still to be decided).
 """
 
 from dataclasses import dataclass
@@ -20,6 +21,7 @@ class PeriodPreset(StrEnum):
     PREV_WEEK = "prev_week"  # the week before it
     FOUR_WEEKS = "4w"  # last 4 full weeks
     THIRTEEN_WEEKS = "13w"  # last 13 full weeks (a quarter)
+    MONTH = "month"  # last full calendar month
 
 
 class PeriodError(ValueError):
@@ -36,7 +38,11 @@ class Period:
         return (self.date_to - self.date_from).days + 1
 
     def previous(self) -> "Period":
-        """The period of the same length right before this one: the baseline for "better / worse"."""
+        """The period right before this one: the baseline for "better / worse".
+        A calendar month compares with the month before it, anything else with the same number of days."""
+        if self.date_from.day == 1 and (self.date_to + timedelta(days=1)).day == 1:
+            end = self.date_from - timedelta(days=1)
+            return Period(end.replace(day=1), end)
         return Period(self.date_from - timedelta(days=self.days), self.date_from - timedelta(days=1))
 
 
@@ -55,6 +61,9 @@ def resolve_period(
         raise PeriodError("Pass either a preset or dates, not both")
     if preset is None and date_from is None and date_to is None:
         preset = PeriodPreset.WEEK
+    if preset is PeriodPreset.MONTH:
+        end = today.replace(day=1) - timedelta(days=1)
+        return Period(end.replace(day=1), end)
     if preset is not None:
         end = last_full_week_end(today)
         weeks = {

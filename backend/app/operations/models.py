@@ -77,7 +77,8 @@ class WriteOff(_Fact, Base):
 
     product_id: Mapped[UUID] = mapped_column(ForeignKey("products.id", ondelete="RESTRICT"))
     qty: Mapped[Decimal] = mapped_column(QTY)
-    reason: Mapped[str | None] = mapped_column(String(200))
+    reason: Mapped[str | None] = mapped_column(String(200))  # as in the export
+    reason_code: Mapped[str] = mapped_column(String(50), default="other", server_default="other")
 
 
 class InventoryCount(_Fact, Base):

@@ -51,6 +51,9 @@ class Lookups:
     # Transfers name other restaurants a director cannot see: the database resolves one name at a time.
     resolve_restaurant: Callable[[str], UUID | None] = lambda _text: None
     own_restaurant_id: UUID | None = None  # the restaurant the file is uploaded for
+    # Write-off reason of the export → the network's reason code (norms); unknown ones become «other».
+    classify_reason: Callable[[str | None], str] = lambda _text: "other"
+    unknown_reasons: set[str] = field(default_factory=set)
 
 
 @dataclass
@@ -349,7 +352,16 @@ def _record(template: str, v: dict[str, Any], lk: Lookups, warn: list[str]) -> d
         qty = _to_base(v["qty"], v["unit"], product)
         if qty <= 0:
             raise _RowError("Количество", "количество списания должно быть больше нуля")
-        return {"day": v["day"], "product_id": product.id, "qty": qty, "reason": v["reason"]}
+        code = lk.classify_reason(v["reason"])
+        if code == "other" and v["reason"]:
+            lk.unknown_reasons.add(str(v["reason"]).strip())
+        return {
+            "day": v["day"],
+            "product_id": product.id,
+            "qty": qty,
+            "reason": v["reason"],
+            "reason_code": code,
+        }
     if template == "inventory_counts":
         product = _product(v, lk)
         actual = _to_base(v["actual_qty"], v["unit"], product)
@@ -402,6 +414,18 @@ def validate(template: Template, table: Table, lookups: Lookups, *, today: date)
         )
     if table.skipped_totals:
         warnings.append(Issue(None, None, f"пропущено строк итогов: {table.skipped_totals}"))
+    if lookups.unknown_reasons:
+        names = ", ".join(f"«{r}»" for r in sorted(lookups.unknown_reasons)[:5])
+        more = len(lookups.unknown_reasons) - 5
+        warnings.append(
+            Issue(
+                None,
+                "Причина",
+                f"причины не из справочника, учтены как «Прочее»: {names}"
+                + (f" и еще {more}" if more > 0 else "")
+                + ". Добавьте их в «Нормы и настройки»",
+            )
+        )
     if table.unmapped:
         warnings.append(Issue(None, None, "колонки не используются: " + ", ".join(table.unmapped)))
     days = [r["day"] for r in records if "day" in r] + waiting_days

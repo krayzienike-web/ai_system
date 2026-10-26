@@ -8,6 +8,7 @@ import app.catalog.models
 import app.experiments.models
 import app.imports.models
 import app.insights.models
+import app.norms.models
 import app.operations.models
 import app.tasks.models
 import app.tenancy.models  # noqa: F401

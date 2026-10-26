@@ -1,75 +1,356 @@
+import { Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
 
-import { Button, PageTitle, QuestionBlock, Reveal } from "../../ds/primitives";
+import { ApiError } from "../../api/client";
+import { useNorms, useSaveNorms } from "../../api/hooks";
+import type { Norms, ReasonKind, WriteOffReason } from "../../api/types";
+import {
+  Button,
+  PageTitle,
+  QuestionBlock,
+  Reveal,
+  Skeleton,
+} from "../../ds/primitives";
+import { useViewer } from "../../lib/useViewer";
 import { usePrototype } from "../../state/prototype";
 
-const CATEGORIES: { name: string; value: number; example: string }[] = [
-  { name: "Овощи и зелень", value: 3, example: "очистка, обрезка" },
-  { name: "Мясо и птица", value: 2, example: "зачистка, ужарка" },
-  { name: "Рыба", value: 2, example: "разделка" },
-  { name: "Молочные продукты и сыры", value: 2, example: "порционирование" },
-  { name: "Напитки", value: 1, example: "розлив" },
+const KINDS: { kind: ReasonKind; title: string }[] = [
+  { kind: "loss", title: "Потеря" },
+  { kind: "planned", title: "Плановый расход" },
+  { kind: "shortage", title: "Закрытие недостачи" },
 ];
 
+/** "3.00" → "3", "1.50" → "1,5": percentages as people write them. */
+const show = (v: string | undefined) =>
+  v === undefined ? "" : String(Number(v)).replace(".", ",");
+const send = (v: string) => v.trim().replace(",", ".");
+
+interface Draft {
+  food: string;
+  foodBy: Record<string, string>;
+  loss: string;
+  lossBy: Record<string, string>;
+  reasons: (WriteOffReason & { synonymsText: string })[];
+}
+
+const draftOf = (n: Norms): Draft => ({
+  food: show(n.food_cost_target_pct),
+  foodBy: Object.fromEntries(
+    Object.entries(n.food_cost_by_category).map(([k, v]) => [k, show(v)]),
+  ),
+  loss: show(n.loss_default_pct),
+  lossBy: Object.fromEntries(
+    Object.entries(n.loss_by_category).map(([k, v]) => [k, show(v)]),
+  ),
+  reasons: n.write_off_reasons.map((r) => ({
+    ...r,
+    synonymsText: r.synonyms.join(", "),
+  })),
+});
+
+const filled = (m: Record<string, string>) =>
+  Object.fromEntries(
+    Object.entries(m)
+      .filter(([, v]) => v.trim() !== "")
+      .map(([k, v]) => [k, send(v)]),
+  );
+
 export function SettingsPage() {
-  const { notify } = usePrototype();
-  const [tolerances, setTolerances] = useState(CATEGORIES.map((c) => c.value));
-  const [target, setTarget] = useState(30);
+  const norms = useNorms();
   return (
     <div className="mx-auto max-w-[760px] space-y-6">
-      <PageTitle title="Нормы и настройки" subtitle="По этим нормам су-шеф решает, что считать проблемой" />
+      <PageTitle
+        title="Нормы и настройки"
+        subtitle="По этим нормам су-шеф решает, что считать проблемой"
+      />
+      {norms.data ? (
+        // Re-mounts after a save, so the form always starts from what is stored.
+        <NormsForm key={JSON.stringify(norms.data)} norms={norms.data} />
+      ) : norms.isError ? (
+        <p className="text-loss">
+          Не получилось загрузить нормы. Обновите страницу
+        </p>
+      ) : (
+        <Skeleton className="h-64" />
+      )}
+    </div>
+  );
+}
+
+function PctInput({
+  value,
+  onChange,
+  label,
+  placeholder,
+  disabled,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  label: string;
+  placeholder?: string;
+  disabled: boolean;
+}) {
+  return (
+    <span className="inline-flex items-center gap-1">
+      <input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        inputMode="decimal"
+        aria-label={label}
+        placeholder={placeholder}
+        disabled={disabled}
+        className="num h-9 w-16 rounded-[10px] border border-line-strong bg-surface px-2 text-right outline-none focus:border-brand disabled:bg-paper"
+      />
+      <span className="text-ink-3">%</span>
+    </span>
+  );
+}
+
+function NormsForm({ norms }: { norms: Norms }) {
+  const viewer = useViewer();
+  const { notify } = usePrototype();
+  const save = useSaveNorms();
+  const [d, setD] = useState<Draft>(() => draftOf(norms));
+  const readOnly = !viewer?.isAdmin;
+  const lossCategories = [
+    ...new Set([
+      ...norms.product_categories,
+      ...Object.keys(norms.loss_by_category),
+    ]),
+  ].sort();
+  const foodCategories = [
+    ...new Set([
+      ...norms.menu_categories,
+      ...Object.keys(norms.food_cost_by_category),
+    ]),
+  ].sort();
+  const setReason = (i: number, patch: Partial<Draft["reasons"][number]>) =>
+    setD((x) => ({
+      ...x,
+      reasons: x.reasons.map((r, j) => (j === i ? { ...r, ...patch } : r)),
+    }));
+
+  const submit = () =>
+    save.mutate(
+      {
+        food_cost_target_pct: send(d.food),
+        food_cost_by_category: filled(d.foodBy),
+        loss_default_pct: send(d.loss),
+        loss_by_category: filled(d.lossBy),
+        write_off_reasons: d.reasons.map(({ synonymsText, ...r }) => ({
+          ...r,
+          synonyms: synonymsText
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean),
+        })),
+      },
+      {
+        onSuccess: () =>
+          notify("Нормы сохранены. Находки пересчитаются по новым нормам"),
+      },
+    );
+
+  return (
+    <>
+      {readOnly && (
+        <p className="rounded-[12px] bg-info-soft px-4 py-3 text-sm text-info">
+          Нормы меняет администратор управляющей компании. Здесь видно, по каким
+          значениям считаются находки.
+        </p>
+      )}
       <Reveal>
         <QuestionBlock
-          question="Сколько продукта можно терять сверх техкарты?"
-          answer="Если расход выше нормы на эту величину, су-шеф покажет проблему. Сейчас стоят отраслевые значения."
+          question="Какой фудкост вы считаете нормальным?"
+          answer="Блюда с фудкостом выше этой цифры су-шеф предложит пересмотреть по цене или техкарте. Для отдельных категорий меню можно задать свою цифру."
         >
-          <div className="space-y-5">
-            {CATEGORIES.map((c, i) => (
-              <div key={c.name}>
-                <div className="flex items-baseline justify-between">
-                  <label htmlFor={`tol-${i}`} className="font-medium">
-                    {c.name}
-                  </label>
-                  <span className="num font-display text-lg font-semibold">{tolerances[i]}%</span>
-                </div>
-                <input
-                  id={`tol-${i}`}
-                  type="range"
-                  min={0}
-                  max={8}
-                  step={0.5}
-                  value={tolerances[i]}
-                  onChange={(e) => setTolerances((t) => t.map((v, j) => (j === i ? Number(e.target.value) : v)))}
-                  className="mt-2 w-full accent-[#0a8f84]"
-                />
-                <div className="text-xs text-ink-3">Учитывает {c.example}</div>
-              </div>
-            ))}
+          <div className="flex items-center justify-between gap-3 border-b border-line pb-3">
+            <span className="font-medium">По всей сети</span>
+            <PctInput
+              value={d.food}
+              onChange={(food) => setD((x) => ({ ...x, food }))}
+              label="Целевой фудкост по сети"
+              disabled={readOnly}
+            />
           </div>
+          <ul className="mt-2 divide-y divide-line text-sm">
+            {foodCategories.map((c) => (
+              <li
+                key={c}
+                className="flex items-center justify-between gap-3 py-2"
+              >
+                <span>{c}</span>
+                <PctInput
+                  value={d.foodBy[c] ?? ""}
+                  onChange={(v) =>
+                    setD((x) => ({ ...x, foodBy: { ...x.foodBy, [c]: v } }))
+                  }
+                  label={`Целевой фудкост: ${c}`}
+                  placeholder={d.food}
+                  disabled={readOnly}
+                />
+              </li>
+            ))}
+          </ul>
+          <p className="mt-2 text-xs text-ink-3">Пустое поле — как по сети.</p>
         </QuestionBlock>
       </Reveal>
+
       <Reveal index={1}>
         <QuestionBlock
-          question="Какой фудкост вы считаете нормальным?"
-          answer="Блюда с фудкостом выше этой цифры су-шеф предложит пересмотреть по цене или техкарте."
+          question="Сколько продукта можно терять сверх техкарты?"
+          answer="Если расход выше нормы больше чем на эту величину, су-шеф покажет проблему. Учитывает очистку, зачистку, разделку и розлив."
         >
-          <div className="flex items-center gap-4">
-            <input
-              type="range"
-              min={20}
-              max={40}
-              value={target}
-              onChange={(e) => setTarget(Number(e.target.value))}
-              className="flex-1 accent-[#0a8f84]"
-              aria-label="Целевой фудкост"
+          <div className="flex items-center justify-between gap-3 border-b border-line pb-3">
+            <span className="font-medium">Остальные категории</span>
+            <PctInput
+              value={d.loss}
+              onChange={(loss) => setD((x) => ({ ...x, loss }))}
+              label="Допустимые потери по умолчанию"
+              disabled={readOnly}
             />
-            <span className="num font-display text-2xl font-semibold">{target}%</span>
           </div>
+          <ul className="mt-2 divide-y divide-line text-sm">
+            {lossCategories.map((c) => (
+              <li
+                key={c}
+                className="flex items-center justify-between gap-3 py-2"
+              >
+                <span>{c}</span>
+                <PctInput
+                  value={d.lossBy[c] ?? ""}
+                  onChange={(v) =>
+                    setD((x) => ({ ...x, lossBy: { ...x.lossBy, [c]: v } }))
+                  }
+                  label={`Допустимые потери: ${c}`}
+                  placeholder={d.loss}
+                  disabled={readOnly}
+                />
+              </li>
+            ))}
+          </ul>
+          <p className="mt-2 text-xs text-ink-3">
+            Пустое поле — значение для остальных категорий.
+          </p>
         </QuestionBlock>
       </Reveal>
-      <Button variant="primary" onClick={() => notify("Нормы сохранены. Находки пересчитаются за пару минут")}>
-        Сохранить нормы
-      </Button>
-    </div>
+
+      <Reveal index={2}>
+        <QuestionBlock
+          question="Какие причины списания вы используете?"
+          answer="Су-шеф сводит причины из выгрузок к этому списку. Сейчас стоит стандартный список — замените его причинами из регламента сети. Незнакомая причина попадает в «Прочее», а отчет о загрузке подскажет добавить ее сюда."
+        >
+          <ul className="space-y-3">
+            {d.reasons.map((r, i) => (
+              <li
+                key={r.code}
+                className="rounded-[12px] border border-line p-3"
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  <input
+                    value={r.title}
+                    onChange={(e) => setReason(i, { title: e.target.value })}
+                    aria-label="Причина"
+                    disabled={readOnly}
+                    className="h-9 min-w-[180px] flex-1 rounded-[10px] border border-line-strong bg-surface px-2 text-sm font-medium outline-none focus:border-brand disabled:bg-paper"
+                  />
+                  <select
+                    value={r.kind}
+                    onChange={(e) =>
+                      setReason(i, { kind: e.target.value as ReasonKind })
+                    }
+                    aria-label={`Вид: ${r.title}`}
+                    disabled={readOnly}
+                    className="h-9 rounded-[10px] border border-line-strong bg-surface px-2 text-sm outline-none focus:border-brand disabled:bg-paper"
+                  >
+                    {KINDS.map((k) => (
+                      <option key={k.kind} value={k.kind}>
+                        {k.title}
+                      </option>
+                    ))}
+                  </select>
+                  {!readOnly && r.code !== "other" && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setD((x) => ({
+                          ...x,
+                          reasons: x.reasons.filter((_, j) => j !== i),
+                        }))
+                      }
+                      aria-label={`Удалить причину ${r.title}`}
+                      className="grid h-9 w-9 place-items-center rounded-[10px] text-ink-3 hover:bg-loss-soft hover:text-loss"
+                    >
+                      <Trash2 size={15} />
+                    </button>
+                  )}
+                </div>
+                {r.code === "other" ? (
+                  <p className="mt-2 text-xs text-ink-3">
+                    Сюда попадает все, что не узнали. Удалить нельзя.
+                  </p>
+                ) : (
+                  <input
+                    value={r.synonymsText}
+                    onChange={(e) =>
+                      setReason(i, { synonymsText: e.target.value })
+                    }
+                    aria-label={`Как пишут в выгрузке: ${r.title}`}
+                    placeholder="Как пишут в выгрузке, через запятую"
+                    disabled={readOnly}
+                    className="mt-2 h-9 w-full rounded-[10px] border border-line bg-surface px-2 text-sm text-ink-2 outline-none focus:border-brand disabled:bg-paper"
+                  />
+                )}
+              </li>
+            ))}
+          </ul>
+          {!readOnly && (
+            <Button
+              size="sm"
+              className="mt-3"
+              onClick={() =>
+                setD((x) => ({
+                  ...x,
+                  reasons: [
+                    ...x.reasons.filter((r) => r.code !== "other"),
+                    {
+                      code: `custom-${Date.now()}`,
+                      title: "",
+                      kind: "loss",
+                      synonyms: [],
+                      synonymsText: "",
+                    },
+                    ...x.reasons.filter((r) => r.code === "other"),
+                  ],
+                }))
+              }
+            >
+              <Plus size={14} /> Добавить причину
+            </Button>
+          )}
+          <p className="mt-3 text-xs text-ink-3">
+            «Потеря» — деньги, которые можно вернуть. «Плановый расход» —
+            питание персонала, проработки: не потеря, но учитывается. «Закрытие
+            недостачи» — списание, которым закрывают минус после инвентаризации:
+            су-шеф проверит его отдельно.
+          </p>
+        </QuestionBlock>
+      </Reveal>
+
+      {!readOnly && (
+        <div className="flex flex-wrap items-center gap-3">
+          <Button variant="primary" onClick={submit} disabled={save.isPending}>
+            Сохранить нормы
+          </Button>
+          {save.isError && (
+            <span className="text-sm text-loss">
+              {save.error instanceof ApiError
+                ? save.error.message
+                : "Не получилось сохранить, попробуйте еще раз"}
+            </span>
+          )}
+        </div>
+      )}
+    </>
   );
 }

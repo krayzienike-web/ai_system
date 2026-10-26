@@ -11,6 +11,7 @@ from app.core.errors import RuleError
 from app.experiments.api import router as checks_router
 from app.imports.api import router as imports_router
 from app.insights.api import router as findings_router
+from app.norms.api import router as norms_router
 from app.reports.api import router as reports_router
 from app.tasks.api import router as tasks_router
 from app.tenancy.api import router as tenancy_router
@@ -46,6 +47,7 @@ def create_app() -> FastAPI:
     api.include_router(reports_router)
     api.include_router(imports_router)
     api.include_router(catalog_router)
+    api.include_router(norms_router)
     app.include_router(api)
     return app
 

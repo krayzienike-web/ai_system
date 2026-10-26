@@ -23,6 +23,20 @@ def test_presets_end_on_last_full_week(preset: PeriodPreset, expected: Period) -
     assert resolve_period(FRIDAY, preset) == expected
 
 
+def test_month_is_last_full_calendar_month() -> None:
+    month = resolve_period(FRIDAY, PeriodPreset.MONTH)
+    assert month == Period(date(2026, 9, 1), date(2026, 9, 30))
+    assert month.previous() == Period(date(2026, 8, 1), date(2026, 8, 31))
+    # On the last day of a month that month is still not over; January looks back to December.
+    assert resolve_period(date(2026, 10, 31), PeriodPreset.MONTH) == month
+    assert resolve_period(date(2027, 1, 5), PeriodPreset.MONTH) == Period(
+        date(2026, 12, 1), date(2026, 12, 31)
+    )
+    assert Period(date(2026, 3, 1), date(2026, 3, 31)).previous() == Period(
+        date(2026, 2, 1), date(2026, 2, 28)
+    )
+
+
 def test_default_is_last_full_week() -> None:
     assert resolve_period(FRIDAY) == Period(date(2026, 10, 12), date(2026, 10, 18))
 
@@ -66,5 +80,6 @@ def test_dependency_parses_query_and_rejects_bad_input() -> None:
         "to": "2026-10-18",
     }
     assert client.get("/p", params={"preset": "4w"}).status_code == 200
-    assert client.get("/p", params={"preset": "month"}).status_code == 422
+    assert client.get("/p", params={"preset": "month"}).json()["from"].endswith("-01")
+    assert client.get("/p", params={"preset": "quarter"}).status_code == 422
     assert client.get("/p", params={"date_from": "2026-10-18", "date_to": "2026-10-01"}).status_code == 422

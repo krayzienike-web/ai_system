@@ -19,6 +19,7 @@ from app.imports.models import BatchStatus, ImportBatch
 from app.imports.reader import detect_template, read_table
 from app.imports.templates import TEMPLATES, Scope, Template
 from app.imports.validate import Lookups, Ref, Result, validate
+from app.norms.service import load_norms
 from app.operations.models import InventoryCount, Receipt, Sale, Transfer, WriteOff
 from app.tenancy.audit import audit
 from app.tenancy.context import AccessContext
@@ -51,7 +52,11 @@ def load_lookups(session: Session, restaurant_id: UUID | None = None) -> Lookups
             ).scalar_one()
         return cache[text_value]
 
-    lk = Lookups(resolve_restaurant=resolve_restaurant, own_restaurant_id=restaurant_id)
+    lk = Lookups(
+        resolve_restaurant=resolve_restaurant,
+        own_restaurant_id=restaurant_id,
+        classify_reason=load_norms(session).classify,
+    )
     for p in session.execute(select(Product)).scalars():
         ref = Ref(p.id, p.name, p.base_unit, p.is_semi)
         lk.products[p.code] = ref

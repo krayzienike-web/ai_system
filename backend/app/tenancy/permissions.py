@@ -11,6 +11,7 @@ class Permission(StrEnum):
     DATA_UPLOAD = "data.upload"
     CATALOG_MANAGE = "catalog.manage"
     EXPERIMENTS_LAUNCH = "experiments.launch"  # launch or reject a proposed check
+    NORMS_MANAGE = "norms.manage"  # food-cost targets, loss allowances, write-off reasons
     TASKS_ASSIGN = "tasks.assign"  # set tasks for any restaurant of the network
     TASKS_EXECUTE = "tasks.execute"  # take tasks for one's own restaurant and report on them
     AI_CHAT = "ai.chat"

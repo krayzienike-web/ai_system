@@ -27,7 +27,12 @@ export interface Restaurant {
 
 // ------------------------------------------------------------------ data import (backend/app/imports)
 
-export type BatchStatus = "failed" | "needs_matching" | "validated" | "published" | "rolled_back";
+export type BatchStatus =
+  | "failed"
+  | "needs_matching"
+  | "validated"
+  | "published"
+  | "rolled_back";
 
 export interface ImportIssue {
   row: number | null;
@@ -99,5 +104,30 @@ export interface NameAlias {
 }
 
 export interface AffectedFiles {
-  affected_files: { id: string; filename: string; template: string; restaurant_id: string | null }[];
+  affected_files: {
+    id: string;
+    filename: string;
+    template: string;
+    restaurant_id: string | null;
+  }[];
+}
+
+export type ReasonKind = "loss" | "planned" | "shortage";
+
+export interface WriteOffReason {
+  code: string;
+  title: string;
+  kind: ReasonKind;
+  synonyms: string[]; // how the reason is written in exports
+}
+
+/** Norms of the network: what counts as a problem. Percentages come as decimal strings. */
+export interface Norms {
+  food_cost_target_pct: string;
+  food_cost_by_category: Record<string, string>;
+  loss_default_pct: string;
+  loss_by_category: Record<string, string>;
+  write_off_reasons: WriteOffReason[];
+  menu_categories: string[];
+  product_categories: string[];
 }
