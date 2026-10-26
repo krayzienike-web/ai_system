@@ -1,14 +1,18 @@
 from datetime import date
 from decimal import Decimal
-from typing import Annotated
+from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
+from app.analytics.verify import verify
 from app.core.deps import SessionDep, require
+from app.core.errors import ForbiddenError, NotFoundError
 from app.core.period import TodayDep
-from app.insights import service
+from app.insights import review, service
+from app.insights.models import Finding, ReviewStatus
+from app.insights.review import RejectReason, Verdict
 from app.insights.service import FindingWork
 from app.insights.work import WorkStage
 from app.tasks.api import TaskOut
@@ -45,6 +49,14 @@ class FindingOut(BaseModel):
     restaurant_id: UUID | None
     kind: str
     process: str
+    module: str | None
+    confidence: str | None
+    period_from: date | None
+    period_to: date | None
+    review_status: str | None  # null: made by hand; pending | confirmed | rejected
+    review_reason: str | None
+    review_note: str | None
+    reviewed_on: date | None
     title: str
     headline: str | None
     effect_rub_month: Decimal | None
@@ -67,6 +79,14 @@ def _out(fw: FindingWork) -> dict[str, object]:
         "restaurant_id": f.restaurant_id,
         "kind": f.kind,
         "process": f.process,
+        "module": f.module,
+        "confidence": f.confidence,
+        "period_from": f.period_from,
+        "period_to": f.period_to,
+        "review_status": f.review_status,
+        "review_reason": f.review_reason,
+        "review_note": f.review_note,
+        "reviewed_on": f.reviewed_on,
         "title": f.title,
         "headline": f.headline,
         "effect_rub_month": f.effect_rub_month,
@@ -86,9 +106,12 @@ def list_findings(
     stage: Annotated[WorkStage | None, Query()] = None,
     restaurant_id: Annotated[UUID | None, Query()] = None,
     late_only: Annotated[bool, Query()] = False,
+    review: Annotated[ReviewStatus | None, Query(description="Only findings in this review state")] = None,
 ) -> list[FindingOut]:
+    if review is not None and not ctx.can(Permission.FINDINGS_REVIEW):
+        raise ForbiddenError("Находки проверяет управляющая компания")
     items = service.list_findings(
-        session, today=today, stage=stage, restaurant_id=restaurant_id, late_only=late_only
+        session, today=today, stage=stage, restaurant_id=restaurant_id, late_only=late_only, review=review
     )
     return [FindingOut(**_out(fw)) for fw in items]
 
@@ -112,3 +135,31 @@ def get_finding(finding_id: UUID, ctx: CanRead, session: SessionDep, today: Toda
         else None
     )
     return FindingDetailOut(**_out(fw), tasks=[TaskOut.of(t, today) for t in fw.tasks], check=check)
+
+
+CanReview = Annotated[AccessContext, Depends(require(Permission.FINDINGS_REVIEW))]
+
+
+@router.get("/findings/{finding_id}/verification")
+def verification(finding_id: UUID, ctx: CanReview, session: SessionDep) -> dict[str, Any]:
+    """The finding computed again from the uploaded rows, step by step, with the rule that fired."""
+    finding = session.get(Finding, finding_id)
+    if finding is None:
+        raise NotFoundError("Finding not found")
+    return verify(session, finding)
+
+
+class ReviewIn(BaseModel):
+    verdict: Verdict
+    reason: RejectReason | None = None
+    note: str | None = Field(default=None, max_length=2000)
+
+
+@router.post("/findings/{finding_id}/review")
+def review_finding(
+    finding_id: UUID, body: ReviewIn, ctx: CanReview, session: SessionDep, today: TodayDep
+) -> FindingOut:
+    review.review(session, ctx, finding_id, body.verdict, reason=body.reason, note=body.note, today=today)
+    fw = service.get_finding(session, finding_id, today=today)
+    session.commit()
+    return FindingOut(**_out(fw))

@@ -28,6 +28,7 @@ class NormsIn(BaseModel):
     loss_default_pct: Decimal
     loss_by_category: dict[str, Decimal] = Field(default_factory=dict)
     write_off_reasons: list[ReasonIO] = Field(default_factory=list, max_length=100)
+    review_findings: bool = True  # engine findings are checked by HQ before directors see them
 
 
 class NormsOut(NormsIn):
@@ -46,6 +47,7 @@ def _out(norms: Norms, session: SessionDep) -> NormsOut:
             ReasonIO(code=r.code, title=r.title, kind=r.kind, synonyms=list(r.synonyms))
             for r in norms.reasons
         ],
+        review_findings=norms.review_findings,
         menu_categories=menu,
         product_categories=products,
     )

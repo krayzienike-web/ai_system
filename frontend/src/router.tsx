@@ -1,4 +1,11 @@
-import { createMemoryHistory, createRootRoute, createRoute, createRouter, Navigate, redirect } from "@tanstack/react-router";
+import {
+  createMemoryHistory,
+  createRootRoute,
+  createRoute,
+  createRouter,
+  Navigate,
+  redirect,
+} from "@tanstack/react-router";
 import type { ComponentType } from "react";
 
 import { DEMO, tokens } from "./api/client";
@@ -11,6 +18,7 @@ import { CheckPage, NewCheckPage } from "./app/hq/Checks";
 import { DecisionsPage } from "./app/hq/Decisions";
 import { NetworkPage } from "./app/hq/Network";
 import { ReportPage } from "./app/hq/Report";
+import { ReviewFindingPage, ReviewPage } from "./app/hq/Review";
 import { RestaurantPage, RestaurantsPage } from "./app/hq/Restaurants";
 import { SettingsPage } from "./app/hq/Settings";
 import { Shell } from "./app/Shell";
@@ -31,12 +39,22 @@ function Home() {
   const viewer = useViewer();
   if (!viewer) return null;
   if (viewer.isHq) return <NetworkPage />;
-  return viewer.restaurantCode ? <WeekView code={viewer.restaurantCode} /> : null;
+  return viewer.restaurantCode ? (
+    <WeekView code={viewer.restaurantCode} />
+  ) : null;
 }
 
 const rootRoute = createRootRoute();
-const loginRoute = createRoute({ getParentRoute: () => rootRoute, path: "/login", component: LoginPage });
-const designRoute = createRoute({ getParentRoute: () => rootRoute, path: "/design", component: DesignSystemPage });
+const loginRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/login",
+  component: LoginPage,
+});
+const designRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/design",
+  component: DesignSystemPage,
+});
 const appRoute = createRoute({
   getParentRoute: () => rootRoute,
   id: "app",
@@ -46,12 +64,36 @@ const appRoute = createRoute({
   },
 });
 
-const homeRoute = createRoute({ getParentRoute: () => appRoute, path: "/", component: Home });
-const findingsRoute = createRoute({ getParentRoute: () => appRoute, path: "/findings", component: FindingsPage });
-const findingRoute = createRoute({ getParentRoute: () => appRoute, path: "/findings/$findingId", component: FindingPage });
-const tasksRoute = createRoute({ getParentRoute: () => appRoute, path: "/tasks", component: TasksPage });
-const dataRoute = createRoute({ getParentRoute: () => appRoute, path: "/data", component: DataPage });
-const decisionsRoute = createRoute({ getParentRoute: () => appRoute, path: "/decisions", component: hqOnly(DecisionsPage) });
+const homeRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/",
+  component: Home,
+});
+const findingsRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/findings",
+  component: FindingsPage,
+});
+const findingRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/findings/$findingId",
+  component: FindingPage,
+});
+const tasksRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/tasks",
+  component: TasksPage,
+});
+const dataRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/data",
+  component: DataPage,
+});
+const decisionsRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/decisions",
+  component: hqOnly(DecisionsPage),
+});
 // Checks live inside findings now (each check is opened from its finding); the old list address leads there.
 const checksRoute = createRoute({
   getParentRoute: () => appRoute,
@@ -60,12 +102,46 @@ const checksRoute = createRoute({
     throw redirect({ to: "/findings" });
   },
 });
-const checkRoute = createRoute({ getParentRoute: () => appRoute, path: "/checks/$checkId", component: hqOnly(CheckPage) });
-const newCheckRoute = createRoute({ getParentRoute: () => appRoute, path: "/checks/new/$findingId", component: hqOnly(NewCheckPage) });
-const restaurantsRoute = createRoute({ getParentRoute: () => appRoute, path: "/restaurants", component: hqOnly(RestaurantsPage) });
-const restaurantRoute = createRoute({ getParentRoute: () => appRoute, path: "/restaurants/$code", component: hqOnly(RestaurantPage) });
-const reportRoute = createRoute({ getParentRoute: () => appRoute, path: "/report", component: hqOnly(ReportPage) });
-const settingsRoute = createRoute({ getParentRoute: () => appRoute, path: "/settings", component: hqOnly(SettingsPage) });
+const checkRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/checks/$checkId",
+  component: hqOnly(CheckPage),
+});
+const newCheckRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/checks/new/$findingId",
+  component: hqOnly(NewCheckPage),
+});
+const restaurantsRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/restaurants",
+  component: hqOnly(RestaurantsPage),
+});
+const restaurantRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/restaurants/$code",
+  component: hqOnly(RestaurantPage),
+});
+const reportRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/report",
+  component: hqOnly(ReportPage),
+});
+const reviewRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/review",
+  component: hqOnly(ReviewPage),
+});
+const reviewFindingRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/review/$findingId",
+  component: hqOnly(ReviewFindingPage),
+});
+const settingsRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/settings",
+  component: hqOnly(SettingsPage),
+});
 
 const routeTree = rootRoute.addChildren([
   loginRoute,
@@ -83,6 +159,8 @@ const routeTree = rootRoute.addChildren([
     restaurantsRoute,
     restaurantRoute,
     reportRoute,
+    reviewRoute,
+    reviewFindingRoute,
     settingsRoute,
   ]),
 ]);
@@ -93,7 +171,9 @@ export const router = createRouter({
   scrollRestoration: true,
   // An unknown address leads home instead of an empty "not found" page.
   defaultNotFoundComponent: () => <Navigate to="/" />,
-  ...(DEMO ? { history: createMemoryHistory({ initialEntries: ["/login"] }) } : {}),
+  ...(DEMO
+    ? { history: createMemoryHistory({ initialEntries: ["/login"] }) }
+    : {}),
 });
 
 declare module "@tanstack/react-router" {

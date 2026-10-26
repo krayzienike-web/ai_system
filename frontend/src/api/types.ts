@@ -128,6 +128,73 @@ export interface Norms {
   loss_default_pct: string;
   loss_by_category: Record<string, string>;
   write_off_reasons: WriteOffReason[];
+  review_findings: boolean; // engine findings wait for HQ's check before directors see them
   menu_categories: string[];
   product_categories: string[];
+}
+
+export type ReviewStatus = "pending" | "confirmed" | "rejected";
+export type RejectReason = "data" | "logic" | "false_alarm" | "other";
+
+/** A finding as the API returns it (engine findings carry module, period and review state). */
+export interface ApiFinding {
+  id: string;
+  restaurant_id: string | null; // null: network-wide
+  kind: "problem" | "opportunity";
+  process: string;
+  module: string | null;
+  confidence: "high" | "medium" | "low" | null;
+  period_from: string | null;
+  period_to: string | null;
+  review_status: ReviewStatus | null;
+  review_reason: RejectReason | null;
+  review_note: string | null;
+  reviewed_on: string | null;
+  title: string;
+  headline: string | null;
+  effect_rub_month: string | null;
+  effect_note: string | null;
+  actions: string[];
+  status: string;
+  found_on: string;
+}
+
+export interface VerificationStep {
+  id: string;
+  label: string;
+  value: string | null;
+  unit: string;
+  rows: Record<string, string | number | boolean | null>[];
+}
+
+/** A finding computed again from the uploaded rows: the steps, the rule that fired, the cross-checks. */
+export interface Verification {
+  module: string | null;
+  supported: boolean;
+  note?: string;
+  formula?: string;
+  object?: string;
+  restaurant?: string;
+  period?: [string | null, string | null];
+  steps?: VerificationStep[];
+  result?: { label: string; value: string | null; unit: string }[];
+  rules?: { rule: string; value: string; threshold: string; passed: boolean }[];
+  checks?: { check: string; ok: boolean; note?: string | null }[];
+  history?: {
+    from: string;
+    to: string;
+    share: string;
+    theory: string;
+    actual: string;
+    write_off: string;
+    unit_cost: string | null;
+  }[];
+  interpretation?: string[];
+}
+
+export interface AnalyticsRun {
+  created: number;
+  updated: number;
+  removed: number;
+  drafts: number;
 }

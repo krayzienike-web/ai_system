@@ -1,5 +1,10 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { Link, Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
+import {
+  Link,
+  Outlet,
+  useNavigate,
+  useRouterState,
+} from "@tanstack/react-router";
 import {
   Building2,
   CalendarRange,
@@ -12,6 +17,7 @@ import {
   LogOut,
   type LucideIcon,
   Settings,
+  ShieldCheck,
   Sparkles,
 } from "lucide-react";
 import { motion } from "motion/react";
@@ -28,31 +34,92 @@ import { PeriodPicker } from "./PeriodPicker";
 import { usePrototype } from "../state/prototype";
 import { ChatDrawer } from "./chat/ChatDrawer";
 import { useInboxCount, useOpenTaskCount } from "./counts";
+import { useReviewCount } from "./hq/Review";
 
 interface NavItem {
   to: string;
   title: string;
   short: string; // label in the phone tab bar
   Icon: LucideIcon;
-  badge?: "tasks" | "inbox";
+  badge?: "tasks" | "inbox" | "review";
   mobile?: boolean; // shown in the phone tab bar
 }
 
 const DIRECTOR_NAV: NavItem[] = [
-  { to: "/", title: "Моя неделя", short: "Неделя", Icon: CalendarRange, mobile: true },
-  { to: "/tasks", title: "Задачи", short: "Задачи", Icon: ListChecks, badge: "tasks", mobile: true },
-  { to: "/findings", title: "Все находки", short: "Находки", Icon: Lightbulb, mobile: true },
+  {
+    to: "/",
+    title: "Моя неделя",
+    short: "Неделя",
+    Icon: CalendarRange,
+    mobile: true,
+  },
+  {
+    to: "/tasks",
+    title: "Задачи",
+    short: "Задачи",
+    Icon: ListChecks,
+    badge: "tasks",
+    mobile: true,
+  },
+  {
+    to: "/findings",
+    title: "Все находки",
+    short: "Находки",
+    Icon: Lightbulb,
+    mobile: true,
+  },
   { to: "/data", title: "Данные", short: "Данные", Icon: Database },
 ];
 
 const HQ_NAV: NavItem[] = [
-  { to: "/", title: "Сеть", short: "Сеть", Icon: LayoutDashboard, mobile: true },
-  { to: "/decisions", title: "Ждут решения", short: "Решения", Icon: Inbox, badge: "inbox", mobile: true },
-  { to: "/findings", title: "Находки", short: "Находки", Icon: Lightbulb, mobile: true },
-  { to: "/restaurants", title: "Рестораны", short: "Рестораны", Icon: Building2 },
-  { to: "/report", title: "Отчет для руководителя", short: "Отчет", Icon: FileBarChart },
+  {
+    to: "/",
+    title: "Сеть",
+    short: "Сеть",
+    Icon: LayoutDashboard,
+    mobile: true,
+  },
+  {
+    to: "/decisions",
+    title: "Ждут решения",
+    short: "Решения",
+    Icon: Inbox,
+    badge: "inbox",
+    mobile: true,
+  },
+  {
+    to: "/findings",
+    title: "Находки",
+    short: "Находки",
+    Icon: Lightbulb,
+    mobile: true,
+  },
+  {
+    to: "/review",
+    title: "Проверка находок",
+    short: "Проверка",
+    Icon: ShieldCheck,
+    badge: "review",
+  },
+  {
+    to: "/restaurants",
+    title: "Рестораны",
+    short: "Рестораны",
+    Icon: Building2,
+  },
+  {
+    to: "/report",
+    title: "Отчет для руководителя",
+    short: "Отчет",
+    Icon: FileBarChart,
+  },
   { to: "/data", title: "Данные", short: "Данные", Icon: Database },
-  { to: "/settings", title: "Нормы и настройки", short: "Настройки", Icon: Settings },
+  {
+    to: "/settings",
+    title: "Нормы и настройки",
+    short: "Настройки",
+    Icon: Settings,
+  },
 ];
 
 function Badge({ count }: { count: number }) {
@@ -76,7 +143,13 @@ export function Shell() {
   const queryClient = useQueryClient();
   const { openChat } = usePrototype();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
-  const counts = { tasks: useOpenTaskCount(), inbox: useInboxCount() };
+  const counts = {
+    tasks: useOpenTaskCount(),
+    inbox: useInboxCount(),
+    review: useReviewCount(
+      me?.role === "hq_admin" || me?.role === "hq_analyst",
+    ),
+  };
 
   function logout() {
     tokens.clear();
@@ -103,7 +176,8 @@ export function Shell() {
   if (!me) return null;
   const isDirector = me.role === "restaurant_director";
   const nav = isDirector ? DIRECTOR_NAV : HQ_NAV;
-  const isActive = (to: string) => (to === "/" ? pathname === "/" : pathname.startsWith(to));
+  const isActive = (to: string) =>
+    to === "/" ? pathname === "/" : pathname.startsWith(to);
 
   return (
     <div className="min-h-screen">
@@ -112,8 +186,12 @@ export function Shell() {
         <div className="px-5 pt-5 pb-6">
           <span className="inline-flex items-center gap-2.5">
             <LogoMark inverted />
-            <span className="font-display text-[17px] font-semibold tracking-tight">SousChef</span>
-            <span className="rounded-md border border-white/25 px-1 py-px text-[10px] font-semibold">AI</span>
+            <span className="font-display text-[17px] font-semibold tracking-tight">
+              SousChef
+            </span>
+            <span className="rounded-md border border-white/25 px-1 py-px text-[10px] font-semibold">
+              AI
+            </span>
           </span>
         </div>
         <nav className="flex-1 space-y-0.5 px-3" aria-label="Основное меню">
@@ -123,7 +201,9 @@ export function Shell() {
               to={to}
               className={cx(
                 "relative flex items-center gap-3 rounded-[10px] px-3 py-2.5 text-sm transition-colors",
-                isActive(to) ? "text-white" : "text-white/65 hover:bg-white/5 hover:text-white",
+                isActive(to)
+                  ? "text-white"
+                  : "text-white/65 hover:bg-white/5 hover:text-white",
               )}
             >
               {isActive(to) && (
@@ -145,8 +225,13 @@ export function Shell() {
         </nav>
         <div className="m-3 rounded-[14px] bg-white/5 p-4">
           <div className="text-sm font-medium">{me.full_name}</div>
-          <div className="text-xs text-white/60">{me.restaurant ? me.restaurant.name : ROLE_LABELS[me.role]}</div>
-          <button onClick={logout} className="mt-3 inline-flex items-center gap-1.5 text-xs text-white/60 hover:text-white">
+          <div className="text-xs text-white/60">
+            {me.restaurant ? me.restaurant.name : ROLE_LABELS[me.role]}
+          </div>
+          <button
+            onClick={logout}
+            className="mt-3 inline-flex items-center gap-1.5 text-xs text-white/60 hover:text-white"
+          >
             <LogOut size={13} /> Выйти
           </button>
         </div>
@@ -162,7 +247,11 @@ export function Shell() {
             <PeriodPicker />
             <div className="hidden min-w-0 items-center gap-2 text-sm text-ink-2 md:flex">
               <span>данные обновлены {PERIOD.dataUntil.slice(0, 5)}</span>
-              {DEMO && <span className="rounded-full bg-spark/25 px-2 py-0.5 text-[11px] font-medium text-ink">Прототип · демо-данные</span>}
+              {DEMO && (
+                <span className="rounded-full bg-spark/25 px-2 py-0.5 text-[11px] font-medium text-ink">
+                  Прототип · демо-данные
+                </span>
+              )}
             </div>
             <button
               type="button"
@@ -171,9 +260,15 @@ export function Shell() {
             >
               <Sparkles size={15} className="text-brand" />
               <span>Спросить су-шефа</span>
-              <kbd className="hidden rounded-md bg-paper px-1.5 py-0.5 text-[11px] text-ink-3 sm:inline">Ctrl K</kbd>
+              <kbd className="hidden rounded-md bg-paper px-1.5 py-0.5 text-[11px] text-ink-3 sm:inline">
+                Ctrl K
+              </kbd>
             </button>
-            <button onClick={logout} className="text-ink-3 hover:text-ink lg:hidden" aria-label="Выйти">
+            <button
+              onClick={logout}
+              className="text-ink-3 hover:text-ink lg:hidden"
+              aria-label="Выйти"
+            >
               <LogOut size={18} />
             </button>
           </div>
@@ -187,7 +282,9 @@ export function Shell() {
       {/* Phone tab bar */}
       <nav
         className="fixed inset-x-0 bottom-0 z-30 grid border-t border-line bg-surface/95 pb-[env(safe-area-inset-bottom)] backdrop-blur lg:hidden"
-        style={{ gridTemplateColumns: `repeat(${nav.filter((n) => n.mobile).length + 1}, 1fr)` }}
+        style={{
+          gridTemplateColumns: `repeat(${nav.filter((n) => n.mobile).length + 1}, 1fr)`,
+        }}
         aria-label="Меню"
       >
         {nav
@@ -196,7 +293,10 @@ export function Shell() {
             <Link
               key={to}
               to={to}
-              className={cx("relative flex flex-col items-center gap-0.5 py-2 text-[11px]", isActive(to) ? "text-brand-strong" : "text-ink-3")}
+              className={cx(
+                "relative flex flex-col items-center gap-0.5 py-2 text-[11px]",
+                isActive(to) ? "text-brand-strong" : "text-ink-3",
+              )}
             >
               <Icon size={20} strokeWidth={1.75} />
               {short}
@@ -211,10 +311,16 @@ export function Shell() {
           to={isDirector ? "/data" : "/restaurants"}
           className={cx(
             "flex flex-col items-center gap-0.5 py-2 text-[11px]",
-            isActive(isDirector ? "/data" : "/restaurants") ? "text-brand-strong" : "text-ink-3",
+            isActive(isDirector ? "/data" : "/restaurants")
+              ? "text-brand-strong"
+              : "text-ink-3",
           )}
         >
-          {isDirector ? <Database size={20} strokeWidth={1.75} /> : <Building2 size={20} strokeWidth={1.75} />}
+          {isDirector ? (
+            <Database size={20} strokeWidth={1.75} />
+          ) : (
+            <Building2 size={20} strokeWidth={1.75} />
+          )}
           {isDirector ? "Данные" : "Рестораны"}
         </Link>
       </nav>

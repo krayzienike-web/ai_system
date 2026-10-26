@@ -12,6 +12,11 @@ import type {
   NameAlias,
   Restaurant,
   Norms,
+  AnalyticsRun,
+  ApiFinding,
+  RejectReason,
+  ReviewStatus,
+  Verification,
 } from "./types";
 
 export const useMe = () =>
@@ -143,5 +148,48 @@ export function useSaveNorms() {
         body: JSON.stringify(norms),
       }),
     onSuccess: (saved) => client.setQueryData(["norms"], saved),
+  });
+}
+
+// ------------------------------------------------------------------ review of engine findings
+
+export const useReviewFindings = (status: ReviewStatus, enabled = true) =>
+  useQuery({
+    queryKey: ["review", status],
+    queryFn: () => api<ApiFinding[]>(`/findings?review=${status}`),
+    enabled,
+  });
+
+export const useVerification = (id: string) =>
+  useQuery({
+    queryKey: ["verification", id],
+    queryFn: () => api<Verification>(`/findings/${id}/verification`),
+  });
+
+export function useReviewFinding() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      id,
+      ...body
+    }: {
+      id: string;
+      verdict: "confirm" | "reject" | "reopen";
+      reason?: RejectReason;
+      note?: string;
+    }) =>
+      api<ApiFinding>(`/findings/${id}/review`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+    onSuccess: () => client.invalidateQueries({ queryKey: ["review"] }),
+  });
+}
+
+export function useRunAnalytics() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: () => api<AnalyticsRun>("/analytics/run", { method: "POST" }),
+    onSuccess: () => client.invalidateQueries({ queryKey: ["review"] }),
   });
 }

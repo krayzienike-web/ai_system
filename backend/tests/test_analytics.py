@@ -1,0 +1,228 @@
+"""Analytics engine: M1 arithmetic, decision rules, a full run on the demo network, manual review."""
+
+from datetime import date, timedelta
+from decimal import Decimal
+from uuid import UUID, uuid4
+
+import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy import Engine, select
+from sqlalchemy.orm import Session
+
+from app.analytics import engine, m1
+from app.analytics.costs import CostBook
+from app.analytics.facts import (
+    CountRow,
+    Facts,
+    MenuInfo,
+    ProductInfo,
+    ReceiptRow,
+    SaleRow,
+    TransferRow,
+    WriteOffRow,
+)
+from app.analytics.usage import Usage
+from app.catalog.recipes import Line
+from app.core.db import get_sessionmaker
+from app.core.period import get_today
+from app.core.security import hash_password
+from app.demo.generator import generate
+from app.demo.loader import load
+from app.insights.models import Finding
+from app.main import app
+from app.norms.service import Norms
+from app.tenancy.context import load_access_context
+from app.tenancy.models import Restaurant, Role, RoleAssignment, User
+from tests.conftest import PASSWORD, Network, login
+
+D0, D1 = date(2026, 8, 3), date(2026, 10, 1)
+
+
+def _facts(restaurants: int = 1) -> tuple[Facts, list[UUID], UUID, UUID]:
+    f = Facts()
+    rs = [uuid4() for _ in range(restaurants)]
+    f.restaurants = {r: f"R{i + 1:02d}" for i, r in enumerate(rs)}
+    cheese, sauce, pizza = uuid4(), uuid4(), uuid4()
+    f.products = {
+        cheese: ProductInfo("P01", "Сыр", "Сыры", "kg", 10, False),
+        sauce: ProductInfo("P17", "Соус (п/ф)", "Заготовки", "kg", 2, True),
+    }
+    f.menu = {pizza: MenuInfo("M01", "Пицца", "Пицца", Decimal(580))}
+    # A pizza: 0.1 kg of cheese directly and 0.05 kg of sauce, the sauce being 0.2 kg of cheese per kg.
+    f.recipe_lines = [
+        Line(pizza, cheese, Decimal("0.1"), date(2026, 1, 1)),
+        Line(pizza, sauce, Decimal("0.05"), date(2026, 1, 1)),
+        Line(sauce, cheese, Decimal("0.2"), date(2026, 1, 1)),
+    ]
+    return f, rs, cheese, pizza
+
+
+def test_m1_arithmetic_with_semi_finished_products_transfers_and_write_offs() -> None:
+    f, (r,), cheese, pizza = _facts()
+    other = uuid4()
+    f.sales = [SaleRow(r, D0 + timedelta(days=i), pizza, Decimal(10), Decimal(5800)) for i in range(1, 21)]
+    # 200 pizzas × (0.1 + 0.05 × 0.2) = 22 kg by the recipes.
+    f.receipts = [
+        ReceiptRow(r, D0 + timedelta(days=5), cheese, None, Decimal(20), Decimal(12000)),
+        ReceiptRow(r, D0 + timedelta(days=9), cheese, None, Decimal(10), Decimal(6600)),
+        ReceiptRow(r, D0, cheese, None, Decimal(99), Decimal(1)),  # the day of the opening count: before it
+    ]
+    f.transfers = [
+        TransferRow(other, r, D0 + timedelta(days=3), cheese, Decimal(2)),
+        TransferRow(r, other, D0 + timedelta(days=4), cheese, Decimal(1)),
+    ]
+    f.write_offs = [WriteOffRow(r, D0 + timedelta(days=7), cheese, Decimal(1), "spoilage")]
+    f.counts = [CountRow(r, D0, cheese, None, Decimal(5)), CountRow(r, D1, cheese, None, Decimal(8))]
+
+    (row,) = m1.rows(f, Usage(f), CostBook(f.receipts))
+    assert row.theory == Decimal("22.000")
+    assert row.actual == Decimal(5 + 30 + 2 - 1 - 8)  # 28
+    assert row.write_off == 1
+    assert row.unexplained == Decimal(5)
+    assert row.share == Decimal(5) / Decimal(22)
+    assert row.unit_cost == Decimal(18600) / 30  # weighted by quantity: 620 ₽/kg
+    assert row.rub == Decimal(3100)
+
+
+def _row(r: UUID, product: UUID, share: str, theory: str = "500", cost: str = "600") -> m1.M1Row:
+    t = Decimal(theory)
+    return m1.M1Row(r, product, D0, D1, t, t * (1 + Decimal(share)), Decimal(0), Decimal(cost))
+
+
+def test_m1_rules_network_pattern_outlier_and_materiality() -> None:
+    f, rs, cheese, _ = _facts(restaurants=10)
+    norms = Norms()  # «Сыры»: 1.5 %
+    # Everyone at ~2 % (normal), R01 at 11 %: only R01 is a problem, measured against the network median.
+    rows = [_row(r, cheese, "0.02") for r in rs[1:]] + [_row(rs[0], cheese, "0.11")]
+    (d,) = m1.detect(f, rows, norms)
+    assert d.key == "M1:R01:P01" and d.restaurant == rs[0]
+    # (11 % − 2 %) × 500 kg × 600 ₽ over 60 days → per 30 days
+    assert d.effect_rub_month == Decimal(13729)
+
+    # A small kitchen with the same 11 %: under the materiality threshold, not worth a director's time.
+    small = [_row(r, cheese, "0.02") for r in rs[1:]] + [_row(rs[0], cheese, "0.11", theory="5")]
+    assert m1.detect(f, small, norms) == []
+
+    # Everyone 7–8 % over: the recipe is wrong, not the kitchens — one network finding, no restaurant ones.
+    same = [_row(r, cheese, f"0.0{7 + i % 2}") for i, r in enumerate(rs)]
+    (net,) = m1.detect(f, same, norms)
+    assert net.key == "M1:net:P01" and net.restaurant is None and net.effect_rub_month is None
+
+
+@pytest.fixture
+def demo(network: Network, owner_engine: Engine) -> dict[str, UUID]:
+    """The 12-restaurant demo network loaded into tenant A, plus a director for its R01."""
+    with get_sessionmaker()() as session:
+        ctx = load_access_context(session, network.a.users["admin@a.ru"], network.a.id)
+        assert ctx is not None
+        load(session, ctx, generate(seed=42), today=date(2026, 10, 19))
+        session.commit()
+    with Session(owner_engine) as s, s.begin():
+        r01 = s.execute(select(Restaurant.id).where(Restaurant.code == "R01")).scalar_one()
+        user = User(
+            tenant_id=network.a.id, email="r01@a.ru", full_name="R01", password_hash=hash_password(PASSWORD)
+        )
+        s.add(user)
+        s.flush()
+        s.add(
+            RoleAssignment(
+                tenant_id=network.a.id, user_id=user.id, role=Role.RESTAURANT_DIRECTOR, restaurant_id=r01
+            )
+        )
+    return {"R01": r01}
+
+
+def test_engine_finds_planted_problems_and_review_gates_directors(
+    client: TestClient, network: Network, demo: dict[str, UUID]
+) -> None:
+    app.dependency_overrides[get_today] = lambda: date(2026, 10, 20)
+    try:
+        hq, analyst, director = (
+            login(client, "admin@a.ru"),
+            login(client, "analyst@a.ru"),
+            login(client, "r01@a.ru"),
+        )
+        assert client.post("/api/analytics/run", headers=analyst).status_code == 403
+        run = client.post("/api/analytics/run", headers=hq).json()
+        assert run["created"] == 3
+        # Idempotent: the same data gives the same findings, updated in place.
+        assert client.post("/api/analytics/run", headers=hq).json() | {} == {
+            "created": 0,
+            "updated": 3,
+            "removed": 0,
+            "drafts": 3,
+        }
+
+        pending = client.get("/api/findings", headers=hq, params={"review": "pending"}).json()
+        by_key = {(f["module"], f["title"]): f for f in pending}
+        assert len(pending) == 3 and all(f["review_status"] == "pending" for f in pending)
+        assert {t for _, t in by_key} == {
+            "Перерасход по техкарте: Сыр Моцарелла",
+            "Перерасход по техкарте: Лосось охлажденный",
+            "Техкарта, вероятно, устарела: Картофель фри замороженный",
+        }
+        # Not checked yet: not in the working lists, invisible to the director.
+        assert client.get("/api/findings", headers=hq).json() == []
+        assert client.get("/api/findings", headers=director).json() == []
+        assert client.get("/api/findings", headers=director, params={"review": "pending"}).status_code == 403
+
+        moz = by_key[("M1", "Перерасход по техкарте: Сыр Моцарелла")]
+        v = client.get(f"/api/findings/{moz['id']}/verification", headers=analyst).json()
+        assert all(c["ok"] for c in v["checks"]) and all(r["passed"] for r in v["rules"])
+        assert [s["id"] for s in v["steps"]] == [
+            "opening",
+            "receipts",
+            "transfers",
+            "closing",
+            "theory",
+            "write_offs",
+        ]
+        assert any(row["file"] == "receipts_R01.csv" for row in v["steps"][1]["rows"])
+        assert client.get(f"/api/findings/{moz['id']}/verification", headers=director).status_code == 403
+
+        url = f"/api/findings/{moz['id']}/review"
+        assert client.post(url, headers=analyst, json={"verdict": "reject"}).status_code == 422  # why?
+        assert (
+            client.post(url, headers=analyst, json={"verdict": "confirm"}).json()["review_status"]
+            == "confirmed"
+        )
+        assert client.post(url, headers=director, json={"verdict": "reopen"}).status_code == 403
+        assert [f["id"] for f in client.get("/api/findings", headers=director).json()] == [moz["id"]]
+
+        fries = by_key[("M1", "Техкарта, вероятно, устарела: Картофель фри замороженный")]
+        rejected = client.post(
+            f"/api/findings/{fries['id']}/review",
+            headers=hq,
+            json={"verdict": "reject", "reason": "false_alarm", "note": "Знаем, техкарту уже меняем"},
+        ).json()
+        assert rejected["review_status"] == "rejected" and rejected["review_reason"] == "false_alarm"
+        # A re-run keeps the reviewers' decisions.
+        client.post("/api/analytics/run", headers=hq)
+        assert {
+            f["review_status"]
+            for f in client.get("/api/findings", headers=hq, params={"review": "rejected"}).json()
+        } == {"rejected"}
+        assert [f["id"] for f in client.get("/api/findings", headers=director).json()] == [moz["id"]]
+    finally:
+        app.dependency_overrides.pop(get_today, None)
+
+
+def test_review_can_be_switched_off(client: TestClient, network: Network, demo: dict[str, UUID]) -> None:
+    hq = login(client, "admin@a.ru")
+    body = client.get("/api/settings/norms", headers=hq).json()
+    assert body["review_findings"] is True
+    client.put("/api/settings/norms", headers=hq, json={**body, "review_findings": False})
+    client.post("/api/analytics/run", headers=hq)
+    director = login(client, "r01@a.ru")
+    assert [f["title"] for f in client.get("/api/findings", headers=director).json()] == [
+        "Перерасход по техкарте: Сыр Моцарелла"
+    ]
+
+
+def test_engine_run_is_hq_admin_only(network: Network) -> None:
+    with get_sessionmaker()() as session:
+        ctx = load_access_context(session, network.a.users["director1@a.ru"], network.a.id)
+        assert ctx is not None
+        with pytest.raises(Exception, match="администратор"):
+            engine.run(session, ctx, date(2026, 10, 20))
+        assert session.execute(select(Finding)).scalars().all() == []

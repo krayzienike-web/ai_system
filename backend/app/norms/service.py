@@ -36,6 +36,7 @@ class Norms:
     reasons: list[Reason] = field(
         default_factory=lambda: [Reason(c, t, k, tuple(s)) for c, t, k, s in defaults.WRITE_OFF_REASONS]
     )
+    review_findings: bool = True  # engine findings wait for a manual check before directors see them
 
     def food_cost_target(self, menu_category: str | None) -> Decimal:
         return self.food_cost_by_category.get(menu_category or "", self.food_cost_target_pct)
@@ -67,6 +68,7 @@ def load_norms(session: Session) -> Norms:
             Reason(r["code"], r["title"], r["kind"], tuple(r["synonyms"])) for r in row.write_off_reasons
         ]
         or Norms().reasons,
+        review_findings=row.review_findings,
     )
 
 
@@ -118,6 +120,7 @@ def save_norms(session: Session, ctx: AccessContext, body: dict[str, Any]) -> No
     row.loss_default_pct = loss
     row.loss_by_category = {k: str(v) for k, v in loss_by.items()}
     row.write_off_reasons = reasons
+    row.review_findings = bool(body.get("review_findings", True))
     row.updated_by = str(ctx.user_id)
     session.flush()
     audit(

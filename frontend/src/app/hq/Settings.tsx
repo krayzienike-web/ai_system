@@ -31,6 +31,7 @@ interface Draft {
   loss: string;
   lossBy: Record<string, string>;
   reasons: (WriteOffReason & { synonymsText: string })[];
+  review: boolean;
 }
 
 const draftOf = (n: Norms): Draft => ({
@@ -46,6 +47,7 @@ const draftOf = (n: Norms): Draft => ({
     ...r,
     synonymsText: r.synonyms.join(", "),
   })),
+  review: n.review_findings,
 });
 
 const filled = (m: Record<string, string>) =>
@@ -144,6 +146,7 @@ function NormsForm({ norms }: { norms: Norms }) {
             .map((s) => s.trim())
             .filter(Boolean),
         })),
+        review_findings: d.review,
       },
       {
         onSuccess: () =>
@@ -334,6 +337,34 @@ function NormsForm({ norms }: { norms: Norms }) {
             недостачи» — списание, которым закрывают минус после инвентаризации:
             су-шеф проверит его отдельно.
           </p>
+        </QuestionBlock>
+      </Reveal>
+
+      <Reveal index={3}>
+        <QuestionBlock
+          question="Проверять находки вручную перед показом директорам?"
+          answer="Пока движок новый, каждую находку сначала сверяют с загруженными данными на экране «Проверка находок». Директор видит только подтвержденные."
+        >
+          <label className="flex items-start gap-3 text-sm">
+            <input
+              type="checkbox"
+              checked={d.review}
+              disabled={readOnly}
+              onChange={(e) =>
+                setD((x) => ({ ...x, review: e.target.checked }))
+              }
+              className="mt-0.5 h-4 w-4 accent-[#0a8f84]"
+            />
+            <span>
+              <span className="font-medium">
+                Да, сначала проверяет управляющая компания
+              </span>
+              <span className="block text-ink-3">
+                Если выключить, новые находки сразу попадут директорам. Уже
+                проверенные останутся как есть.
+              </span>
+            </span>
+          </label>
         </QuestionBlock>
       </Reveal>
 

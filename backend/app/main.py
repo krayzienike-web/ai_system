@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
+from app.analytics.api import router as analytics_router
 from app.auth.api import router as auth_router
 from app.catalog.api import router as catalog_router
 from app.core.config import get_settings
@@ -48,6 +49,7 @@ def create_app() -> FastAPI:
     api.include_router(imports_router)
     api.include_router(catalog_router)
     api.include_router(norms_router)
+    api.include_router(analytics_router)
     app.include_router(api)
     return app
 

@@ -72,6 +72,7 @@ let norms: Norms = {
     ]),
     reason("other", "Прочее", "loss", []),
   ],
+  review_findings: true,
   menu_categories: [
     "Горячее",
     "Десерты",
@@ -137,6 +138,7 @@ export function demoNorms(init: RequestInit, isAdmin: boolean): Norms {
     food_cost_by_category: map(body.food_cost_by_category, 5, 80, "Фудкост"),
     loss_default_pct: pct(body.loss_default_pct, 0, 30, "Допустимые потери"),
     loss_by_category: map(body.loss_by_category, 0, 30, "Потери"),
+    review_findings: body.review_findings,
     write_off_reasons: [
       ...body.write_off_reasons.map((r) => ({
         ...r,

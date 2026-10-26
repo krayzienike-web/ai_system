@@ -383,7 +383,9 @@ def generate(seed: int = 42, restaurants: int = 12, start: date = START, end: da
                 continue
             deliveries = SUPPLIER[supplier][3]
             shelf_stock = book_stock = avg * 3
-            count_rows.append([start, p_code, p_name, _q(book_stock), _q(shelf_stock), unit_title[unit]])
+            # The opening count is taken the evening before the first day, like every count (end of day).
+            opening = start - timedelta(days=1)
+            count_rows.append([opening, p_code, p_name, _q(book_stock), _q(shelf_stock), unit_title[unit]])
             doc = 0
             pending_write_off = 0.0
             for day in days:

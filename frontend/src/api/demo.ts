@@ -13,6 +13,7 @@ import {
   demoUpload,
 } from "./demoImports";
 import { demoNorms } from "./demoNorms";
+import { demoReview } from "./demoReview";
 import type { Me, Restaurant, Role } from "./types";
 
 export const DEMO_PASSWORD = "demo12345";
@@ -107,6 +108,16 @@ export function demoRequest(
     return demoUpload(init.body as FormData);
   if (path === "/imports") return demoBatches(own);
   if (path === "/catalog/product") return DEMO_PRODUCTS;
+  if (
+    path === "/analytics/run" ||
+    /^\/findings(\?review=|\/[^/]+\/(verification|review)$)/.test(path)
+  )
+    return demoReview(
+      path,
+      init,
+      viewer.role !== "restaurant_director",
+      viewer.role === "hq_admin",
+    );
   if (path === "/settings/norms")
     return demoNorms(init, viewer.role === "hq_admin");
   if (path === "/aliases") return demoAliases(own);

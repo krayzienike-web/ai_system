@@ -75,7 +75,11 @@ async function tryRefresh(): Promise<boolean> {
   return true;
 }
 
-export async function api<T>(path: string, init: RequestInit = {}, retry = true): Promise<T> {
+export async function api<T>(
+  path: string,
+  init: RequestInit = {},
+  retry = true,
+): Promise<T> {
   if (DEMO) {
     try {
       return (await demoRequest(path, init, tokens.access)) as T;
@@ -85,7 +89,8 @@ export async function api<T>(path: string, init: RequestInit = {}, retry = true)
   }
   const headers = new Headers(init.headers);
   // A file upload (FormData) sets its own multipart content type.
-  if (init.body && !(init.body instanceof FormData)) headers.set("Content-Type", "application/json");
+  if (init.body && !(init.body instanceof FormData))
+    headers.set("Content-Type", "application/json");
   if (tokens.access) headers.set("Authorization", `Bearer ${tokens.access}`);
   const response = await fetch(`/api${path}`, { ...init, headers });
   if (response.status === 401 && retry && (await tryRefresh())) {
@@ -93,12 +98,19 @@ export async function api<T>(path: string, init: RequestInit = {}, retry = true)
   }
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
-    const detail = typeof body.detail === "string" ? body.detail : response.statusText;
+    const detail =
+      typeof body.detail === "string" ? body.detail : response.statusText;
     throw new ApiError(response.status, detail);
   }
   return response.json() as Promise<T>;
 }
 
 export async function login(email: string, password: string): Promise<void> {
-  tokens.set(await api("/auth/login", { method: "POST", body: JSON.stringify({ email, password }) }, false));
+  tokens.set(
+    await api(
+      "/auth/login",
+      { method: "POST", body: JSON.stringify({ email, password }) },
+      false,
+    ),
+  );
 }

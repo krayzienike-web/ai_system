@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.core.errors import NotFoundError
 from app.experiments.models import Experiment, ExperimentStatus
-from app.insights.models import Finding
+from app.insights.models import Finding, ReviewStatus
 from app.insights.work import ExperimentFacts, TaskFacts, Work, WorkStage, work_of
 from app.tasks.models import Task
 
@@ -69,8 +69,16 @@ def list_findings(
     stage: WorkStage | None = None,
     restaurant_id: UUID | None = None,
     late_only: bool = False,
+    review: ReviewStatus | None = None,
 ) -> list[FindingWork]:
     query = select(Finding).where(Finding.status != "dismissed")
+    if review is None:
+        # The working lists show what has passed the check (or needs none: made by hand).
+        query = query.where(
+            Finding.review_status.is_(None) | (Finding.review_status == ReviewStatus.CONFIRMED)
+        )
+    else:
+        query = query.where(Finding.review_status == review)
     if restaurant_id is not None:
         query = query.where(Finding.restaurant_id == restaurant_id)
     findings = list(session.execute(query).scalars())

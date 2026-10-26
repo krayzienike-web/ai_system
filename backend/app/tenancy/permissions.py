@@ -11,6 +11,8 @@ class Permission(StrEnum):
     DATA_UPLOAD = "data.upload"
     CATALOG_MANAGE = "catalog.manage"
     EXPERIMENTS_LAUNCH = "experiments.launch"  # launch or reject a proposed check
+    ANALYTICS_RUN = "analytics.run"  # recompute findings for the whole network
+    FINDINGS_REVIEW = "findings.review"  # check engine findings against the data, confirm or reject
     NORMS_MANAGE = "norms.manage"  # food-cost targets, loss allowances, write-off reasons
     TASKS_ASSIGN = "tasks.assign"  # set tasks for any restaurant of the network
     TASKS_EXECUTE = "tasks.execute"  # take tasks for one's own restaurant and report on them
@@ -24,6 +26,7 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
             Permission.RESTAURANTS_READ,
             Permission.NETWORK_COMPARE,
             Permission.DATA_UPLOAD,
+            Permission.FINDINGS_REVIEW,
             Permission.AI_CHAT,
         }
     ),

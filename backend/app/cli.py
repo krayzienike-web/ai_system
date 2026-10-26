@@ -2,7 +2,9 @@
 
 - `python -m app.cli seed-demo [--password ...]` — demo tenant, 3 restaurants, users and a small work loop;
 - `python -m app.cli generate-demo --out DIR [--seed N]` — files of the synthetic 12-restaurant network;
-- `python -m app.cli load-demo [--seed N]` — load that network into the demo tenant via the import pipeline.
+- `python -m app.cli load-demo [--seed N]` — load that network into the demo tenant via the import pipeline
+  and compute findings;
+- `python -m app.cli analyze` — recompute findings of the demo tenant (analytics engine).
 """
 
 import argparse
@@ -14,6 +16,7 @@ from uuid import UUID
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
+from app.analytics import engine
 from app.core.config import get_settings
 from app.core.db import get_sessionmaker
 from app.core.security import hash_password
@@ -85,9 +88,17 @@ def seed_work(session: Session, tenant_id: UUID, r: dict[str, UUID], today: date
         return today + timedelta(days=offset)
 
     def finding(
-        code: str | None, kind: str, process: str, title: str, effect: str | None, actions: list[str]
+        code: str | None,
+        kind: str,
+        process: str,
+        title: str,
+        effect: str | None,
+        actions: list[str],
+        key: str | None = None,
     ) -> Finding:
+        # The key is the one the analytics engine gives the same problem: its run takes these findings over.
         f = Finding(
+            key=key,
             tenant_id=tenant_id,
             restaurant_id=r[code] if code else None,
             kind=kind,
@@ -109,6 +120,7 @@ def seed_work(session: Session, tenant_id: UUID, r: dict[str, UUID], today: date
         "Перерасход моцареллы по ТТК",
         "38000",
         ["Взвешивать сыр на раздаче", "Фото-стандарт порции"],
+        "M1:R01:P01",
     )
     beef = finding(
         "R02",
@@ -117,9 +129,16 @@ def seed_work(session: Session, tenant_id: UUID, r: dict[str, UUID], today: date
         "Говядина дороже среднего по сети",
         "31000",
         ["Заказывать заранее у основного поставщика"],
+        "M3:R02:P08",
     )
     salmon = finding(
-        "R03", "problem", "production", "Перерасход лосося по ТТК", "27000", ["Проверить выход при разделке"]
+        "R03",
+        "problem",
+        "production",
+        "Перерасход лосося по ТТК",
+        "27000",
+        ["Проверить выход при разделке"],
+        "M1:R03:P09",
     )
     finding(
         "R01",
@@ -128,6 +147,7 @@ def seed_work(session: Session, tenant_id: UUID, r: dict[str, UUID], today: date
         "Пересмотреть цену пиццы «Маргарита»",
         "20700",
         ["Поднять цену на 30 ₽"],
+        "M2:R01:M01",
     )
     finding(
         None,
@@ -136,6 +156,7 @@ def seed_work(session: Session, tenant_id: UUID, r: dict[str, UUID], today: date
         "ТТК картофеля фри, вероятно, устарела",
         None,
         ["Контрольная обжарка и новая ТТК"],
+        "M1:net:P11",
     )
     moz.status, beef.status, salmon.status = "in_experiment", "new", "in_work"
 
@@ -215,9 +236,26 @@ def load_demo(seed: int) -> None:
         ctx = load_access_context(session, user_id, tenant_id)
         assert ctx is not None
         rows = load(session, ctx, generate(seed=seed), today=date.today())
+        result = engine.run(session, ctx, date.today())
         session.commit()
     for template, count in rows.items():
         print(f"  {template:<18} {count:>7} rows")
+    print(f"  findings: {result.created} new, {result.updated} updated, {result.removed} removed")
+
+
+def analyze() -> None:
+    """Recomputes findings of the demo tenant as its HQ admin."""
+    owner = create_engine(get_settings().migrations_database_url)
+    with Session(owner) as session:
+        admin = session.execute(select(User).where(User.email == "admin@demo.local")).scalar_one()
+        user_id, tenant_id = admin.id, admin.tenant_id
+    owner.dispose()
+    with get_sessionmaker()() as session:
+        ctx = load_access_context(session, user_id, tenant_id)
+        assert ctx is not None
+        result = engine.run(session, ctx, date.today())
+        session.commit()
+    print(f"findings: {result.created} new, {result.updated} updated, {result.removed} removed")
 
 
 def main() -> None:
@@ -230,8 +268,11 @@ def main() -> None:
     gen.add_argument("--seed", type=int, default=42)
     ld = sub.add_parser("load-demo", help="Load the synthetic network into the demo tenant")
     ld.add_argument("--seed", type=int, default=42)
+    sub.add_parser("analyze", help="Recompute findings of the demo tenant")
     args = parser.parse_args()
-    if args.command == "seed-demo":
+    if args.command == "analyze":
+        analyze()
+    elif args.command == "seed-demo":
         seed_demo(args.password)
     elif args.command == "generate-demo":
         generate_demo(args.out, args.seed)
