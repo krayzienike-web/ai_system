@@ -1,10 +1,19 @@
-import { AlertTriangle, CheckCircle2, FileSpreadsheet, Loader2, RotateCcw, UploadCloud, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, FileSpreadsheet, Link2, Loader2, RotateCcw, UploadCloud, XCircle } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { type DragEvent, useRef, useState } from "react";
 
 import { ApiError } from "../api/client";
-import { useBatchAction, useFreshness, useImports, useImportTemplates, useRestaurants, useUploadImport } from "../api/hooks";
-import type { BatchStatus, Freshness, ImportBatch } from "../api/types";
+import {
+  useBatchAction,
+  useCatalog,
+  useFreshness,
+  useImports,
+  useImportTemplates,
+  useMatchNames,
+  useRestaurants,
+  useUploadImport,
+} from "../api/hooks";
+import type { BatchStatus, Freshness, ImportBatch, MatchKind } from "../api/types";
 import { Button, Card, cx, EASE, PageTitle, Pill, QuestionBlock, Reveal, type Tone } from "../ds/primitives";
 import { plural } from "../lib/format";
 import { useViewer } from "../lib/useViewer";
@@ -19,6 +28,7 @@ const KINDS = [
 
 const STATUS: Record<BatchStatus, { label: string; tone: Tone }> = {
   validated: { label: "Проверен, ждет загрузки", tone: "info" },
+  needs_matching: { label: "Нужно сопоставить названия", tone: "warn" },
   failed: { label: "Есть ошибки", tone: "loss" },
   published: { label: "Загружен", tone: "gain" },
   rolled_back: { label: "Отменен", tone: "neutral" },
@@ -41,12 +51,101 @@ function useNames() {
 
 // ------------------------------------------------------------------ upload
 
+const KIND_WORD: Record<MatchKind, [string, string]> = {
+  product: ["товар", "Другой товар из справочника"],
+  menu_item: ["блюдо", "Другое блюдо из меню"],
+  supplier: ["поставщик", "Другой поставщик"],
+};
+
+/** Names the catalog does not know: the person says once what they are, the system remembers. */
+function Matching({ batch, onMatched }: { batch: ImportBatch; onMatched: (b: ImportBatch) => void }) {
+  const viewer = useViewer();
+  const matchNames = useMatchNames();
+  const kinds = [...new Set(batch.unmatched.map((u) => u.kind))];
+  const products = useCatalog("product");
+  const menu = useCatalog("menu_item");
+  const suppliers = useCatalog("supplier");
+  const options = { product: products.data ?? [], menu_item: menu.data ?? [], supplier: suppliers.data ?? [] };
+  // The best suggestion is preselected, but nothing is remembered until the person presses the button.
+  const [chosen, setChosen] = useState<Record<string, string>>(() =>
+    Object.fromEntries(batch.unmatched.filter((u) => u.candidates[0]).map((u) => [u.key, u.candidates[0]!.id])),
+  );
+  const ready = batch.unmatched.every((u) => chosen[u.key]);
+  const scope = viewer?.isAdmin || !batch.restaurant_id ? "для всей сети" : "для вашего ресторана";
+
+  return (
+    <div className="rounded-[14px] border border-warn-icon/40 bg-warn-soft/40 p-4 text-sm">
+      <div className="flex items-center gap-2 font-medium text-ink">
+        <Link2 size={17} className="text-warn" /> Мы не узнали {plural(batch.unmatched.length, ["название", "названия", "названий"])}
+      </div>
+      <p className="mt-1 text-ink-2">
+        В другой системе их называют иначе. Укажите один раз, что это, — запомним {scope} и в следующих файлах спрашивать не будем.
+      </p>
+      <ul className="mt-3 space-y-2">
+        {batch.unmatched.map((u) => (
+          <li key={`${u.kind}:${u.key}`} className="grid gap-2 rounded-[12px] bg-surface p-3 sm:grid-cols-[1fr_minmax(0,320px)] sm:items-center">
+            <span className="min-w-0">
+              <span className="block font-medium text-ink">«{u.name ?? u.code}»</span>
+              <span className="block text-xs text-ink-3">
+                {KIND_WORD[u.kind][0]} · {u.rows_count > 1 ? `строки ${u.rows.slice(0, 4).join(", ")}${u.rows_count > 4 ? ` и еще ${u.rows_count - 4}` : ""}` : `строка ${u.rows[0]}`}
+              </span>
+            </span>
+            <select
+              value={chosen[u.key] ?? ""}
+              onChange={(e) => setChosen((c) => ({ ...c, [u.key]: e.target.value }))}
+              aria-label={`Что такое «${u.name ?? u.code}»`}
+              className="h-10 w-full rounded-[10px] border border-line-strong bg-surface px-2 outline-none focus:border-brand"
+            >
+              <option value="">Выберите…</option>
+              {u.candidates.length > 0 && (
+                <optgroup label="Похоже на">
+                  {u.candidates.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name} {c.score >= 0.6 ? "· очень похоже" : "· похоже"}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+              <optgroup label={KIND_WORD[u.kind][1]}>
+                {options[u.kind]
+                  .filter((o) => !u.candidates.some((c) => c.id === o.id))
+                  .map((o) => (
+                    <option key={o.id} value={o.id}>
+                      {o.name}
+                    </option>
+                  ))}
+              </optgroup>
+            </select>
+          </li>
+        ))}
+      </ul>
+      {kinds.length > 0 && matchNames.error && (
+        <p className="mt-2 text-loss">{matchNames.error instanceof ApiError ? matchNames.error.message : "Не получилось сохранить"}</p>
+      )}
+      <Button
+        variant="primary"
+        className="mt-3"
+        disabled={!ready || matchNames.isPending}
+        onClick={() =>
+          matchNames.mutate(
+            { id: batch.id, matches: batch.unmatched.map((u) => ({ kind: u.kind, key: u.key, target_id: chosen[u.key]! })) },
+            { onSuccess: onMatched },
+          )
+        }
+      >
+        {matchNames.isPending ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />} Запомнить и проверить снова
+      </Button>
+    </div>
+  );
+}
+
 function Report({ batch, onAgain }: { batch: ImportBatch; onAgain: () => void }) {
   const names = useNames();
   const publish = useBatchAction("publish");
   const rollback = useBatchAction("rollback");
   const [shown, setShown] = useState(8);
-  const current = rollback.data ?? publish.data ?? batch;
+  const [matched, setMatched] = useState<ImportBatch | null>(null);
+  const current = rollback.data ?? publish.data ?? matched ?? batch;
   const error = (publish.error ?? rollback.error) as Error | null;
 
   return (
@@ -79,7 +178,7 @@ function Report({ batch, onAgain }: { batch: ImportBatch; onAgain: () => void })
               <dd className="font-medium">{period(current) || "справочник"}</dd>
             </div>
             <div>
-              <dt className="text-ink-3">Строк без ошибок</dt>
+              <dt className="text-ink-3">{current.status === "needs_matching" ? "Узнали строк" : "Строк без ошибок"}</dt>
               <dd className="font-medium">
                 {current.rows_valid} из {current.rows_total}
               </dd>
@@ -120,6 +219,16 @@ function Report({ batch, onAgain }: { batch: ImportBatch; onAgain: () => void })
             </button>
           )}
         </div>
+      )}
+
+      {current.unmatched.length > 0 && current.status === "needs_matching" && (
+        <Matching key={current.id + current.unmatched.length} batch={current} onMatched={setMatched} />
+      )}
+      {current.unmatched.length > 0 && current.status === "failed" && (
+        <p className="text-sm text-ink-2">
+          Еще не узнали {plural(current.unmatched.length, ["название", "названия", "названий"])}:{" "}
+          {current.unmatched.slice(0, 5).map((u) => `«${u.name ?? u.code}»`).join(", ")} — сопоставим, когда исправите ошибки.
+        </p>
       )}
 
       {current.warnings.length > 0 && (

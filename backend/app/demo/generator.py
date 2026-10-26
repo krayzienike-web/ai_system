@@ -114,6 +114,18 @@ PERISHABLE_WRITE_OFF = {"P10": 0.05, "P16": 0.04, "P06": 0.02, "P04": 0.01, "P12
 class DemoNetwork:
     files: dict[str, bytes] = field(default_factory=dict)
     anomalies: list[dict[str, Any]] = field(default_factory=list)
+    # Names from another system and what they are: the answer key for name matching.
+    name_matches: dict[str, str] = field(default_factory=dict)  # source name -> product code
+
+
+# How 1С names some products in R04's purchases (no codes): the importer must ask to match them once.
+ERP_NAMES = {
+    "P01": "Моцарелла фиор ди латте 45%",
+    "P07": "Филе куриное охл.",
+    "P10": "Руккола свежая, кг",
+    "P14": "Масло оливк. Extra Virgin",
+    "P09": "Лосось атлантический охл. (филе)",
+}
 
 
 def _q(value: float, places: str = "0.001") -> Decimal:
@@ -458,6 +470,14 @@ def generate(seed: int = 42, restaurants: int = 12, start: date = START, end: da
                         _q(float(row[8]) / 1000, "0.0001"),
                     )
             net.files[f"receipts_{code}.csv"] = _csv(receipts_header, receipts_rows, encoding="cp1251")
+        elif code == "R04":
+            # 1С without codes and with its own names for some products.
+            for row in receipts_rows:
+                if row[4] in ERP_NAMES:
+                    row[5] = ERP_NAMES[row[4]]
+                    net.name_matches[row[5]] = row[4]
+                row[4] = ""
+            net.files[f"receipts_{code}.csv"] = _csv(receipts_header, receipts_rows)
         else:
             net.files[f"receipts_{code}.csv"] = _csv(receipts_header, receipts_rows)
         net.files[f"write_offs_{code}.csv"] = _csv(
@@ -473,6 +493,7 @@ def generate(seed: int = 42, restaurants: int = 12, start: date = START, end: da
             "period": [start.isoformat(), end.isoformat()],
             "count_days": [d.isoformat() for d in count_days],
             "anomalies": net.anomalies,
+            "name_matches": net.name_matches,
         },
         ensure_ascii=False,
         indent=2,

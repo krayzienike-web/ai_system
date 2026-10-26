@@ -69,3 +69,28 @@ class RecipeLine(IdMixin, TenantMixin, TimestampMixin, Base):
     product_id: Mapped[UUID] = mapped_column(ForeignKey("products.id", ondelete="RESTRICT"))
     gross_qty: Mapped[Decimal] = mapped_column(QTY)
     valid_from: Mapped[date] = mapped_column(Date)
+
+
+class AliasKind(StrEnum):
+    PRODUCT = "product"
+    MENU_ITEM = "menu_item"
+    SUPPLIER = "supplier"
+
+
+class NameAlias(IdMixin, TenantMixin, TimestampMixin, Base):
+    """A confirmed match: how a product (dish, supplier) is called in another system's export.
+
+    Network-wide when set by HQ; a director's match applies only to their restaurant, so one restaurant's
+    choice never changes another restaurant's numbers.
+    """
+
+    __tablename__ = "name_aliases"
+    __table_args__ = (CheckConstraint("kind IN ('product', 'menu_item', 'supplier')", name="kind_valid"),)
+
+    restaurant_id: Mapped[UUID | None] = mapped_column(ForeignKey("restaurants.id", ondelete="CASCADE"))
+    kind: Mapped[str] = mapped_column(String(20))
+    # Normalised source name, or "code:<code>" when the file has a code we do not know.
+    source_key: Mapped[str] = mapped_column(String(300))
+    source_text: Mapped[str] = mapped_column(String(300))
+    target_id: Mapped[UUID]
+    created_by: Mapped[UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))

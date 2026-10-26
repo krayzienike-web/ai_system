@@ -112,7 +112,8 @@ def test_report_lists_errors_by_row_and_failed_file_cannot_be_published(
     )
     r = upload(client, hq, "sales", bad, network.a.restaurants["A1"]).json()
     assert r["status"] == "failed"
-    assert [(e["row"], e["column"]) for e in r["errors"]] == [(3, None), (4, "Дата")]
+    assert [(e["row"], e["column"]) for e in r["errors"]] == [(4, "Дата")]
+    assert [(u["name"], u["rows"]) for u in r["unmatched"]] == [("Пицца Х", [3])]
     assert client.post(f"/api/imports/{r['id']}/publish", headers=hq).status_code == 422
     no_header = upload(client, hq, "sales", "a;b\n1;2\n", network.a.restaurants["A1"]).json()
     assert (
@@ -164,15 +165,15 @@ def test_templates_are_described_for_the_ui(client: TestClient, network: Network
 def test_demo_network_loads_through_the_pipeline_with_rls(network: Network, owner_engine: Engine) -> None:
     from app.core.db import get_sessionmaker
 
-    net = generate(seed=1, restaurants=3)
+    net = generate(seed=1, restaurants=4)  # R04 has 1С names: the loader matches them once
     with get_sessionmaker()() as session:
         ctx = load_access_context(session, network.a.users["admin@a.ru"], network.a.id)
         assert ctx is not None
         rows = load(session, ctx, net, today=TODAY)
         session.commit()
-    assert rows["restaurants"] == 3 and rows["products"] == 16 and rows["sales"] > 5000
+    assert rows["restaurants"] == 4 and rows["products"] == 16 and rows["sales"] > 7000
     with Session(owner_engine) as s:
-        # The generator's R01–R03 are new restaurants of tenant A next to A1–A3.
+        # The generator's R01–R04 are new restaurants of tenant A next to A1–A3.
         codes = (
             s.execute(
                 text("SELECT code FROM restaurants WHERE tenant_id = :t ORDER BY code"), {"t": network.a.id}
@@ -180,7 +181,11 @@ def test_demo_network_loads_through_the_pipeline_with_rls(network: Network, owne
             .scalars()
             .all()
         )
-        assert codes == ["A1", "A2", "A3", "R01", "R02", "R03"]
+        assert codes == ["A1", "A2", "A3", "R01", "R02", "R03", "R04"]
+        aliases = s.execute(
+            text("SELECT count(*) FROM name_aliases WHERE restaurant_id IS NULL")
+        ).scalar_one()
+        assert aliases == len(net.name_matches) == 5
         assert s.execute(select(func.count()).select_from(Sale)).scalar_one() == rows["sales"]
 
 
@@ -229,3 +234,104 @@ def test_freshness_per_restaurant_and_isolation(client: TestClient, network: Net
         client.get("/api/imports/freshness", headers=login(client, "admin@b.ru")).json()[0]["status"]
         == "missing"
     )
+
+
+RECEIPTS_1C = (
+    "Дата;Номенклатура;Количество;Ед. изм.;Сумма\n"
+    "01.10.2026;Моцарелла фиор ди латте 45%;5;кг;3100\n"
+    "02.10.2026;Моцарелла фиор ди латте 45%;3;кг;1860\n"
+    "02.10.2026;Сливки 33% (Молочный двор);2;л;720\n"
+)
+
+
+def test_unknown_names_are_matched_once_and_remembered(
+    client: TestClient, network: Network, catalog: None
+) -> None:
+    director, a1 = login(client, "director1@a.ru"), network.a.restaurants["A1"]
+    batch = upload(client, director, "receipts", RECEIPTS_1C, a1).json()
+    assert batch["status"] == "needs_matching" and batch["errors"] == []
+    mozz = next(u for u in batch["unmatched"] if u["name"].startswith("Моцарелла"))
+    assert mozz["rows"] == [2, 3] and mozz["kind"] == "product"
+    assert mozz["candidates"][0]["name"] == "Сыр Моцарелла"
+    assert client.post(f"/api/imports/{batch['id']}/publish", headers=director).status_code == 422
+
+    options = {o["name"]: o["id"] for o in client.get("/api/catalog/product", headers=director).json()}
+    matches = [
+        {
+            "kind": "product",
+            "key": u["key"],
+            "target_id": options["Сыр Моцарелла" if "Моцарелла" in u["name"] else "Сливки 33%"],
+        }
+        for u in batch["unmatched"]
+    ]
+    matched = client.post(
+        f"/api/imports/{batch['id']}/match", headers=director, json={"matches": matches}
+    ).json()
+    assert matched["status"] == "validated" and matched["unmatched"] == [] and matched["rows_valid"] == 3
+    publish(client, director, batch["id"])
+
+    # Remembered for this restaurant: the next export of A1 goes through at once…
+    again = upload(client, director, "receipts", RECEIPTS_1C.replace("01.10", "03.10"), a1).json()
+    assert again["status"] == "validated"
+    # …but a director's choice does not change another restaurant's numbers.
+    other = upload(
+        client, login(client, "director2@a.ru"), "receipts", RECEIPTS_1C, network.a.restaurants["A2"]
+    ).json()
+    assert other["status"] == "needs_matching"
+
+
+def test_hq_admin_match_applies_to_the_whole_network(
+    client: TestClient, network: Network, catalog: None
+) -> None:
+    hq = login(client, "admin@a.ru")
+    batch = upload(client, hq, "receipts", RECEIPTS_1C, network.a.restaurants["A1"]).json()
+    options = {o["name"]: o["id"] for o in client.get("/api/catalog/product", headers=hq).json()}
+    matches = [
+        {
+            "kind": "product",
+            "key": u["key"],
+            "target_id": options["Сыр Моцарелла" if "Моцарелла" in u["name"] else "Сливки 33%"],
+        }
+        for u in batch["unmatched"]
+    ]
+    assert (
+        client.post(f"/api/imports/{batch['id']}/match", headers=hq, json={"matches": matches}).json()[
+            "status"
+        ]
+        == "validated"
+    )
+    other = upload(
+        client, login(client, "director2@a.ru"), "receipts", RECEIPTS_1C, network.a.restaurants["A2"]
+    ).json()
+    assert other["status"] == "validated"
+
+
+def test_matching_rules_and_isolation(
+    client: TestClient, network: Network, catalog: None, owner_engine: Engine
+) -> None:
+    director, a1 = login(client, "director1@a.ru"), network.a.restaurants["A1"]
+    batch = upload(client, director, "receipts", RECEIPTS_1C, a1).json()
+    key = batch["unmatched"][0]["key"]
+    menu = client.get("/api/catalog/menu_item", headers=director).json()
+    # A key that is not in the report, or a target of another kind, is refused.
+    bad_key = {"matches": [{"kind": "product", "key": "что-то еще", "target_id": menu[0]["id"]}]}
+    assert client.post(f"/api/imports/{batch['id']}/match", headers=director, json=bad_key).status_code == 422
+    wrong_kind = {"matches": [{"kind": "product", "key": key, "target_id": menu[0]["id"]}]}
+    assert (
+        client.post(f"/api/imports/{batch['id']}/match", headers=director, json=wrong_kind).status_code == 404
+    )
+    # Another director or another tenant cannot touch the batch; another tenant's catalog is invisible.
+    body = {"matches": [{"kind": "product", "key": key, "target_id": menu[0]["id"]}]}
+    assert (
+        client.post(
+            f"/api/imports/{batch['id']}/match", headers=login(client, "director2@a.ru"), json=body
+        ).status_code
+        == 404
+    )
+    assert client.get("/api/catalog/product", headers=login(client, "admin@b.ru")).json() == []
+    # In the database, a director cannot write a network-wide match (row-level security).
+    with owner_engine.connect() as c:
+        policy = c.execute(
+            text("SELECT with_check FROM pg_policies WHERE tablename = 'name_aliases'")
+        ).scalar_one()
+    assert "restaurant_id IS NOT NULL" in policy

@@ -12,6 +12,7 @@ from app.core.models import Base, IdMixin, TenantMixin, TimestampMixin
 
 class BatchStatus(StrEnum):
     FAILED = "failed"  # blocking errors: nothing can be published
+    NEEDS_MATCHING = "needs_matching"  # the file is fine, but some names must be matched to the catalog once
     VALIDATED = "validated"  # ready to publish (warnings allowed)
     PUBLISHED = "published"
     ROLLED_BACK = "rolled_back"
@@ -44,6 +45,10 @@ class ImportBatch(IdMixin, TenantMixin, TimestampMixin, Base):
         JSONB, default=list, server_default=text("'[]'::jsonb")
     )
     warnings: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB, default=list, server_default=text("'[]'::jsonb")
+    )
+    # Names the catalog does not know yet, with suggestions: [{kind, code, name, rows, candidates}].
+    unmatched: Mapped[list[dict[str, Any]]] = mapped_column(
         JSONB, default=list, server_default=text("'[]'::jsonb")
     )
     column_map: Mapped[dict[str, str]] = mapped_column(

@@ -9,9 +9,10 @@ from sqlalchemy import delete, func, insert, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
-from app.catalog.models import MenuItem, Product, RecipeLine, Supplier
+from app.catalog.models import AliasKind, MenuItem, NameAlias, Product, RecipeLine, Supplier
 from app.core.errors import ConflictError, ForbiddenError, InvalidError, NotFoundError
 from app.core.period import last_full_week_end
+from app.imports.matching import normalize, suggest
 from app.imports.models import BatchStatus, ImportBatch
 from app.imports.reader import detect_template, read_table
 from app.imports.templates import TEMPLATES, Scope, Template
@@ -37,21 +38,59 @@ REFERENCE: dict[str, type[Product] | type[Supplier] | type[MenuItem] | type[Rest
 }
 
 
-def load_lookups(session: Session) -> Lookups:
+def load_lookups(session: Session, restaurant_id: UUID | None = None) -> Lookups:
     lk = Lookups()
     for p in session.execute(select(Product)).scalars():
         ref = Ref(p.id, p.name, p.base_unit)
         lk.products[p.code] = ref
-        lk.product_names.setdefault(p.name.lower(), ref)
+        lk.product_names.setdefault(normalize(p.name), ref)
     for m in session.execute(select(MenuItem)).scalars():
         ref = Ref(m.id, m.name)
         lk.menu_items[m.code] = ref
-        lk.menu_item_names.setdefault(m.name.lower(), ref)
+        lk.menu_item_names.setdefault(normalize(m.name), ref)
     for s in session.execute(select(Supplier)).scalars():
         ref = Ref(s.id, s.name)
         lk.suppliers[s.code] = ref
-        lk.supplier_names.setdefault(s.name.lower(), ref)
+        lk.supplier_names.setdefault(normalize(s.name), ref)
+    refs = {
+        "product": {r.id: r for r in lk.products.values()},
+        "menu_item": {r.id: r for r in lk.menu_items.values()},
+        "supplier": {r.id: r for r in lk.suppliers.values()},
+    }
+    # Network-wide matches first, then this restaurant's own ones on top.
+    aliases = session.execute(
+        select(NameAlias)
+        .where((NameAlias.restaurant_id.is_(None)) | (NameAlias.restaurant_id == restaurant_id))
+        .order_by(NameAlias.restaurant_id.is_not(None))
+    ).scalars()
+    for a in aliases:
+        target = refs[a.kind].get(a.target_id)
+        if target is not None:
+            lk.aliases[(a.kind, a.source_key)] = target
     return lk
+
+
+def _options(lk: Lookups, kind: str) -> list[tuple[UUID, str]]:
+    by_code = {"product": lk.products, "menu_item": lk.menu_items, "supplier": lk.suppliers}[kind]
+    return [(r.id, r.name) for r in by_code.values()]
+
+
+def _unmatched_json(result: Result, lk: Lookups) -> list[dict[str, Any]]:
+    return [
+        {
+            "kind": u.kind,
+            "code": u.code,
+            "name": u.name,
+            "key": u.key,
+            "rows": u.rows[:20],
+            "rows_count": len(u.rows),
+            "candidates": [
+                {"id": str(c.id), "name": c.name, "score": c.score}
+                for c in suggest(u.name or u.code or "", _options(lk, u.kind))
+            ],
+        }
+        for u in result.unmatched
+    ]
 
 
 def _template(name: str) -> Template:
@@ -83,14 +122,38 @@ def _check_access(
 
 
 def _run(
-    session: Session, template: Template, raw: bytes, filename: str, today: date
-) -> tuple[Result | None, list[dict[str, Any]], dict[str, str]]:
+    session: Session, template: Template, raw: bytes, filename: str, today: date, restaurant_id: UUID | None
+) -> tuple[Result | None, list[dict[str, Any]], dict[str, str], Lookups]:
+    lk = load_lookups(session, restaurant_id)
     try:
         table = read_table(raw, filename, template)
     except InvalidError as e:
-        return None, [{"row": None, "column": None, "message": str(e)}], {}
+        return None, [{"row": None, "column": None, "message": str(e)}], {}, lk
     column_map = {template.column(k).title: str(v + 1) for k, v in table.column_map.items()}
-    return validate(template, table, load_lookups(session), today=today), [], column_map
+    return validate(template, table, lk, today=today), [], column_map, lk
+
+
+def _apply(batch: ImportBatch, result: Result | None, file_errors: list[dict[str, Any]], lk: Lookups) -> None:
+    """Writes the validation report onto the batch and decides its status."""
+    if result is None:
+        batch.status, batch.errors, batch.unmatched = BatchStatus.FAILED, file_errors, []
+        return
+    batch.rows_total = result.rows_total
+    batch.rows_valid = len(result.records)
+    batch.errors = [e.as_dict() for e in result.errors]
+    batch.warnings = [w.as_dict() for w in result.warnings]
+    batch.unmatched = _unmatched_json(result, lk)
+    batch.period_from, batch.period_to = result.period_from, result.period_to
+    # Any blocking error fails the whole file: publishing half a file would silently distort the numbers.
+    if result.errors:
+        batch.status = BatchStatus.FAILED
+    elif result.unmatched:
+        batch.status = BatchStatus.NEEDS_MATCHING
+    elif result.records:
+        batch.status = BatchStatus.VALIDATED
+    else:
+        batch.status = BatchStatus.FAILED
+        batch.errors = [{"row": None, "column": None, "message": "В файле нет строк с данными"}]
 
 
 def upload(
@@ -125,7 +188,7 @@ def upload(
     if duplicate:
         raise ConflictError("Этот файл уже загружен")
 
-    result, file_errors, column_map = _run(session, template, raw, filename, today)
+    result, file_errors, column_map, lk = _run(session, template, raw, filename, today, restaurant_id)
     batch = ImportBatch(
         tenant_id=ctx.tenant_id,
         restaurant_id=restaurant_id,
@@ -136,19 +199,7 @@ def upload(
         column_map=column_map,
         created_by=ctx.user_id,
     )
-    if result is None:
-        batch.status, batch.errors = BatchStatus.FAILED, file_errors
-    else:
-        batch.rows_total = result.rows_total
-        batch.rows_valid = len(result.records)
-        batch.errors = [e.as_dict() for e in result.errors]
-        batch.warnings = [w.as_dict() for w in result.warnings]
-        batch.period_from, batch.period_to = result.period_from, result.period_to
-        # Any blocking error fails the whole file: publishing half a file would silently distort the numbers.
-        ok = not result.errors and result.records
-        batch.status = BatchStatus.VALIDATED if ok else BatchStatus.FAILED
-        if not result.records and not result.errors:
-            batch.errors = [{"row": None, "column": None, "message": "В файле нет строк с данными"}]
+    _apply(batch, result, file_errors, lk)
     session.add(batch)
     session.flush()
     audit(
@@ -195,8 +246,8 @@ def publish(session: Session, ctx: AccessContext, batch_id: UUID, *, today: date
     if batch.status != BatchStatus.VALIDATED:
         raise InvalidError("Опубликовать можно только проверенный файл без ошибок")
     # Validate again: reference data may have changed since the upload.
-    result, _, _ = _run(session, template, batch.raw, batch.filename, today)
-    if result is None or result.errors:
+    result, _, _, _ = _run(session, template, batch.raw, batch.filename, today, batch.restaurant_id)
+    if result is None or result.errors or result.unmatched:
         raise InvalidError("Файл больше не проходит проверку — загрузите его заново")
 
     if template.scope is Scope.NETWORK:
@@ -291,3 +342,81 @@ def freshness(session: Session, *, today: date) -> list[dict[str, Any]]:
                 status = "stale"
             out.append({"restaurant_id": r.id, "template": template, "last_date": day, "status": status})
     return out
+
+
+TARGETS: dict[str, type[Product] | type[MenuItem] | type[Supplier]] = {
+    AliasKind.PRODUCT: Product,
+    AliasKind.MENU_ITEM: MenuItem,
+    AliasKind.SUPPLIER: Supplier,
+}
+
+
+def match(
+    session: Session, ctx: AccessContext, batch_id: UUID, matches: list[tuple[str, str, UUID]], *, today: date
+) -> ImportBatch:
+    """Remembers what each unknown name in the file is, then checks the file again.
+
+    `matches` are (kind, key from the report, catalog id). An HQ admin's match applies to the whole
+    network; anyone else's — only to the restaurant of the file.
+    """
+    batch = session.get(ImportBatch, batch_id)
+    if batch is None:
+        raise NotFoundError("Загрузка не найдена")
+    template = _template(batch.template)
+    _check_access(session, ctx, template, batch.restaurant_id)
+    if batch.status != BatchStatus.NEEDS_MATCHING:
+        raise InvalidError("В этом файле нечего сопоставлять")
+    known = {(u["kind"], u["key"]): u for u in batch.unmatched}
+    network_wide = ctx.can(Permission.CATALOG_MANAGE) or batch.restaurant_id is None
+    scope = None if network_wide else batch.restaurant_id
+    for kind, key, target_id in matches:
+        item = known.get((kind, key))
+        if item is None:
+            raise InvalidError(f"В отчете нет названия «{key}»")
+        if session.get(TARGETS[kind], target_id) is None:
+            raise NotFoundError("Позиция справочника не найдена")
+        existing = session.execute(
+            select(NameAlias).where(
+                NameAlias.kind == kind,
+                NameAlias.source_key == key,
+                NameAlias.restaurant_id.is_(None) if scope is None else NameAlias.restaurant_id == scope,
+            )
+        ).scalar_one_or_none()
+        if existing is None:
+            session.add(
+                NameAlias(
+                    tenant_id=ctx.tenant_id,
+                    restaurant_id=scope,
+                    kind=kind,
+                    source_key=key,
+                    source_text=(item["name"] or item["code"] or key)[:300],
+                    target_id=target_id,
+                    created_by=ctx.user_id,
+                )
+            )
+        else:
+            existing.target_id = target_id
+    session.flush()
+    result, file_errors, _, lk = _run(
+        session, template, batch.raw, batch.filename, today, batch.restaurant_id
+    )
+    _apply(batch, result, file_errors, lk)
+    session.flush()
+    audit(
+        session,
+        tenant_id=ctx.tenant_id,
+        user_id=ctx.user_id,
+        action="import.match",
+        entity="import_batch",
+        entity_id=batch.id,
+        payload={"matches": len(matches), "network_wide": network_wide},
+    )
+    return batch
+
+
+def catalog_options(session: Session, kind: str) -> list[dict[str, Any]]:
+    model = TARGETS.get(kind)
+    if model is None:
+        raise InvalidError(f"Неизвестный справочник «{kind}»")
+    rows = session.execute(select(model.id, model.code, model.name).order_by(model.name)).all()
+    return [{"id": i, "code": c, "name": n} for i, c, n in rows]

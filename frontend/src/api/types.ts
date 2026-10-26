@@ -27,7 +27,7 @@ export interface Restaurant {
 
 // ------------------------------------------------------------------ data import (backend/app/imports)
 
-export type BatchStatus = "failed" | "validated" | "published" | "rolled_back";
+export type BatchStatus = "failed" | "needs_matching" | "validated" | "published" | "rolled_back";
 
 export interface ImportIssue {
   row: number | null;
@@ -48,8 +48,28 @@ export interface ImportBatch {
   errors: ImportIssue[];
   warnings: ImportIssue[];
   column_map: Record<string, string>; // column title -> column number in the file
+  unmatched: UnmatchedName[];
   created_at: string;
   published_at: string | null;
+}
+
+export type MatchKind = "product" | "menu_item" | "supplier";
+
+/** A name from a file the catalog does not know yet, with suggestions to confirm once. */
+export interface UnmatchedName {
+  kind: MatchKind;
+  code: string | null;
+  name: string | null;
+  key: string;
+  rows: number[];
+  rows_count: number;
+  candidates: { id: string; name: string; score: number }[];
+}
+
+export interface CatalogOption {
+  id: string;
+  code: string;
+  name: string;
 }
 
 export interface ImportTemplate {

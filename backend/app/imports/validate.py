@@ -8,6 +8,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 from uuid import UUID
 
+from app.imports.matching import normalize
 from app.imports.reader import Table
 from app.imports.templates import Kind, Template
 
@@ -34,7 +35,8 @@ class Ref:
 
 @dataclass
 class Lookups:
-    """Reference data of the network, by code and by lower-cased name."""
+    """Reference data of the network: by code, by normalised name, and by remembered aliases
+    (`code:<code>` or a normalised name from another system)."""
 
     products: dict[str, Ref] = field(default_factory=dict)
     product_names: dict[str, Ref] = field(default_factory=dict)
@@ -42,6 +44,21 @@ class Lookups:
     menu_item_names: dict[str, Ref] = field(default_factory=dict)
     suppliers: dict[str, Ref] = field(default_factory=dict)
     supplier_names: dict[str, Ref] = field(default_factory=dict)
+    aliases: dict[tuple[str, str], Ref] = field(default_factory=dict)  # (kind, source_key) -> ref
+
+
+@dataclass
+class Unmatched:
+    """A name the catalog does not know: to be matched by a person once."""
+
+    kind: str  # product | menu_item | supplier
+    code: str | None
+    name: str | None
+    rows: list[int] = field(default_factory=list)
+
+    @property
+    def key(self) -> str:
+        return source_key(self.code, self.name)
 
 
 @dataclass
@@ -52,6 +69,7 @@ class Result:
     rows_total: int
     period_from: date | None = None
     period_to: date | None = None
+    unmatched: list[Unmatched] = field(default_factory=list)
 
 
 class _RowError(Exception):
@@ -59,6 +77,17 @@ class _RowError(Exception):
         super().__init__(message)
         self.column = column
         self.message = message
+
+
+class _NotFound(Exception):
+    def __init__(self, kind: str, code: str | None, name: str | None) -> None:
+        super().__init__(kind)
+        self.kind, self.code, self.name = kind, code, name
+
+
+def source_key(code: str | None, name: str | None) -> str:
+    """How a name from a file is remembered: by its normalised name, or by code when there is no name."""
+    return normalize(name) if name else f"code:{code}"
 
 
 # ------------------------------------------------------------------ values
@@ -154,13 +183,21 @@ def _values(template: Template, table: Table, cells: list[str]) -> dict[str, Any
 
 
 def _resolve(
-    code: str | None, name: str | None, by_code: dict[str, Ref], by_name: dict[str, Ref], what: str
+    kind: str,
+    code: str | None,
+    name: str | None,
+    by_code: dict[str, Ref],
+    by_name: dict[str, Ref],
+    lk: Lookups,
 ) -> Ref:
     if code and code in by_code:
         return by_code[code]
-    if name and name.lower() in by_name:
-        return by_name[name.lower()]
-    raise _RowError(None, f"неизвестный {what} «{code or name}» — сначала загрузите справочник")
+    if name and normalize(name) in by_name:
+        return by_name[normalize(name)]
+    for key in (normalize(name) if name else None, f"code:{code}" if code else None):
+        if key and (kind, key) in lk.aliases:
+            return lk.aliases[(kind, key)]
+    raise _NotFound(kind, code, name)
 
 
 def _to_base(qty: Decimal, unit_text: str | None, product: Ref) -> Decimal:
@@ -180,7 +217,9 @@ def _to_base(qty: Decimal, unit_text: str | None, product: Ref) -> Decimal:
 
 
 def _product(v: dict[str, Any], lk: Lookups) -> Ref:
-    return _resolve(v.get("product_code"), v.get("product_name"), lk.products, lk.product_names, "товар")
+    return _resolve(
+        "product", v.get("product_code"), v.get("product_name"), lk.products, lk.product_names, lk
+    )
 
 
 # ------------------------------------------------------------------ records per template
@@ -208,7 +247,7 @@ def _record(template: str, v: dict[str, Any], lk: Lookups, warn: list[str]) -> d
     if template == "menu_items":
         return {"code": v["code"], "name": v["name"], "category": v["category"], "price": v["price"]}
     if template == "recipes":
-        item = _resolve(v["menu_item_code"], None, lk.menu_items, lk.menu_item_names, "блюдо")
+        item = _resolve("menu_item", v["menu_item_code"], None, lk.menu_items, lk.menu_item_names, lk)
         product = _product(v, lk)
         qty = _to_base(v["gross_qty"], v["unit"], product)
         if qty <= 0:
@@ -220,7 +259,9 @@ def _record(template: str, v: dict[str, Any], lk: Lookups, warn: list[str]) -> d
             "valid_from": v["valid_from"],
         }
     if template == "sales":
-        item = _resolve(v["menu_item_code"], v["menu_item_name"], lk.menu_items, lk.menu_item_names, "блюдо")
+        item = _resolve(
+            "menu_item", v["menu_item_code"], v["menu_item_name"], lk.menu_items, lk.menu_item_names, lk
+        )
         if v["qty"] < 0:
             raise _RowError(
                 "Количество",
@@ -238,7 +279,7 @@ def _record(template: str, v: dict[str, Any], lk: Lookups, warn: list[str]) -> d
         supplier = None
         if v["supplier_code"] or v["supplier_name"]:
             supplier = _resolve(
-                v["supplier_code"], v["supplier_name"], lk.suppliers, lk.supplier_names, "поставщик"
+                "supplier", v["supplier_code"], v["supplier_name"], lk.suppliers, lk.supplier_names, lk
             )
         qty = _to_base(v["qty"], v["unit"], product)
         if qty <= 0:
@@ -276,6 +317,8 @@ def validate(template: Template, table: Table, lookups: Lookups, *, today: date)
     records: list[dict[str, Any]] = []
     errors: list[Issue] = []
     warnings: list[Issue] = []
+    unmatched: dict[tuple[str, str], Unmatched] = {}
+    waiting_days: list[date] = []  # dates of rows that wait for a name match: still part of the file's period
     for number, cells in table.rows:
         warn: list[str] = []
         try:
@@ -283,6 +326,14 @@ def validate(template: Template, table: Table, lookups: Lookups, *, today: date)
             record = _record(template.name, values, lookups, warn)
         except _RowError as e:
             errors.append(Issue(number, e.column, e.message))
+            continue
+        except _NotFound as e:
+            item = unmatched.setdefault(
+                (e.kind, source_key(e.code, e.name)), Unmatched(e.kind, e.code, e.name)
+            )
+            item.rows.append(number)
+            if isinstance(values.get("day"), date):
+                waiting_days.append(values["day"])
             continue
         day = record.get("day")
         if isinstance(day, date) and day > today:
@@ -294,8 +345,8 @@ def validate(template: Template, table: Table, lookups: Lookups, *, today: date)
         warnings.append(Issue(None, None, f"пропущено строк итогов: {table.skipped_totals}"))
     if table.unmapped:
         warnings.append(Issue(None, None, "колонки не используются: " + ", ".join(table.unmapped)))
-    days = [r["day"] for r in records if "day" in r]
-    result = Result(records, errors, warnings, rows_total=len(table.rows))
+    days = [r["day"] for r in records if "day" in r] + waiting_days
+    result = Result(records, errors, warnings, rows_total=len(table.rows), unmatched=list(unmatched.values()))
     if days:
         result.period_from, result.period_to = min(days), max(days)
     if len(errors) > MAX_ISSUES:

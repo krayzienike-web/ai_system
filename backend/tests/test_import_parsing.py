@@ -84,9 +84,9 @@ def test_pretty_xlsx_with_title_and_totals_keeps_file_row_numbers() -> None:
     assert table.header_row == 3 and table.skipped_totals == 1
     r = validate(t, table, lookups(), today=TODAY)
     assert len(r.records) == 1
-    assert [(e.row, e.message) for e in r.errors] == [
-        (5, "неизвестный блюдо «M9» — сначала загрузите справочник")
-    ]
+    # An unknown dish is not an error but a name to match once.
+    assert r.errors == []
+    assert [(u.kind, u.code, u.rows) for u in r.unmatched] == [("menu_item", "M9", [5])]
     assert any("итогов" in w.message for w in r.warnings)
 
 
@@ -122,7 +122,8 @@ def test_amount_check_is_a_warning_and_bad_values_are_errors() -> None:
     r = run("receipts", text)
     assert len(r.records) == 2 and r.records[0]["supplier_id"] == SUP.id
     assert [w.row for w in r.warnings] == [3]
-    assert [(e.row, e.column) for e in r.errors] == [(4, "Количество"), (5, "Дата"), (6, None)]
+    assert [(e.row, e.column) for e in r.errors] == [(4, "Количество"), (5, "Дата")]
+    assert [(u.kind, u.name, u.rows) for u in r.unmatched] == [("supplier", "Молочный двор", [6])]
     assert "в будущем" in r.errors[1].message
 
 
@@ -145,8 +146,20 @@ def test_inventory_and_write_offs() -> None:
 def test_reference_templates() -> None:
     p = run("products", "Код;Наименование;Базовая ед.\nP9;Мука;кг\nP10;Соль;г\n")
     assert p.records[0]["base_unit"] == "kg"
+    # Names match after normalisation: case, «ё», punctuation and spaces do not matter.
+    sales = run("sales", "Дата;Блюдо;Кол-во;Сумма\n01.10.2026;  МАРГАРИТА. ;1;580\n")
+    assert sales.records[0]["menu_item_id"] == MARG.id
     assert p.errors[0].row == 3 and "кг, л или шт" in p.errors[0].message
     s = run("suppliers", "Код;Название;ИНН\nS2;Мясной ряд;77071234\n")
     assert s.errors[0].column == "ИНН"
     rec = run("recipes", "Код блюда;Код товара;Брутто;Ед. изм.;Действует с\nM1;P1;120;г;01.08.2026\n")
     assert rec.records[0]["gross_qty"] == Decimal("0.120")
+
+
+def test_period_includes_rows_waiting_for_a_name_match() -> None:
+    r = run(
+        "write_offs",
+        "Дата;Товар;Количество\n01.10.2026;Моцарелла фиор ди латте;1\n05.10.2026;Сыр Моцарелла;2\n",
+    )
+    assert len(r.records) == 1 and r.unmatched[0].rows == [2]
+    assert (r.period_from, r.period_to) == (date(2026, 10, 1), date(2026, 10, 5))

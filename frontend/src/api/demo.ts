@@ -1,7 +1,7 @@
 // Standalone demo mode (VITE_DEMO=1): the prototype runs without the backend, e.g. as a shared link.
 // Mirrors the API's access rules: a director sees only their own restaurant.
 import { RESTAURANTS } from "../mock/data";
-import { DEMO_TEMPLATES, demoBatchAction, demoBatches, demoFreshness, demoUpload } from "./demoImports";
+import { DEMO_PRODUCTS, DEMO_TEMPLATES, demoBatchAction, demoBatches, demoFreshness, demoMatch, demoUpload } from "./demoImports";
 import type { Me, Restaurant, Role } from "./types";
 
 export const DEMO_PASSWORD = "demo12345";
@@ -52,6 +52,10 @@ export function demoRequest(path: string, init: RequestInit, token: string | nul
   if (path === "/imports/freshness") return demoFreshness(own);
   if (path === "/imports" && init.method === "POST") return demoUpload(init.body as FormData);
   if (path === "/imports") return demoBatches(own);
+  if (path === "/catalog/product") return DEMO_PRODUCTS;
+  if (path.startsWith("/catalog/")) return [];
+  const matching = /^\/imports\/([^/]+)\/match$/.exec(path);
+  if (matching) return demoMatch(matching[1]!, String(init.body));
   const action = /^\/imports\/([^/]+)\/(publish|rollback)$/.exec(path);
   if (action) return demoBatchAction(action[1]!, action[2] as "publish" | "rollback");
   throw new Error(`Demo mode: ${path} is not available`);

@@ -3,9 +3,10 @@ from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 
+from app.catalog.models import AliasKind
 from app.core.deps import SessionDep, require
 from app.core.errors import NotFoundError
 from app.core.period import TodayDep
@@ -47,6 +48,7 @@ class BatchOut(BaseModel):
     errors: list[dict[str, Any]]
     warnings: list[dict[str, Any]]
     column_map: dict[str, str]
+    unmatched: list[dict[str, Any]]
     created_at: datetime
     published_at: datetime | None
 
@@ -117,6 +119,37 @@ async def upload(
         filename=file.filename or "file",
         raw=raw,
         today=today,
+    )
+    out = BatchOut.of(batch)
+    session.commit()
+    return out
+
+
+class MatchIn(BaseModel):
+    kind: AliasKind
+    key: str = Field(min_length=1, max_length=300)
+    target_id: UUID
+
+
+class MatchesIn(BaseModel):
+    matches: list[MatchIn] = Field(min_length=1, max_length=500)
+
+
+class CatalogOption(BaseModel):
+    id: UUID
+    code: str
+    name: str
+
+
+@router.get("/catalog/{kind}")
+def list_catalog(kind: AliasKind, ctx: CanRead, session: SessionDep) -> list[CatalogOption]:
+    return [CatalogOption(**o) for o in service.catalog_options(session, kind)]
+
+
+@router.post("/imports/{batch_id}/match")
+def match(batch_id: UUID, body: MatchesIn, ctx: CanRead, session: SessionDep, today: TodayDep) -> BatchOut:
+    batch = service.match(
+        session, ctx, batch_id, [(m.kind, m.key, m.target_id) for m in body.matches], today=today
     )
     out = BatchOut.of(batch)
     session.commit()

@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "./client";
-import type { Freshness, ImportBatch, ImportTemplate, Me, Restaurant } from "./types";
+import type { CatalogOption, Freshness, ImportBatch, ImportTemplate, MatchKind, Me, Restaurant } from "./types";
 
 export const useMe = () => useQuery({ queryKey: ["me"], queryFn: () => api<Me>("/auth/me") });
 
@@ -36,6 +36,18 @@ export function useBatchAction(action: "publish" | "rollback") {
   const client = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => api<ImportBatch>(`/imports/${id}/${action}`, { method: "POST" }),
+    onSuccess: () => client.invalidateQueries({ queryKey: ["imports"] }),
+  });
+}
+
+export const useCatalog = (kind: MatchKind) =>
+  useQuery({ queryKey: ["catalog", kind], queryFn: () => api<CatalogOption[]>(`/catalog/${kind}`) });
+
+export function useMatchNames() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, matches }: { id: string; matches: { kind: MatchKind; key: string; target_id: string }[] }) =>
+      api<ImportBatch>(`/imports/${id}/match`, { method: "POST", body: JSON.stringify({ matches }) }),
     onSuccess: () => client.invalidateQueries({ queryKey: ["imports"] }),
   });
 }

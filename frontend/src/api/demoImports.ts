@@ -2,7 +2,7 @@
 // (backend/app/imports): the header is found by column names, totals are skipped, the file type is
 // recognised by its header. The server stays the source of truth; this only lets the prototype be clicked.
 import { FRESHNESS, RESTAURANTS } from "../mock/data";
-import type { Freshness, ImportBatch, ImportTemplate } from "./types";
+import type { CatalogOption, Freshness, ImportBatch, ImportTemplate, UnmatchedName } from "./types";
 
 const col = (title: string, required = false, ...synonyms: string[]) => ({ title, required, synonyms });
 const PRODUCT = [col("Код товара", false, "артикул"), col("Товар", false, "номенклатура", "наименование товара")];
@@ -21,6 +21,52 @@ export const DEMO_TEMPLATES: ImportTemplate[] = [
 
 const batches: ImportBatch[] = [];
 let seq = 0;
+
+// The network's products (same as the synthetic network on the server) and names remembered in this session.
+export const DEMO_PRODUCTS: CatalogOption[] = [
+  "Сыр Моцарелла", "Сыр Пармезан", "Сыр Грана Падано", "Сливки 33%", "Мука пшеничная", "Томаты", "Куриное филе",
+  "Говядина вырезка", "Лосось охлажденный", "Руккола", "Картофель фри замороженный", "Хлеб чиабатта", "Яйцо куриное",
+  "Масло оливковое", "Паста спагетти", "Салат романо",
+].map((name, i) => ({ id: `P${String(i + 1).padStart(2, "0")}`, code: `P${String(i + 1).padStart(2, "0")}`, name }));
+const remembered = new Map<string, string>();
+
+const matchKey = (s: string) => s.toLowerCase().replace(/ё/g, "е").replace(/[^\p{L}\p{N}%]+/gu, " ").trim();
+const words = (s: string) => matchKey(s).split(" ").filter((w) => w.length >= 4);
+/** Shared words, abbreviations included — a simplified copy of backend/app/imports/matching.py. */
+function similarity(a: string, b: string) {
+  const wa = words(a);
+  const wb = words(b);
+  if (!wa.length || !wb.length) return 0;
+  const hits = wa.filter((x) => wb.some((y) => y.startsWith(x) || x.startsWith(y))).length;
+  return Math.round(((hits / Math.min(wa.length, wb.length) + hits / Math.max(wa.length, wb.length)) / 2) * 1000) / 1000;
+}
+
+function unmatchedProducts(facts: string[][], column: number | undefined, firstRow: number): UnmatchedName[] {
+  if (column === undefined) return [];
+  const known = new Set(DEMO_PRODUCTS.map((p) => matchKey(p.name)));
+  const found = new Map<string, UnmatchedName>();
+  facts.forEach((r, i) => {
+    const name = (r[column] ?? "").trim();
+    const key = matchKey(name);
+    if (!name || known.has(key) || remembered.has(key)) return;
+    const item = found.get(key) ?? {
+      kind: "product",
+      code: null,
+      name,
+      key,
+      rows: [],
+      rows_count: 0,
+      candidates: DEMO_PRODUCTS.map((p) => ({ id: p.id, name: p.name, score: similarity(name, p.name) }))
+        .filter((c) => c.score >= 0.3)
+        .sort((x, y) => y.score - x.score)
+        .slice(0, 3),
+    };
+    item.rows.push(firstRow + i);
+    item.rows_count += 1;
+    found.set(key, item);
+  });
+  return [...found.values()];
+}
 
 const norm = (s: string) => s.replace(/\s+/g, " ").trim().replace(/:$/, "").toLowerCase();
 const iso = (ddmmyyyy: string) => {
@@ -76,6 +122,7 @@ export async function demoUpload(form: FormData): Promise<ImportBatch> {
     column_map: {},
     created_at: new Date().toISOString(),
     published_at: null,
+    unmatched: [],
   };
   let batch: ImportBatch;
   if (/\.xlsx?$/i.test(file.name)) {
@@ -111,12 +158,15 @@ export async function demoUpload(form: FormData): Promise<ImportBatch> {
       const facts = data.filter((r) => !totals.includes(r));
       const dateCol = best.found["Дата"];
       const days = dateCol === undefined ? [] : facts.map((r) => iso(r[dateCol] ?? "")).filter((d): d is string => !!d).sort();
+      const unmatched = best.t.name === "sales" ? [] : unmatchedProducts(facts, best.found["Товар"], best.header + 2);
+      const unmatchedRows = unmatched.reduce((n, u) => n + u.rows_count, 0);
       batch = {
         ...base,
         template: best.t.name,
-        status: facts.length ? "validated" : "failed",
+        status: !facts.length ? "failed" : unmatched.length ? "needs_matching" : "validated",
+        unmatched,
         rows_total: facts.length,
-        rows_valid: facts.length,
+        rows_valid: facts.length - unmatchedRows,
         period_from: days[0] ?? null,
         period_to: days.at(-1) ?? null,
         errors: facts.length ? [] : [{ row: null, column: null, message: "В файле нет строк с данными" }],
@@ -127,6 +177,17 @@ export async function demoUpload(form: FormData): Promise<ImportBatch> {
   }
   batches.unshift(batch);
   return batch;
+}
+
+export function demoMatch(id: string, body: string): ImportBatch {
+  const batch = batches.find((b) => b.id === id);
+  if (!batch) throw new Error("Загрузка не найдена");
+  const { matches } = JSON.parse(body) as { matches: { key: string; target_id: string }[] };
+  for (const m of matches) remembered.set(m.key, m.target_id);
+  batch.rows_valid = batch.rows_total;
+  batch.unmatched = [];
+  batch.status = "validated";
+  return { ...batch };
 }
 
 export function demoBatchAction(id: string, action: "publish" | "rollback"): ImportBatch {

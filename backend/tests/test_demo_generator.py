@@ -8,7 +8,7 @@ from datetime import date, datetime
 
 import pytest
 
-from app.demo.generator import COUNT_DAYS, MENU, DemoNetwork, generate, load_plan
+from app.demo.generator import COUNT_DAYS, ERP_NAMES, MENU, DemoNetwork, generate, load_plan
 
 RECIPE = {m[0]: m[5] for m in MENU}
 
@@ -41,7 +41,7 @@ def overuse(net: DemoNetwork, code: str, product: str, start: date, end: date) -
     received = sum(
         _num(r[6]) * (0.001 if r[7] == "г" else 1)
         for r in _rows(net, f"receipts_{code}.csv")
-        if r[4] == product and start < _day(r[0]) <= end
+        if (r[4] == product or r[5] == ERP_NAMES.get(product)) and start < _day(r[0]) <= end
     )
     written_off = sum(
         _num(r[3])
@@ -106,3 +106,18 @@ def test_planted_prices_and_habits(net: DemoNetwork) -> None:
     )
     total = sum(_num(r[3]) for r in _rows(net, "write_offs_R01.csv"))
     assert before_counts / total > 0.5
+
+
+def test_names_from_another_system_are_suggested_correctly(net: DemoNetwork) -> None:
+    """Quality gate for matching: the right product is the first suggestion for every 1С name."""
+    from uuid import uuid4
+
+    from app.demo.generator import PRODUCTS
+    from app.imports.matching import suggest
+
+    ids = {p[0]: uuid4() for p in PRODUCTS}
+    options = [(ids[p[0]], p[1]) for p in PRODUCTS]
+    assert len(net.name_matches) == 5
+    for source, code in net.name_matches.items():
+        best = suggest(source, options)
+        assert best and best[0].id == ids[code], (source, best)

@@ -5,6 +5,7 @@ from datetime import date
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.catalog.models import Product
 from app.core.errors import InvalidError
 from app.demo.generator import DemoNetwork, load_plan
 from app.imports import service
@@ -29,8 +30,13 @@ def load(session: Session, ctx: AccessContext, net: DemoNetwork, *, today: date)
             raw=net.files[name],
             today=today,
         )
+        if batch.status == BatchStatus.NEEDS_MATCHING:
+            # What a person does once: confirm what the other system's names are (generator's answer key).
+            codes = {p.code: p.id for p in session.execute(select(Product)).scalars()}
+            matches = [(u["kind"], u["key"], codes[net.name_matches[u["name"]]]) for u in batch.unmatched]
+            batch = service.match(session, ctx, batch.id, matches, today=today)
         if batch.status != BatchStatus.VALIDATED:
-            raise InvalidError(f"{name}: {batch.errors[:3]}")
+            raise InvalidError(f"{name}: {batch.errors[:3]} {batch.unmatched[:3]}")
         service.publish(session, ctx, batch.id, today=today)
         published[template] = published.get(template, 0) + batch.rows_valid
     return published
