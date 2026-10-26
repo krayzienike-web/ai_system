@@ -15,7 +15,11 @@
   `stages`, `ideas`, `log`, `engine`, `proposals`, `finding_ideas` в его базе). В начале сессии и этапа — прочитать ответы
   (`status: answered`), новые идеи (`source: client`) и предложения по движку (`proposals`, `status: new`) и идеи новых находок (`finding_ideas`, `source: client`),
   разобрать их, перенести в `docs/` и закрыть (`status: closed`, `resolution`; у предложений — `status` и `reply`).
-  Описание модулей движка в `engine` держать в соответствии с `docs/12-analytics-engine.md`. После заметных изменений — обновить
+  Описание модулей движка в `engine` держать в соответствии с `docs/12-analytics-engine.md`.
+  Пороги движка — коллекция `engine_params` (значения в человеческих единицах: 75 = 75%, 0,5 = 0,5 п.п.); заказчик
+  меняет их и отправляет запрос в `rebuilds` (`status: new`). Обработка: перенести значения в
+  `backend/app/analytics/params.py` и `docs/12` (с переводом единиц), прогнать тесты и пересчет демо, затем в штабе
+  `value = proposed`, `status: applied`, у запроса — `status: applied`, `applied_at`, `reply` (что изменилось в находках). После заметных изменений — обновить
   план (`stages`), бэклог (`ideas`) и журнал (`log`). Файлы в `docs/` остаются источником истины, штаб — их зеркало.
 
 ## Незыблемые принципы
