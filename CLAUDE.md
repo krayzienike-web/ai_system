@@ -12,8 +12,8 @@
   заказчику вопросы, срок которых наступил (колонка «Нужно к этапу»). До ответа работать по колонке «Предположение».
 - Новые вопросы, возникшие в работе, — добавлять туда же, а не только в чат.
 - Заказчик отвечает в веб-штабе проекта https://claude.ai/artifact/VTKH9eTedipRYBNoyWaB9q (коллекции `questions`,
-  `stages`, `ideas`, `log`, `engine`, `proposals` в его базе). В начале сессии и этапа — прочитать ответы
-  (`status: answered`), новые идеи (`source: client`) и предложения по движку (`proposals`, `status: new`),
+  `stages`, `ideas`, `log`, `engine`, `proposals`, `finding_ideas` в его базе). В начале сессии и этапа — прочитать ответы
+  (`status: answered`), новые идеи (`source: client`) и предложения по движку (`proposals`, `status: new`) и идеи новых находок (`finding_ideas`, `source: client`),
   разобрать их, перенести в `docs/` и закрыть (`status: closed`, `resolution`; у предложений — `status` и `reply`).
   Описание модулей движка в `engine` держать в соответствии с `docs/12-analytics-engine.md`. После заметных изменений — обновить
   план (`stages`), бэклог (`ideas`) и журнал (`log`). Файлы в `docs/` остаются источником истины, штаб — их зеркало.
