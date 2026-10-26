@@ -78,13 +78,14 @@ async function tryRefresh(): Promise<boolean> {
 export async function api<T>(path: string, init: RequestInit = {}, retry = true): Promise<T> {
   if (DEMO) {
     try {
-      return demoRequest(path, init, tokens.access) as T;
+      return (await demoRequest(path, init, tokens.access)) as T;
     } catch (e) {
       throw e instanceof DemoAuthError ? new ApiError(401, e.message) : e;
     }
   }
   const headers = new Headers(init.headers);
-  if (init.body) headers.set("Content-Type", "application/json");
+  // A file upload (FormData) sets its own multipart content type.
+  if (init.body && !(init.body instanceof FormData)) headers.set("Content-Type", "application/json");
   if (tokens.access) headers.set("Authorization", `Bearer ${tokens.access}`);
   const response = await fetch(`/api${path}`, { ...init, headers });
   if (response.status === 401 && retry && (await tryRefresh())) {

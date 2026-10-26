@@ -78,6 +78,18 @@ def list_batches(ctx: CanRead, session: SessionDep) -> list[BatchOut]:
     return [BatchOut.of(b) for b in rows]
 
 
+class FreshnessOut(BaseModel):
+    restaurant_id: UUID
+    template: str
+    last_date: date | None
+    status: str  # good | stale | missing
+
+
+@router.get("/imports/freshness")
+def get_freshness(ctx: CanRead, session: SessionDep, today: TodayDep) -> list[FreshnessOut]:
+    return [FreshnessOut(**row) for row in service.freshness(session, today=today)]
+
+
 @router.get("/imports/{batch_id}")
 def get_batch(batch_id: UUID, ctx: CanRead, session: SessionDep) -> BatchOut:
     batch = session.get(ImportBatch, batch_id)
@@ -91,8 +103,9 @@ async def upload(
     ctx: CanRead,
     session: SessionDep,
     today: TodayDep,
-    template: Annotated[str, Form()],
     file: Annotated[UploadFile, File()],
+    # Omit to let the file say what it is (recognised by its header).
+    template: Annotated[str | None, Form()] = None,
     restaurant_id: Annotated[UUID | None, Form()] = None,
 ) -> BatchOut:
     raw = await file.read(service.MAX_BYTES + 1)

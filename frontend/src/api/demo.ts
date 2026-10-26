@@ -1,6 +1,7 @@
 // Standalone demo mode (VITE_DEMO=1): the prototype runs without the backend, e.g. as a shared link.
 // Mirrors the API's access rules: a director sees only their own restaurant.
 import { RESTAURANTS } from "../mock/data";
+import { DEMO_TEMPLATES, demoBatchAction, demoBatches, demoFreshness, demoUpload } from "./demoImports";
 import type { Me, Restaurant, Role } from "./types";
 
 export const DEMO_PASSWORD = "demo12345";
@@ -31,7 +32,7 @@ function me(email: string): Me {
 }
 
 /** Handles the few endpoints the prototype calls. The "token" is simply the user's email. */
-export function demoRequest(path: string, init: RequestInit, token: string | null): unknown {
+export function demoRequest(path: string, init: RequestInit, token: string | null): unknown | Promise<unknown> {
   if (path === "/auth/login") {
     const { email, password } = JSON.parse(String(init.body)) as { email: string; password: string };
     const key = email.trim().toLowerCase();
@@ -46,5 +47,12 @@ export function demoRequest(path: string, init: RequestInit, token: string | nul
       (r): Restaurant => ({ id: r.code, code: r.code, name: r.name, city: r.city, format: null, opened_on: null }),
     );
   }
+  const own = viewer.restaurant?.code ?? null;
+  if (path === "/imports/templates") return DEMO_TEMPLATES;
+  if (path === "/imports/freshness") return demoFreshness(own);
+  if (path === "/imports" && init.method === "POST") return demoUpload(init.body as FormData);
+  if (path === "/imports") return demoBatches(own);
+  const action = /^\/imports\/([^/]+)\/(publish|rollback)$/.exec(path);
+  if (action) return demoBatchAction(action[1]!, action[2] as "publish" | "rollback");
   throw new Error(`Demo mode: ${path} is not available`);
 }

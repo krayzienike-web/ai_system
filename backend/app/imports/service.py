@@ -1,18 +1,19 @@
 """Import pipeline: upload → validate → publish (idempotent replace) → rollback. docs/04-data-import.md."""
 
 import hashlib
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import delete, insert, select
+from sqlalchemy import delete, func, insert, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from app.catalog.models import MenuItem, Product, RecipeLine, Supplier
 from app.core.errors import ConflictError, ForbiddenError, InvalidError, NotFoundError
+from app.core.period import last_full_week_end
 from app.imports.models import BatchStatus, ImportBatch
-from app.imports.reader import read_table
+from app.imports.reader import detect_template, read_table
 from app.imports.templates import TEMPLATES, Scope, Template
 from app.imports.validate import Lookups, Ref, Result, validate
 from app.operations.models import InventoryCount, Receipt, Sale, WriteOff
@@ -96,18 +97,23 @@ def upload(
     session: Session,
     ctx: AccessContext,
     *,
-    template_name: str,
+    template_name: str | None,
     restaurant_id: UUID | None,
     filename: str,
     raw: bytes,
     today: date,
 ) -> ImportBatch:
-    template = _template(template_name)
-    _check_access(session, ctx, template, restaurant_id)
     if not raw:
         raise InvalidError("Файл пустой")
     if len(raw) > MAX_BYTES:
         raise InvalidError("Файл больше 20 МБ — разбейте выгрузку на несколько периодов")
+    if template_name is None:
+        # The file says what it is: restaurant facts when a restaurant is chosen, reference data otherwise.
+        scope = Scope.RESTAURANT if restaurant_id is not None else Scope.NETWORK
+        template = detect_template(raw, filename, [t for t in TEMPLATES.values() if t.scope is scope])
+    else:
+        template = _template(template_name)
+    _check_access(session, ctx, template, restaurant_id)
     sha = hashlib.sha256(raw).hexdigest()
     duplicate = session.execute(
         select(ImportBatch.id).where(
@@ -255,3 +261,33 @@ def rollback(session: Session, ctx: AccessContext, batch_id: UUID) -> ImportBatc
         entity_id=batch.id,
     )
     return batch
+
+
+FRESHNESS_TEMPLATES = ("sales", "receipts", "write_offs", "inventory_counts")
+
+
+def freshness(session: Session, *, today: date) -> list[dict[str, Any]]:
+    """For every visible restaurant and kind of facts: data up to which day, and whether that is enough.
+
+    Up to date = there is data within the last full week (purchases and write-offs do not happen every day);
+    stock counts are periodic, so for them only "missing" is flagged.
+    """
+    rows = session.execute(
+        select(ImportBatch.restaurant_id, ImportBatch.template, func.max(ImportBatch.period_to))
+        .where(ImportBatch.status == BatchStatus.PUBLISHED, ImportBatch.restaurant_id.is_not(None))
+        .group_by(ImportBatch.restaurant_id, ImportBatch.template)
+    ).tuples()
+    last = {(restaurant_id, template): day for restaurant_id, template, day in rows}
+    week_start = last_full_week_end(today) - timedelta(days=6)
+    out = []
+    for r in session.execute(select(Restaurant).order_by(Restaurant.code)).scalars():
+        for template in FRESHNESS_TEMPLATES:
+            day = last.get((r.id, template))
+            if day is None:
+                status = "missing"
+            elif template == "inventory_counts" or day >= week_start:
+                status = "good"
+            else:
+                status = "stale"
+            out.append({"restaurant_id": r.id, "template": template, "last_date": day, "status": status})
+    return out

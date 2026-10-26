@@ -182,3 +182,50 @@ def test_demo_network_loads_through_the_pipeline_with_rls(network: Network, owne
         )
         assert codes == ["A1", "A2", "A3", "R01", "R02", "R03"]
         assert s.execute(select(func.count()).select_from(Sale)).scalar_one() == rows["sales"]
+
+
+def test_file_type_is_recognised_without_a_template(
+    client: TestClient, network: Network, catalog: None
+) -> None:
+    hq, a1 = login(client, "admin@a.ru"), network.a.restaurants["A1"]
+    sales = client.post(
+        "/api/imports", headers=hq, data={"restaurant_id": str(a1)}, files={"file": ("x.csv", SALES.encode())}
+    ).json()
+    assert sales["template"] == "sales"
+    counts = "Дата;Товар;Учетный остаток;Фактический остаток\n01.10.2026;Сыр Моцарелла;45;43\n"
+    r = client.post(
+        "/api/imports",
+        headers=hq,
+        data={"restaurant_id": str(a1)},
+        files={"file": ("y.csv", counts.encode())},
+    )
+    assert r.json()["template"] == "inventory_counts"
+    # Without a restaurant only reference data is considered.
+    suppliers = "Код;Название;ИНН\nS1;Сырный дом;7701234567\n"
+    assert (
+        client.post("/api/imports", headers=hq, files={"file": ("z.csv", suppliers.encode())}).json()[
+            "template"
+        ]
+        == "suppliers"
+    )
+    unknown = client.post(
+        "/api/imports", headers=hq, data={"restaurant_id": str(a1)}, files={"file": ("w.csv", b"a;b\n1;2\n")}
+    )
+    assert unknown.status_code == 422 and "Не узнали файл" in unknown.json()["detail"]
+
+
+def test_freshness_per_restaurant_and_isolation(client: TestClient, network: Network, catalog: None) -> None:
+    hq, a1 = login(client, "admin@a.ru"), network.a.restaurants["A1"]
+    publish(client, hq, upload(client, hq, "sales", SALES, a1).json()["id"])
+    rows = client.get("/api/imports/freshness", headers=hq).json()
+    assert len(rows) == 3 * 4
+    a1_sales = next(r for r in rows if r["restaurant_id"] == str(a1) and r["template"] == "sales")
+    # Data up to 02.10, nothing in the last full week 12–18.10: stale.
+    assert (a1_sales["last_date"], a1_sales["status"]) == ("2026-10-02", "stale")
+    assert {r["status"] for r in rows if r["restaurant_id"] != str(a1)} == {"missing"}
+    director = client.get("/api/imports/freshness", headers=login(client, "director2@a.ru")).json()
+    assert {r["restaurant_id"] for r in director} == {str(network.a.restaurants["A2"])}
+    assert (
+        client.get("/api/imports/freshness", headers=login(client, "admin@b.ru")).json()[0]["status"]
+        == "missing"
+    )

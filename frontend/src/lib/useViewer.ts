@@ -5,6 +5,8 @@ export interface Viewer {
   /** Restaurant code of a director (R01…); null for HQ. */
   restaurantCode: string | null;
   name: string;
+  /** HQ admin: may load network reference data (products, recipes…). */
+  isAdmin: boolean;
 }
 
 export function useViewer(): Viewer | null {
@@ -14,6 +16,7 @@ export function useViewer(): Viewer | null {
     isHq: me.role !== "restaurant_director",
     restaurantCode: me.restaurant?.code ?? null,
     name: me.full_name,
+    isAdmin: me.role === "hq_admin",
   };
 }
 

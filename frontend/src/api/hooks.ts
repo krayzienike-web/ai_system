@@ -1,9 +1,41 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "./client";
-import type { Me, Restaurant } from "./types";
+import type { Freshness, ImportBatch, ImportTemplate, Me, Restaurant } from "./types";
 
 export const useMe = () => useQuery({ queryKey: ["me"], queryFn: () => api<Me>("/auth/me") });
 
 export const useRestaurants = () =>
   useQuery({ queryKey: ["restaurants"], queryFn: () => api<Restaurant[]>("/restaurants") });
+
+// ------------------------------------------------------------------ data import
+
+export const useImportTemplates = () =>
+  useQuery({ queryKey: ["imports", "templates"], queryFn: () => api<ImportTemplate[]>("/imports/templates"), staleTime: Infinity });
+
+export const useImports = () => useQuery({ queryKey: ["imports", "list"], queryFn: () => api<ImportBatch[]>("/imports") });
+
+export const useFreshness = () =>
+  useQuery({ queryKey: ["imports", "freshness"], queryFn: () => api<Freshness[]>("/imports/freshness") });
+
+export function useUploadImport() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({ file, restaurantId, template }: { file: File; restaurantId: string | null; template: string | null }) => {
+      const form = new FormData();
+      form.append("file", file);
+      if (restaurantId) form.append("restaurant_id", restaurantId);
+      if (template) form.append("template", template);
+      return api<ImportBatch>("/imports", { method: "POST", body: form });
+    },
+    onSuccess: () => client.invalidateQueries({ queryKey: ["imports"] }),
+  });
+}
+
+export function useBatchAction(action: "publish" | "rollback") {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api<ImportBatch>(`/imports/${id}/${action}`, { method: "POST" }),
+    onSuccess: () => client.invalidateQueries({ queryKey: ["imports"] }),
+  });
+}

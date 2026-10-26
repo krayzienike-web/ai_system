@@ -22,6 +22,7 @@ import { useMe } from "../api/hooks";
 import { ROLE_LABELS } from "../api/types";
 import { Logo, LogoMark } from "../brand/Logo";
 import { cx } from "../ds/primitives";
+import { DEMO } from "../api/client";
 import { PERIOD } from "../mock/data";
 import { PeriodPicker } from "./PeriodPicker";
 import { usePrototype } from "../state/prototype";
@@ -161,7 +162,7 @@ export function Shell() {
             <PeriodPicker />
             <div className="hidden min-w-0 items-center gap-2 text-sm text-ink-2 md:flex">
               <span>данные обновлены {PERIOD.dataUntil.slice(0, 5)}</span>
-              <span className="rounded-full bg-spark/25 px-2 py-0.5 text-[11px] font-medium text-ink">Прототип · демо-данные</span>
+              {DEMO && <span className="rounded-full bg-spark/25 px-2 py-0.5 text-[11px] font-medium text-ink">Прототип · демо-данные</span>}
             </div>
             <button
               type="button"

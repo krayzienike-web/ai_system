@@ -71,8 +71,10 @@ def _complete(found: dict[str, int], template: Template) -> bool:
     return required and all(any(n in found for n in group) for group in template.one_of)
 
 
-def read_table(content: bytes, filename: str, template: Template) -> Table:
-    rows = read_rows(content, filename)
+def read_table(
+    content: bytes, filename: str, template: Template, rows: list[list[str]] | None = None
+) -> Table:
+    rows = read_rows(content, filename) if rows is None else rows
     best: tuple[int, dict[str, int], list[str]] | None = None
     for i, cells in enumerate(rows[:HEADER_SEARCH_ROWS]):
         found, unmapped = map_header(cells, template)
@@ -93,3 +95,22 @@ def read_table(content: bytes, filename: str, template: Template) -> Table:
             continue
         table.rows.append((number, cells))
     return table
+
+
+def detect_template(content: bytes, filename: str, candidates: list[Template]) -> Template:
+    """What is this file? The template whose header fits best: all its required columns are present,
+    and among those the one that recognises the most columns. The user does not have to say it."""
+    rows = read_rows(content, filename)
+    best: tuple[int, Template] | None = None
+    for template in candidates:
+        try:
+            table = read_table(content, filename, template, rows)
+        except InvalidError:
+            continue
+        score = len(table.column_map)
+        if best is None or score > best[0]:
+            best = (score, template)
+    if best is None:
+        titles = ", ".join(t.title.lower() for t in candidates)
+        raise InvalidError(f"Не узнали файл. Ожидали один из: {titles}. Проверьте строку заголовков")
+    return best[1]
