@@ -51,6 +51,8 @@ class ImportBatch(IdMixin, TenantMixin, TimestampMixin, Base):
     unmatched: Mapped[list[dict[str, Any]]] = mapped_column(
         JSONB, default=list, server_default=text("'[]'::jsonb")
     )
+    # "kind:source_key" of the remembered matches this file relied on when it was published.
+    aliases_used: Mapped[list[str]] = mapped_column(JSONB, default=list, server_default=text("'[]'::jsonb"))
     column_map: Mapped[dict[str, str]] = mapped_column(
         JSONB, default=dict, server_default=text("'{}'::jsonb")
     )

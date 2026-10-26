@@ -9,7 +9,8 @@ from sqlalchemy import delete, func, insert, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
-from app.catalog.models import AliasKind, MenuItem, NameAlias, Product, RecipeLine, Supplier
+from app.catalog.aliases import TARGETS
+from app.catalog.models import MenuItem, NameAlias, Product, RecipeLine, Supplier
 from app.core.errors import ConflictError, ForbiddenError, InvalidError, NotFoundError
 from app.core.period import last_full_week_end
 from app.imports.matching import normalize, suggest
@@ -245,11 +246,52 @@ def publish(session: Session, ctx: AccessContext, batch_id: UUID, *, today: date
     _check_access(session, ctx, template, batch.restaurant_id)
     if batch.status != BatchStatus.VALIDATED:
         raise InvalidError("Опубликовать можно только проверенный файл без ошибок")
-    # Validate again: reference data may have changed since the upload.
-    result, _, _, _ = _run(session, template, batch.raw, batch.filename, today, batch.restaurant_id)
-    if result is None or result.errors or result.unmatched:
-        raise InvalidError("Файл больше не проходит проверку — загрузите его заново")
+    _write(session, batch, template, today)
+    batch.status = BatchStatus.PUBLISHED
+    batch.published_at = datetime.now(UTC)
+    session.flush()
+    audit(
+        session,
+        tenant_id=ctx.tenant_id,
+        user_id=ctx.user_id,
+        action="import.publish",
+        entity="import_batch",
+        entity_id=batch.id,
+        payload={"rows": batch.rows_valid},
+    )
+    return batch
 
+
+def reprocess(session: Session, ctx: AccessContext, batch_id: UUID, *, today: date) -> ImportBatch:
+    """Loads an already published file again with today's reference data and matches —
+    after a wrong match was fixed. Its rows are replaced, nothing is duplicated."""
+    batch = session.get(ImportBatch, batch_id)
+    if batch is None:
+        raise NotFoundError("Загрузка не найдена")
+    template = _template(batch.template)
+    _check_access(session, ctx, template, batch.restaurant_id)
+    if batch.status != BatchStatus.PUBLISHED:
+        raise InvalidError("Пересчитать можно только загруженный файл")
+    _write(session, batch, template, today)
+    session.flush()
+    audit(
+        session,
+        tenant_id=ctx.tenant_id,
+        user_id=ctx.user_id,
+        action="import.reprocess",
+        entity="import_batch",
+        entity_id=batch.id,
+    )
+    return batch
+
+
+def _write(session: Session, batch: ImportBatch, template: Template, today: date) -> None:
+    # Validate again: reference data and matches may have changed since the upload.
+    result, _, _, lk = _run(session, template, batch.raw, batch.filename, today, batch.restaurant_id)
+    if result is None or result.errors or result.unmatched:
+        raise InvalidError("Файл больше не проходит проверку — загрузите его заново, отчет покажет почему")
+    batch.rows_valid = len(result.records)
+    batch.aliases_used = sorted(lk.used)
     if template.scope is Scope.NETWORK:
         _publish_reference(session, batch, template, result.records)
     else:
@@ -274,19 +316,6 @@ def publish(session: Session, ctx: AccessContext, batch_id: UUID, *, today: date
                 for r in result.records
             ],
         )
-    batch.status = BatchStatus.PUBLISHED
-    batch.published_at = datetime.now(UTC)
-    session.flush()
-    audit(
-        session,
-        tenant_id=ctx.tenant_id,
-        user_id=ctx.user_id,
-        action="import.publish",
-        entity="import_batch",
-        entity_id=batch.id,
-        payload={"rows": len(result.records)},
-    )
-    return batch
 
 
 def rollback(session: Session, ctx: AccessContext, batch_id: UUID) -> ImportBatch:
@@ -327,7 +356,7 @@ def freshness(session: Session, *, today: date) -> list[dict[str, Any]]:
         select(ImportBatch.restaurant_id, ImportBatch.template, func.max(ImportBatch.period_to))
         .where(ImportBatch.status == BatchStatus.PUBLISHED, ImportBatch.restaurant_id.is_not(None))
         .group_by(ImportBatch.restaurant_id, ImportBatch.template)
-    ).tuples()
+    )
     last = {(restaurant_id, template): day for restaurant_id, template, day in rows}
     week_start = last_full_week_end(today) - timedelta(days=6)
     out = []
@@ -342,13 +371,6 @@ def freshness(session: Session, *, today: date) -> list[dict[str, Any]]:
                 status = "stale"
             out.append({"restaurant_id": r.id, "template": template, "last_date": day, "status": status})
     return out
-
-
-TARGETS: dict[str, type[Product] | type[MenuItem] | type[Supplier]] = {
-    AliasKind.PRODUCT: Product,
-    AliasKind.MENU_ITEM: MenuItem,
-    AliasKind.SUPPLIER: Supplier,
-}
 
 
 def match(

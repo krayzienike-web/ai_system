@@ -4,6 +4,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from app.auth.api import router as auth_router
+from app.catalog.api import router as catalog_router
 from app.core.config import get_settings
 from app.core.deps import SessionDep
 from app.core.errors import RuleError
@@ -44,6 +45,7 @@ def create_app() -> FastAPI:
     api.include_router(checks_router)
     api.include_router(reports_router)
     api.include_router(imports_router)
+    api.include_router(catalog_router)
     app.include_router(api)
     return app
 

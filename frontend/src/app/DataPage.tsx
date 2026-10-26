@@ -1,9 +1,11 @@
-import { AlertTriangle, CheckCircle2, FileSpreadsheet, Link2, Loader2, RotateCcw, UploadCloud, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, FileSpreadsheet, Link2, Loader2, RotateCcw, Search, Trash2, UploadCloud, XCircle } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { type DragEvent, useRef, useState } from "react";
 
 import { ApiError } from "../api/client";
 import {
+  useAliasEdit,
+  useAliases,
   useBatchAction,
   useCatalog,
   useFreshness,
@@ -13,7 +15,7 @@ import {
   useRestaurants,
   useUploadImport,
 } from "../api/hooks";
-import type { BatchStatus, Freshness, ImportBatch, MatchKind } from "../api/types";
+import type { AffectedFiles, BatchStatus, Freshness, ImportBatch, MatchKind, NameAlias } from "../api/types";
 import { Button, Card, cx, EASE, PageTitle, Pill, QuestionBlock, Reveal, type Tone } from "../ds/primitives";
 import { plural } from "../lib/format";
 import { useViewer } from "../lib/useViewer";
@@ -186,7 +188,9 @@ function Report({ batch, onAgain }: { batch: ImportBatch; onAgain: () => void })
           </dl>
           {Object.keys(current.column_map).length > 0 && (
             <div className="mt-3 flex flex-wrap gap-1.5 text-xs">
-              {Object.entries(current.column_map).map(([title, n]) => (
+              {Object.entries(current.column_map)
+                .sort(([, a], [, b]) => Number(a) - Number(b))
+                .map(([title, n]) => (
                 <span key={title} className="rounded-full border border-line bg-surface px-2.5 py-1 text-ink-2">
                   колонка {n} → <span className="font-medium text-ink">{title}</span>
                 </span>
@@ -502,6 +506,149 @@ function History() {
   );
 }
 
+// ------------------------------------------------------------------ remembered matches
+
+function AliasRow({ alias, onChanged }: { alias: NameAlias; onChanged: (files: AffectedFiles["affected_files"]) => void }) {
+  const viewer = useViewer();
+  const names = useNames();
+  const catalog = useCatalog(alias.kind);
+  const edit = useAliasEdit();
+  const [editing, setEditing] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const editable = alias.restaurant_id !== null || viewer?.isAdmin;
+  const done = (r: AffectedFiles) => {
+    setEditing(false);
+    setConfirmDelete(false);
+    onChanged(r.affected_files);
+  };
+
+  return (
+    <li className="grid gap-2 py-3 text-sm sm:grid-cols-[1fr_1fr_auto] sm:items-center">
+      <span className="min-w-0">
+        <span className="block truncate font-medium">«{alias.source_text}»</span>
+        <span className="block text-xs text-ink-3">
+          {alias.restaurant_id ? names.restaurant(alias.restaurant_id) : "для всей сети"}
+          {alias.files > 0 && ` · ${plural(alias.files, ["файл", "файла", "файлов"])}`}
+        </span>
+      </span>
+      {editing ? (
+        <select
+          defaultValue={alias.target_id}
+          aria-label="Что это на самом деле"
+          onChange={(e) => edit.mutate({ id: alias.id, targetId: e.target.value }, { onSuccess: done })}
+          className="h-9 rounded-[10px] border border-line-strong bg-surface px-2 outline-none focus:border-brand"
+        >
+          {(catalog.data ?? []).map((o) => (
+            <option key={o.id} value={o.id}>
+              {o.name}
+            </option>
+          ))}
+        </select>
+      ) : (
+        <span>
+          <span className="text-ink-3">это </span>
+          <span className="font-medium">{alias.target_name}</span>
+        </span>
+      )}
+      <span className="flex gap-1 sm:justify-end">
+        {editable ? (
+          confirmDelete ? (
+            <>
+              <Button size="sm" variant="danger" onClick={() => edit.mutate({ id: alias.id, targetId: null }, { onSuccess: done })}>
+                Удалить
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setConfirmDelete(false)}>
+                Не надо
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button size="sm" variant="ghost" onClick={() => setEditing((v) => !v)}>
+                {editing ? "Отмена" : "Исправить"}
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setConfirmDelete(true)} aria-label="Удалить соответствие">
+                <Trash2 size={14} />
+              </Button>
+            </>
+          )
+        ) : (
+          <span className="text-xs text-ink-3">меняет управляющая компания</span>
+        )}
+      </span>
+    </li>
+  );
+}
+
+function Aliases() {
+  const names = useNames();
+  const { data: aliases = [] } = useAliases();
+  const reprocess = useBatchAction("reprocess");
+  const [query, setQuery] = useState("");
+  const [affected, setAffected] = useState<AffectedFiles["affected_files"] | null>(null);
+  const [redone, setRedone] = useState<string[]>([]);
+  if (!aliases.length && !affected) return null;
+  const q = query.trim().toLowerCase();
+  const shown = aliases.filter((a) => !q || a.source_text.toLowerCase().includes(q) || a.target_name.toLowerCase().includes(q));
+
+  return (
+    <QuestionBlock
+      question="Какие названия мы запомнили?"
+      answer={`${plural(aliases.length, ["соответствие", "соответствия", "соответствий"])}: как товары, блюда и поставщики называются в других системах. Если где-то ошиблись — исправьте, а мы покажем файлы, которые нужно пересчитать.`}
+    >
+      {affected && (
+        <div className="mb-4 rounded-[14px] bg-info-soft p-4 text-sm">
+          {affected.length ? (
+            <>
+              <div className="font-medium text-ink">Эти файлы загружены со старым соответствием — пересчитайте их:</div>
+              <ul className="mt-2 space-y-1.5">
+                {affected.map((f) => (
+                  <li key={f.id} className="flex flex-wrap items-center gap-2">
+                    <span className="flex-1">
+                      {f.filename} <span className="text-ink-3">· {names.template(f.template)} · {names.restaurant(f.restaurant_id)}</span>
+                    </span>
+                    {redone.includes(f.id) ? (
+                      <span className="inline-flex items-center gap-1 text-gain">
+                        <CheckCircle2 size={14} /> пересчитан
+                      </span>
+                    ) : (
+                      <Button size="sm" disabled={reprocess.isPending} onClick={() => reprocess.mutate(f.id, { onSuccess: () => setRedone((r) => [...r, f.id]) })}>
+                        <RotateCcw size={14} /> Пересчитать
+                      </Button>
+                    )}
+                  </li>
+                ))}
+              </ul>
+              {reprocess.error && (
+                <p className="mt-2 text-loss">{reprocess.error instanceof ApiError ? reprocess.error.message : "Не получилось пересчитать"}</p>
+              )}
+            </>
+          ) : (
+            <span className="text-ink-2">Сохранено. Загруженных по этому соответствию файлов нет — пересчитывать нечего.</span>
+          )}
+        </div>
+      )}
+      {aliases.length > 8 && (
+        <label className="mb-2 flex h-9 max-w-sm items-center gap-2 rounded-[10px] border border-line-strong px-3 text-sm focus-within:border-brand">
+          <Search size={14} className="text-ink-3" />
+          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Найти название" aria-label="Найти название" className="w-full outline-none" />
+        </label>
+      )}
+      <ul className="divide-y divide-line">
+        {shown.map((a) => (
+          <AliasRow
+            key={a.id}
+            alias={a}
+            onChanged={(files) => {
+              setRedone([]);
+              setAffected(files);
+            }}
+          />
+        ))}
+      </ul>
+    </QuestionBlock>
+  );
+}
+
 export function DataPage() {
   const viewer = useViewer();
   if (!viewer) return null;
@@ -516,6 +663,9 @@ export function DataPage() {
       </Reveal>
       <Reveal index={2}>
         <History />
+      </Reveal>
+      <Reveal index={3}>
+        <Aliases />
       </Reveal>
     </div>
   );

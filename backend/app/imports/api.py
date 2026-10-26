@@ -49,6 +49,7 @@ class BatchOut(BaseModel):
     warnings: list[dict[str, Any]]
     column_map: dict[str, str]
     unmatched: list[dict[str, Any]]
+    aliases_used: list[str]
     created_at: datetime
     published_at: datetime | None
 
@@ -159,6 +160,13 @@ def match(batch_id: UUID, body: MatchesIn, ctx: CanRead, session: SessionDep, to
 @router.post("/imports/{batch_id}/publish")
 def publish(batch_id: UUID, ctx: CanRead, session: SessionDep, today: TodayDep) -> BatchOut:
     out = BatchOut.of(service.publish(session, ctx, batch_id, today=today))
+    session.commit()
+    return out
+
+
+@router.post("/imports/{batch_id}/reprocess")
+def reprocess(batch_id: UUID, ctx: CanRead, session: SessionDep, today: TodayDep) -> BatchOut:
+    out = BatchOut.of(service.reprocess(session, ctx, batch_id, today=today))
     session.commit()
     return out
 

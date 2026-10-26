@@ -1,7 +1,17 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "./client";
-import type { CatalogOption, Freshness, ImportBatch, ImportTemplate, MatchKind, Me, Restaurant } from "./types";
+import type {
+  AffectedFiles,
+  CatalogOption,
+  Freshness,
+  ImportBatch,
+  ImportTemplate,
+  MatchKind,
+  Me,
+  NameAlias,
+  Restaurant,
+} from "./types";
 
 export const useMe = () => useQuery({ queryKey: ["me"], queryFn: () => api<Me>("/auth/me") });
 
@@ -32,11 +42,15 @@ export function useUploadImport() {
   });
 }
 
-export function useBatchAction(action: "publish" | "rollback") {
+export function useBatchAction(action: "publish" | "rollback" | "reprocess") {
   const client = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => api<ImportBatch>(`/imports/${id}/${action}`, { method: "POST" }),
-    onSuccess: () => client.invalidateQueries({ queryKey: ["imports"] }),
+    // Publishing changes how many files rely on each remembered match.
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: ["imports"] });
+      void client.invalidateQueries({ queryKey: ["aliases"] });
+    },
   });
 }
 
@@ -48,6 +62,22 @@ export function useMatchNames() {
   return useMutation({
     mutationFn: ({ id, matches }: { id: string; matches: { kind: MatchKind; key: string; target_id: string }[] }) =>
       api<ImportBatch>(`/imports/${id}/match`, { method: "POST", body: JSON.stringify({ matches }) }),
-    onSuccess: () => client.invalidateQueries({ queryKey: ["imports"] }),
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: ["imports"] });
+      void client.invalidateQueries({ queryKey: ["aliases"] });
+    },
+  });
+}
+
+export const useAliases = () => useQuery({ queryKey: ["aliases"], queryFn: () => api<NameAlias[]>("/aliases") });
+
+export function useAliasEdit() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, targetId }: { id: string; targetId: string | null }) =>
+      targetId
+        ? api<AffectedFiles>(`/aliases/${id}`, { method: "PUT", body: JSON.stringify({ target_id: targetId }) })
+        : api<AffectedFiles>(`/aliases/${id}`, { method: "DELETE" }),
+    onSuccess: () => client.invalidateQueries({ queryKey: ["aliases"] }),
   });
 }

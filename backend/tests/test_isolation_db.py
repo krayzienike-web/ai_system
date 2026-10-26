@@ -8,7 +8,7 @@ from collections.abc import Iterator
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import Engine, text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 
@@ -130,3 +130,40 @@ def test_role_scope_constraint(app_session: Session, network: Network) -> None:
             ),
             {"id": uuid4(), "tid": network.a.id, "uid": network.a.users["analyst@a.ru"]},
         )
+
+
+def test_director_cannot_change_or_delete_network_wide_name_matches(
+    app_session: Session, network: Network, owner_engine: Engine
+) -> None:
+    a1 = network.a.restaurants["A1"]
+    with owner_engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO name_aliases "
+                "(tenant_id, restaurant_id, kind, source_key, source_text, target_id) "
+                "VALUES (:t, NULL, 'product', 'моцарелла фиор', 'Моцарелла фиор', :x), "
+                "(:t, :r, 'product', 'руккола свежая', 'Руккола свежая', :x)"
+            ),
+            {"t": network.a.id, "r": a1, "x": uuid4()},
+        )
+    ctx = RlsContext(network.a.id, network.a.users["director1@a.ru"], False, frozenset({a1}))
+    apply_rls_context(app_session, ctx)
+    assert _count(app_session, "name_aliases") == 2  # reads network-wide and own
+    moved = app_session.execute(
+        text("UPDATE name_aliases SET restaurant_id = :r WHERE restaurant_id IS NULL"), {"r": a1}
+    )
+    deleted = app_session.execute(text("DELETE FROM name_aliases WHERE restaurant_id IS NULL"))
+    assert moved.rowcount == 0 and deleted.rowcount == 0  # type: ignore[attr-defined]
+    with pytest.raises(DBAPIError):
+        app_session.execute(
+            text(
+                "INSERT INTO name_aliases "
+                "(tenant_id, restaurant_id, kind, source_key, source_text, target_id) "
+                "VALUES (:t, NULL, 'product', 'x', 'x', :x)"
+            ),
+            {"t": network.a.id, "x": uuid4()},
+        )
+    app_session.rollback()
+    apply_rls_context(app_session, ctx)
+    own = app_session.execute(text("DELETE FROM name_aliases WHERE restaurant_id = :r"), {"r": a1})
+    assert own.rowcount == 1  # type: ignore[attr-defined]

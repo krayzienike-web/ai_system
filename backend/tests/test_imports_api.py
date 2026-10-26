@@ -332,6 +332,114 @@ def test_matching_rules_and_isolation(
     # In the database, a director cannot write a network-wide match (row-level security).
     with owner_engine.connect() as c:
         policy = c.execute(
-            text("SELECT with_check FROM pg_policies WHERE tablename = 'name_aliases'")
+            text("SELECT with_check FROM pg_policies WHERE policyname = 'name_aliases_insert'")
         ).scalar_one()
     assert "restaurant_id IS NOT NULL" in policy
+
+
+def _match_all(
+    client: TestClient, headers: dict[str, str], batch: dict[str, Any], target: str
+) -> dict[str, Any]:
+    options = {o["name"]: o["id"] for o in client.get("/api/catalog/product", headers=headers).json()}
+    matches = [
+        {
+            "kind": "product",
+            "key": u["key"],
+            "target_id": options[target if "Моцарелла" in u["name"] else "Сливки 33%"],
+        }
+        for u in batch["unmatched"]
+    ]
+    r = client.post(f"/api/imports/{batch['id']}/match", headers=headers, json={"matches": matches})
+    body: dict[str, Any] = r.json()
+    return body
+
+
+def test_wrong_match_is_fixed_and_files_are_reprocessed(
+    client: TestClient, network: Network, catalog: None, owner_engine: Engine
+) -> None:
+    director, a1 = login(client, "director1@a.ru"), network.a.restaurants["A1"]
+    # A mistake: the 1С mozzarella matched to cream (both units would fail, so use the same unit family).
+    text_1c = RECEIPTS_1C.replace(";кг;", ";л;")
+    batch = upload(client, director, "receipts", text_1c, a1).json()
+    publish(client, director, _match_all(client, director, batch, "Сливки 33%")["id"])
+
+    rows = client.get("/api/aliases", headers=director).json()
+    wrong = next(a for a in rows if a["source_text"].startswith("Моцарелла"))
+    assert (wrong["target_name"], wrong["restaurant_id"], wrong["files"]) == ("Сливки 33%", str(a1), 1)
+
+    # Fixing it lists the files built on it; re-processing makes the numbers follow the fix.
+    options = {o["name"]: o["id"] for o in client.get("/api/catalog/product", headers=director).json()}
+    changed = client.put(
+        f"/api/aliases/{wrong['id']}", headers=director, json={"target_id": options["Сыр Моцарелла"]}
+    )
+    assert [f["id"] for f in changed.json()["affected_files"]] == [batch["id"]]
+    # Litres do not convert to the kilograms of mozzarella: the file must be corrected, not silently reloaded.
+    assert client.post(f"/api/imports/{batch['id']}/reprocess", headers=director).status_code == 422
+
+
+def test_reprocess_applies_the_fixed_match(
+    client: TestClient, network: Network, catalog: None, owner_engine: Engine
+) -> None:
+    director, a1 = login(client, "director1@a.ru"), network.a.restaurants["A1"]
+    only_mozz = "Дата;Номенклатура;Количество;Сумма\n01.10.2026;Моцарелла фиор ди латте 45%;5;3100\n"
+    with owner_engine.begin() as c:  # a product with the same unit to be matched by mistake
+        c.execute(
+            text(
+                "INSERT INTO products (tenant_id, code, name, base_unit) "
+                "VALUES (:t, 'P9', 'Сыр Пармезан', 'kg')"
+            ),
+            {"t": network.a.id},
+        )
+    batch = upload(client, director, "receipts", only_mozz, a1).json()
+    options = {o["name"]: o["id"] for o in client.get("/api/catalog/product", headers=director).json()}
+    key = batch["unmatched"][0]["key"]
+    client.post(
+        f"/api/imports/{batch['id']}/match",
+        headers=director,
+        json={"matches": [{"kind": "product", "key": key, "target_id": options["Сыр Пармезан"]}]},
+    )
+    publish(client, director, batch["id"])
+    alias = client.get("/api/aliases", headers=director).json()[0]
+    client.put(f"/api/aliases/{alias['id']}", headers=director, json={"target_id": options["Сыр Моцарелла"]})
+    assert client.post(f"/api/imports/{batch['id']}/reprocess", headers=director).status_code == 200
+    with owner_engine.connect() as c:
+        name = c.execute(
+            text("SELECT p.name FROM receipts r JOIN products p ON p.id = r.product_id")
+        ).scalar_one()
+    assert name == "Сыр Моцарелла"
+
+
+def test_alias_visibility_and_rights(client: TestClient, network: Network, catalog: None) -> None:
+    hq, director1, director2 = (
+        login(client, "admin@a.ru"),
+        login(client, "director1@a.ru"),
+        login(client, "director2@a.ru"),
+    )
+    hq_batch = upload(client, hq, "receipts", RECEIPTS_1C, network.a.restaurants["A3"]).json()
+    _match_all(client, hq, hq_batch, "Сыр Моцарелла")  # network-wide
+    own = upload(
+        client,
+        director1,
+        "receipts",
+        RECEIPTS_1C.replace("Сливки 33% (Молочный двор)", "Сливки жирн."),
+        network.a.restaurants["A1"],
+    ).json()
+    _match_all(client, director1, own, "Сыр Моцарелла")  # A1 only: just the cream
+    seen1 = {
+        (a["source_text"], a["restaurant_id"] is None)
+        for a in client.get("/api/aliases", headers=director1).json()
+    }
+    seen2 = {
+        (a["source_text"], a["restaurant_id"] is None)
+        for a in client.get("/api/aliases", headers=director2).json()
+    }
+    assert ("Сливки жирн.", False) in seen1 and ("Сливки жирн.", False) not in seen2
+    assert ("Моцарелла фиор ди латте 45%", True) in seen1 and ("Моцарелла фиор ди латте 45%", True) in seen2
+    network_alias = next(
+        a for a in client.get("/api/aliases", headers=director1).json() if a["restaurant_id"] is None
+    )
+    assert client.delete(f"/api/aliases/{network_alias['id']}", headers=director1).status_code == 403
+    a1_alias = next(a for a in client.get("/api/aliases", headers=director1).json() if a["restaurant_id"])
+    assert client.delete(f"/api/aliases/{a1_alias['id']}", headers=director2).status_code == 404
+    assert client.get("/api/aliases", headers=login(client, "admin@b.ru")).json() == []
+    assert client.delete(f"/api/aliases/{network_alias['id']}", headers=hq).status_code == 200

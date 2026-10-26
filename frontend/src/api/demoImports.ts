@@ -2,7 +2,7 @@
 // (backend/app/imports): the header is found by column names, totals are skipped, the file type is
 // recognised by its header. The server stays the source of truth; this only lets the prototype be clicked.
 import { FRESHNESS, RESTAURANTS } from "../mock/data";
-import type { CatalogOption, Freshness, ImportBatch, ImportTemplate, UnmatchedName } from "./types";
+import type { AffectedFiles, CatalogOption, Freshness, ImportBatch, ImportTemplate, NameAlias, UnmatchedName } from "./types";
 
 const col = (title: string, required = false, ...synonyms: string[]) => ({ title, required, synonyms });
 const PRODUCT = [col("Код товара", false, "артикул"), col("Товар", false, "номенклатура", "наименование товара")];
@@ -28,7 +28,7 @@ export const DEMO_PRODUCTS: CatalogOption[] = [
   "Говядина вырезка", "Лосось охлажденный", "Руккола", "Картофель фри замороженный", "Хлеб чиабатта", "Яйцо куриное",
   "Масло оливковое", "Паста спагетти", "Салат романо",
 ].map((name, i) => ({ id: `P${String(i + 1).padStart(2, "0")}`, code: `P${String(i + 1).padStart(2, "0")}`, name }));
-const remembered = new Map<string, string>();
+const remembered = new Map<string, { id: string; text: string; target: string; restaurant: string | null; batches: Set<string>; at: string }>();
 
 const matchKey = (s: string) => s.toLowerCase().replace(/ё/g, "е").replace(/[^\p{L}\p{N}%]+/gu, " ").trim();
 const words = (s: string) => matchKey(s).split(" ").filter((w) => w.length >= 4);
@@ -183,16 +183,47 @@ export function demoMatch(id: string, body: string): ImportBatch {
   const batch = batches.find((b) => b.id === id);
   if (!batch) throw new Error("Загрузка не найдена");
   const { matches } = JSON.parse(body) as { matches: { key: string; target_id: string }[] };
-  for (const m of matches) remembered.set(m.key, m.target_id);
+  for (const m of matches) {
+    const text = batch.unmatched.find((u) => u.key === m.key)?.name ?? m.key;
+    remembered.set(m.key, { id: `alias-${m.key}`, text, target: m.target_id, restaurant: batch.restaurant_id, batches: new Set([batch.id]), at: new Date().toISOString() });
+  }
   batch.rows_valid = batch.rows_total;
   batch.unmatched = [];
   batch.status = "validated";
   return { ...batch };
 }
 
-export function demoBatchAction(id: string, action: "publish" | "rollback"): ImportBatch {
+export function demoAliases(restaurantId: string | null): NameAlias[] {
+  return [...remembered.values()]
+    .filter((a) => !restaurantId || !a.restaurant || a.restaurant === restaurantId)
+    .map((a) => ({
+      id: a.id,
+      kind: "product",
+      source_text: a.text,
+      target_id: a.target,
+      target_name: DEMO_PRODUCTS.find((p) => p.id === a.target)?.name ?? a.target,
+      restaurant_id: a.restaurant,
+      created_at: a.at,
+      files: [...a.batches].filter((id) => batches.find((b) => b.id === id)?.status === "published").length,
+    }));
+}
+
+export function demoAliasEdit(id: string, init: RequestInit): AffectedFiles {
+  const entry = [...remembered.entries()].find(([, a]) => a.id === id);
+  if (!entry) throw new Error("Соответствие не найдено");
+  const [key, alias] = entry;
+  const affected = batches
+    .filter((b) => alias.batches.has(b.id) && b.status === "published")
+    .map((b) => ({ id: b.id, filename: b.filename, template: b.template, restaurant_id: b.restaurant_id }));
+  if (init.method === "DELETE") remembered.delete(key);
+  else alias.target = (JSON.parse(String(init.body)) as { target_id: string }).target_id;
+  return { affected_files: affected };
+}
+
+export function demoBatchAction(id: string, action: "publish" | "rollback" | "reprocess"): ImportBatch {
   const batch = batches.find((b) => b.id === id);
   if (!batch) throw new Error("Загрузка не найдена");
+  if (action === "reprocess") return { ...batch };
   batch.status = action === "publish" ? "published" : "rolled_back";
   if (action === "publish") batch.published_at = new Date().toISOString();
   return { ...batch };

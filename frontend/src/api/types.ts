@@ -86,3 +86,18 @@ export interface Freshness {
   last_date: string | null;
   status: "good" | "stale" | "missing";
 }
+
+export interface NameAlias {
+  id: string;
+  kind: MatchKind;
+  source_text: string;
+  target_id: string;
+  target_name: string;
+  restaurant_id: string | null; // null: for the whole network
+  created_at: string;
+  files: number;
+}
+
+export interface AffectedFiles {
+  affected_files: { id: string; filename: string; template: string; restaurant_id: string | null }[];
+}

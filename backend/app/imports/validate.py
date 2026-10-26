@@ -45,6 +45,7 @@ class Lookups:
     suppliers: dict[str, Ref] = field(default_factory=dict)
     supplier_names: dict[str, Ref] = field(default_factory=dict)
     aliases: dict[tuple[str, str], Ref] = field(default_factory=dict)  # (kind, source_key) -> ref
+    used: set[str] = field(default_factory=set)  # "kind:source_key" of aliases the file relied on
 
 
 @dataclass
@@ -196,6 +197,7 @@ def _resolve(
         return by_name[normalize(name)]
     for key in (normalize(name) if name else None, f"code:{code}" if code else None):
         if key and (kind, key) in lk.aliases:
+            lk.used.add(f"{kind}:{key}")
             return lk.aliases[(kind, key)]
     raise _NotFound(kind, code, name)
 
