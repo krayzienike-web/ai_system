@@ -16,7 +16,8 @@ from sqlalchemy.orm import Session
 
 from app.analytics import params
 from app.analytics.drafts import pct, rub
-from app.catalog.models import MenuItem, Product, RecipeLine
+from app.analytics.stats import med
+from app.catalog.models import MenuItem, Product, RecipeLine, Supplier
 from app.catalog.recipes import Line, explode, lines_on
 from app.imports.models import ImportBatch
 from app.insights.models import Finding
@@ -37,6 +38,8 @@ def verify(session: Session, finding: Finding) -> dict[str, Any]:
         return _m1_restaurant(session, finding)
     if finding.module == "M1":
         return _m1_network(session, finding)
+    if finding.module == "M3" and finding.restaurant_id is not None:
+        return _m3(session, finding)
     return {
         "module": finding.module,
         "supported": False,
@@ -415,4 +418,162 @@ INTERPRETATION_M1_NET = [
     "а не кухонь.",
     "Деньги при этом не теряются, но фудкост и потери по сети считаются неверно, а перерасход в отдельных "
     "ресторанах маскируется.",
+]
+
+
+def _m3(session: Session, f: Finding) -> dict[str, Any]:
+    ev = f.evidence or {}
+    product = session.execute(select(Product).where(Product.code == ev["product"])).scalar_one()
+    restaurant = session.get(Restaurant, f.restaurant_id)
+    assert restaurant is not None and f.period_from and f.period_to
+    unit = UNITS.get(product.base_unit, product.base_unit)
+    start, end = f.period_from, f.period_to
+    suppliers = dict(session.execute(select(Supplier.id, Supplier.name)).all())
+    codes = dict(session.execute(select(Restaurant.id, Restaurant.code)).all())
+    receipts = list(
+        session.execute(
+            select(Receipt)
+            .where(Receipt.product_id == product.id, Receipt.day >= start, Receipt.day <= end)
+            .order_by(Receipt.day)
+        ).scalars()
+    )
+    own = [r for r in receipts if r.restaurant_id == restaurant.id]
+    files = _files(session, {r.import_batch_id for r in own})
+    # Every other restaurant's weighted price in the same window: the network the restaurant is compared with.
+    totals: dict[UUID, list[Decimal]] = defaultdict(lambda: [Decimal(0), Decimal(0), Decimal(0)])
+    for r in receipts:
+        t = totals[r.restaurant_id]
+        t[0] += r.amount
+        t[1] += r.qty
+        t[2] += 1
+    others = {
+        rid: t[0] / t[1]
+        for rid, t in totals.items()
+        if rid != restaurant.id and t[2] >= params.M3_MIN_RECEIPTS
+    }
+    qty = sum((r.qty for r in own), Decimal(0))
+    paid = sum((r.amount for r in own), Decimal(0))
+    steps: list[dict[str, Any]] = [
+        {
+            "id": "own",
+            "label": f"Закупки ресторана за {start:%d.%m}–{end:%d.%m}",
+            "value": _q(qty),
+            "unit": unit,
+            "rows": [
+                {
+                    "day": r.day.isoformat(),
+                    "doc": r.doc_no,
+                    "supplier": suppliers.get(r.supplier_id, "—") if r.supplier_id else "—",
+                    "qty": _q(r.qty),
+                    "amount": _q(r.amount, Decimal("0.01")),
+                    "price": _q(r.amount / r.qty, Decimal("0.01")),
+                    "file": files.get(r.import_batch_id),
+                }
+                for r in own
+            ],
+        },
+        {
+            "id": "network",
+            "label": "Средняя цена в других ресторанах сети за то же время",
+            "value": None,
+            "unit": "",
+            "rows": [
+                {"restaurant": codes.get(rid, "—"), "price": _q(p, Decimal("0.01"))}
+                for rid, p in sorted(others.items(), key=lambda kv: codes.get(kv[0], ""))
+            ],
+        },
+    ]
+    if qty <= 0 or len(others) < 2:
+        return {
+            "module": "M3",
+            "supported": True,
+            "steps": steps,
+            "result": [],
+            "rules": [],
+            "checks": [{"check": "Есть закупки ресторана и не меньше двух других ресторанов", "ok": False}],
+        }
+    price = paid / qty
+    bench = Decimal(med(list(others.values())))
+    share = price / bench - 1
+    days = (end - start).days + 1
+    overpay = (price - bench) * qty
+    effect = overpay * 30 / days
+    result = [
+        {
+            "label": "Средняя цена ресторана (сумма / количество)",
+            "value": _q(price, Decimal("0.01")),
+            "unit": f"₽/{unit}",
+        },
+        {
+            "label": "Типичная цена сети (медиана других ресторанов)",
+            "value": _q(bench, Decimal("0.01")),
+            "unit": f"₽/{unit}",
+        },
+        {"label": "Дороже сети", "value": pct(share), "unit": ""},
+        {"label": f"Переплата за {days} дней", "value": rub(overpay), "unit": ""},
+        {"label": "Переплата в месяц", "value": rub(effect), "unit": ""},
+    ]
+    rules = [
+        {
+            "rule": "Цена выше типичной цены сети",
+            "value": pct(share),
+            "threshold": pct(params.M3_OVERPAY, 0),
+            "passed": share > params.M3_OVERPAY,
+        },
+        {
+            "rule": "Переплата существенна, ₽ в месяц",
+            "value": rub(effect),
+            "threshold": rub(params.M3_MATERIALITY_RUB_MONTH),
+            "passed": effect >= params.M3_MATERIALITY_RUB_MONTH,
+        },
+    ]
+    if ev.get("z") is not None:
+        rules.insert(
+            1,
+            {
+                "rule": "Цена выбивается из сети (robust z-score)",
+                "value": ev["z"],
+                "threshold": str(params.M3_Z),
+                "passed": Decimal(ev["z"]) > params.M3_Z,
+            },
+        )
+    checks = [
+        {"check": f"Закупок ресторана в окне: {len(own)}", "ok": len(own) >= params.M3_MIN_RECEIPTS},
+        {
+            "check": "Пересчет из исходных строк совпадает с тем, что посчитал движок",
+            "ok": abs(Decimal(ev["share"]) - share) < Decimal("0.0005"),
+            "note": f"движок: {pct(Decimal(ev['share']))}, пересчет: {pct(share)}",
+        },
+        {
+            "check": "Сумма в находке совпадает с пересчетом",
+            "ok": f.effect_rub_month is not None
+            and abs(effect - f.effect_rub_month) <= max(Decimal(50), f.effect_rub_month / 100),
+            "note": f"в находке: {rub(f.effect_rub_month or Decimal(0))}, пересчет: {rub(effect)}",
+        },
+    ]
+    return {
+        "module": "M3",
+        "supported": True,
+        "formula": FORMULA_M3,
+        "object": product.name,
+        "restaurant": restaurant.name,
+        "period": [start.isoformat(), end.isoformat()],
+        "steps": steps,
+        "result": result,
+        "rules": rules,
+        "checks": checks,
+        "interpretation": INTERPRETATION_M3,
+    }
+
+
+FORMULA_M3 = (
+    "Переплата = (средняя цена ресторана − типичная цена сети) × количество; "
+    "средняя цена = сумма по накладным / количество за 8 недель"
+)
+INTERPRETATION_M3 = [
+    "Другой поставщик дороже, чем у остальных: чаще всего срочные закупки, когда товар заканчивается "
+    "раньше поставки.",
+    "Тот же поставщик продает дороже, чем другим ресторанам: повод запросить единую цену или договор "
+    "на всю сеть.",
+    "Прежде чем подтверждать: проверьте, что сравниваются одинаковые товары (тот же вид, фасовка, качество).",
 ]

@@ -14,3 +14,11 @@ NETWORK_Z_MIN_RESTAURANTS = 8  # below this the network is too small for a z-sco
 M1_NET_SHARE = Decimal("0.75")  # share of restaurants over the allowance → the recipe, not the kitchens
 M1_NET_EXCESS = Decimal("0.02")  # … and the median is at least 2 p.p. over the allowance
 M1_MIN_THEORY_DAYS = 14  # a period between counts shorter than this is not judged
+
+# M3 — purchase prices
+M3_WINDOW_DAYS = 56  # the last 8 weeks of purchases are compared
+M3_MIN_RECEIPTS = 2  # fewer purchases of a product in the window: no conclusion
+M3_OVERPAY = Decimal("0.05")  # 5 % above the typical price of the network
+M3_MATERIALITY_RUB_MONTH = Decimal(3000)
+M3_Z = Decimal(2)
+M3_Z_FLOOR = Decimal("0.01")  # 1 %: the smallest price spread the z-score assumes

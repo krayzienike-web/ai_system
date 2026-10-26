@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
-from app.analytics import engine, m1
+from app.analytics import engine, m1, m3
 from app.analytics.costs import CostBook
 from app.analytics.facts import (
     CountRow,
@@ -109,6 +109,44 @@ def test_m1_rules_network_pattern_outlier_and_materiality() -> None:
     assert net.key == "M1:net:P01" and net.restaurant is None and net.effect_rub_month is None
 
 
+def _receipts(
+    f: Facts, r: UUID, product: UUID, supplier: UUID, price: str, qty: str = "10", n: int = 6
+) -> None:
+    for i in range(n):
+        day = date(2026, 9, 1) + timedelta(days=7 * i)
+        f.receipts.append(ReceiptRow(r, day, product, supplier, Decimal(qty), Decimal(qty) * Decimal(price)))
+
+
+def test_m3_overpay_against_the_network_with_the_supplier_named() -> None:
+    f, rs, cheese, _ = _facts(restaurants=4)
+    usual, urgent = uuid4(), uuid4()
+    f.suppliers = {usual: "Сырный дом", urgent: "Сыр срочно"}
+    for r in rs[1:]:
+        _receipts(f, r, cheese, usual, "600")
+    _receipts(f, rs[0], cheese, urgent, "690", qty="20")  # 15 % more, from another supplier
+    (d,) = m3.detect(f)
+    assert d.key == "M3:R01:P01" and d.title == "Закупка у дорогого поставщика: Сыр"
+    assert "«Сыр срочно»" in d.headline and "«Сырный дом»" in d.headline and "на 15% дороже" in d.headline
+    # (690 − 600) × 120 kg = 10 800 ₽ over the 8-week window → per 30 days
+    assert d.effect_rub_month == Decimal(5786)
+
+    # The same supplier charging one restaurant more: a different explanation and different actions.
+    f.receipts = [r for r in f.receipts if r.restaurant != rs[0]]
+    _receipts(f, rs[0], cheese, usual, "690", qty="20")
+    (same,) = m3.detect(f)
+    assert same.title == "Поставщик продает дороже, чем другим: Сыр" and "единый договор" in " ".join(
+        same.actions
+    )
+
+    # 3 % more is within the normal spread; a tiny volume is not worth attention.
+    f.receipts = [r for r in f.receipts if r.restaurant != rs[0]]
+    _receipts(f, rs[0], cheese, usual, "618")
+    assert m3.detect(f) == []
+    f.receipts = [r for r in f.receipts if r.restaurant != rs[0]]
+    _receipts(f, rs[0], cheese, usual, "690", qty="0.5")
+    assert m3.detect(f) == []
+
+
 @pytest.fixture
 def demo(network: Network, owner_engine: Engine) -> dict[str, UUID]:
     """The 12-restaurant demo network loaded into tenant A, plus a director for its R01."""
@@ -144,23 +182,29 @@ def test_engine_finds_planted_problems_and_review_gates_directors(
         )
         assert client.post("/api/analytics/run", headers=analyst).status_code == 403
         run = client.post("/api/analytics/run", headers=hq).json()
-        assert run["created"] == 3
+        assert run["created"] == 5
         # Idempotent: the same data gives the same findings, updated in place.
         assert client.post("/api/analytics/run", headers=hq).json() | {} == {
             "created": 0,
-            "updated": 3,
+            "updated": 5,
             "removed": 0,
-            "drafts": 3,
+            "drafts": 5,
         }
 
         pending = client.get("/api/findings", headers=hq, params={"review": "pending"}).json()
         by_key = {(f["module"], f["title"]): f for f in pending}
-        assert len(pending) == 3 and all(f["review_status"] == "pending" for f in pending)
+        assert len(pending) == 5 and all(f["review_status"] == "pending" for f in pending)
         assert {t for _, t in by_key} == {
             "Перерасход по техкарте: Сыр Моцарелла",
             "Перерасход по техкарте: Лосось охлажденный",
             "Техкарта, вероятно, устарела: Картофель фри замороженный",
+            "Закупка у дорогого поставщика: Говядина вырезка",
+            "Поставщик продает дороже, чем другим: Сливки 33%",
         }
+        beef = by_key[("M3", "Закупка у дорогого поставщика: Говядина вырезка")]
+        assert beef["headline"].startswith("С 27.07 говядина вырезка покупают у «Мясной экспресс»")
+        vb = client.get(f"/api/findings/{beef['id']}/verification", headers=analyst).json()
+        assert all(c["ok"] for c in vb["checks"]) and all(r["passed"] for r in vb["rules"])
         # Not checked yet: not in the working lists, invisible to the director.
         assert client.get("/api/findings", headers=hq).json() == []
         assert client.get("/api/findings", headers=director).json() == []

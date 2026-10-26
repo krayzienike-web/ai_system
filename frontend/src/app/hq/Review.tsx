@@ -228,6 +228,7 @@ function SourceRows({ step }: { step: VerificationStep }) {
   const TITLES: Record<string, string> = {
     day: "Дата",
     doc: "Документ",
+    supplier: "Поставщик",
     qty: "Кол-во",
     amount: "Сумма, ₽",
     price: "Цена, ₽",
