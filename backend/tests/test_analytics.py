@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.analytics import engine, m1, m2, m3
 from app.analytics.costs import CostBook
 from app.analytics.facts import (
+    ContractRow,
     CountRow,
     Facts,
     MenuInfo,
@@ -210,18 +211,18 @@ def test_engine_finds_planted_problems_and_review_gates_directors(
         )
         assert client.post("/api/analytics/run", headers=analyst).status_code == 403
         run = client.post("/api/analytics/run", headers=hq).json()
-        assert run["created"] == 6
+        assert run["created"] == 7
         # Idempotent: the same data gives the same findings, updated in place.
         assert client.post("/api/analytics/run", headers=hq).json() | {} == {
             "created": 0,
-            "updated": 6,
+            "updated": 7,
             "removed": 0,
-            "drafts": 6,
+            "drafts": 7,
         }
 
         pending = client.get("/api/findings", headers=hq, params={"review": "pending"}).json()
         by_key = {(f["module"], f["title"]): f for f in pending}
-        assert len(pending) == 6 and all(f["review_status"] == "pending" for f in pending)
+        assert len(pending) == 7 and all(f["review_status"] == "pending" for f in pending)
         assert {t for _, t in by_key} == {
             "Перерасход по техкарте: Сыр Моцарелла",
             "Перерасход по техкарте: Лосось охлажденный",
@@ -229,6 +230,7 @@ def test_engine_finds_planted_problems_and_review_gates_directors(
             "Закупка у дорогого поставщика: Говядина вырезка",
             "Поставщик продает дороже, чем другим: Сливки 33%",
             "Фудкост выше целевого: Лосось на гриле",
+            "Цена выросла по всей сети: Лосось охлажденный",
         }
         salmon_dish = by_key[("M2", "Фудкост выше целевого: Лосось на гриле")]
         assert salmon_dish["restaurant_id"] is None and "+40% к цене закупки" in salmon_dish["headline"]
@@ -303,3 +305,30 @@ def test_engine_run_is_hq_admin_only(network: Network) -> None:
         with pytest.raises(Exception, match="администратор"):
             engine.run(session, ctx, date(2026, 10, 20))
         assert session.execute(select(Finding)).scalars().all() == []
+
+
+def test_m3_contract_prices_and_network_growth() -> None:
+    f, rs, cheese, _ = _facts(restaurants=3)
+    sup = uuid4()
+    f.suppliers = {sup: "Сырный дом"}
+    # A quarter ago 600 ₽/kg everywhere, now 700 ₽/kg everywhere: the whole network pays 16.7 % more.
+    for r in rs:
+        _receipts(f, r, cheese, sup, "600", qty="30", n=4)
+    f.receipts = [
+        ReceiptRow(x.restaurant, x.day - timedelta(days=91), x.product, x.supplier, x.qty, x.amount)
+        for x in f.receipts
+    ]
+    for r in rs:
+        _receipts(f, r, cheese, sup, "700", qty="30", n=4)
+    (growth,) = m3.detect_network_growth(f)
+    assert growth.key == "M3:net:P01:growth" and growth.restaurant is None
+    assert "+17%" in growth.headline and "«Сырный дом»" in growth.headline
+    assert m3.detect_contracts(f) == []  # no contract prices loaded
+
+    # With a contract at 600 ₽/kg the same invoices are a breach of contract, not «market growth».
+    f.contracts = [ContractRow(sup, cheese, Decimal(600), date(2026, 1, 1), None)]
+    assert m3.detect_network_growth(f) == []
+    (breach,) = m3.detect_contracts(f)
+    assert breach.key == "M3:net:P01:contract" and "при договорной 600" in breach.headline
+    # 4 invoices × 30 kg × 100 ₽ over the contract in each restaurant
+    assert breach.evidence["restaurants"] == {"R01": "12000.00", "R02": "12000.00", "R03": "12000.00"}

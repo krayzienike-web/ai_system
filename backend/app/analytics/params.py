@@ -22,6 +22,10 @@ M3_OVERPAY = Decimal("0.05")  # 5 % above the typical price of the network
 M3_MATERIALITY_RUB_MONTH = Decimal(3000)
 M3_Z = Decimal(2)
 M3_Z_FLOOR = Decimal("0.01")  # 1 %: the smallest price spread the z-score assumes
+M3_CONTRACT_TOLERANCE = Decimal("0.01")  # rounding in invoices: up to 1 % above the contract is not a finding
+M3_NET_WINDOW_DAYS = 28  # network-wide growth: the last 4 weeks …
+M3_NET_COMPARE_DAYS = 91  # … against the same 4 weeks a quarter earlier
+M3_NET_GROWTH = Decimal("0.10")  # 10 % more for the whole network
 
 # M2 — food cost of dishes
 M2_WINDOW_DAYS = 28  # current ingredient prices: the network's purchases over the last 4 weeks

@@ -42,6 +42,10 @@ def verify(session: Session, finding: Finding) -> dict[str, Any]:
         return _m2(session, finding)
     if finding.module == "M3" and finding.restaurant_id is not None:
         return _m3(session, finding)
+    if finding.module == "M3" and (finding.evidence or {}).get("kind") == "growth":
+        return _m3_growth(session, finding)
+    if finding.module == "M3" and (finding.evidence or {}).get("kind") == "contract":
+        return _m3_contract(session, finding)
     return {
         "module": finding.module,
         "supported": False,
@@ -748,3 +752,131 @@ INTERPRETATION_M2 = [
     "Половина разницы — консервативная оценка: после подорожания часть гостей закажет другое блюдо.",
     "Прежде чем подтверждать: убедитесь, что рост цены ингредиента не разовый (одна дорогая поставка).",
 ]
+
+
+def _m3_growth(session: Session, f: Finding) -> dict[str, Any]:
+    ev = f.evidence or {}
+    product = session.execute(select(Product).where(Product.code == ev["product"])).scalar_one()
+    assert f.period_from and f.period_to
+    unit = UNITS.get(product.base_unit, product.base_unit)
+    before_start, before_end = (date.fromisoformat(d) for d in ev["before"])
+    codes = dict(session.execute(select(Restaurant.id, Restaurant.code)).all())
+
+    def per_restaurant(start: date, end: date) -> dict[UUID, tuple[Decimal, Decimal]]:
+        out: dict[UUID, list[Decimal]] = defaultdict(lambda: [Decimal(0), Decimal(0)])
+        for rid, amount, qty in session.execute(
+            select(Receipt.restaurant_id, Receipt.amount, Receipt.qty).where(
+                Receipt.product_id == product.id, Receipt.day >= start, Receipt.day <= end
+            )
+        ).all():
+            out[rid][0] += amount
+            out[rid][1] += qty
+        return {rid: (a, q) for rid, (a, q) in out.items()}
+
+    now, before = per_restaurant(f.period_from, f.period_to), per_restaurant(before_start, before_end)
+    qty = sum((q for _, q in now.values()), Decimal(0))
+    p_now = sum((a for a, _ in now.values()), Decimal(0)) / qty if qty else Decimal(0)
+    q_before = sum((q for _, q in before.values()), Decimal(0))
+    p_before = sum((a for a, _ in before.values()), Decimal(0)) / q_before if q_before else Decimal(0)
+    growth = p_now / p_before - 1 if p_before else Decimal(0)
+    days = (f.period_to - f.period_from).days + 1
+    effect = (p_now - p_before) * qty * 30 / days
+    steps = [
+        {
+            "id": "network",
+            "label": f"Средняя цена по ресторанам: {f.period_from:%d.%m}–{f.period_to:%d.%m} "
+            f"и квартал назад ({before_start:%d.%m}–{before_end:%d.%m})",
+            "value": None,
+            "unit": "",
+            "rows": [
+                {
+                    "restaurant": codes.get(rid, "—"),
+                    "price_before": None
+                    if rid not in before
+                    else _q(before[rid][0] / before[rid][1], Decimal("0.01")),
+                    "price": _q(a / q, Decimal("0.01")),
+                    "qty": _q(q),
+                }
+                for rid, (a, q) in sorted(now.items(), key=lambda kv: codes.get(kv[0], ""))
+            ],
+        }
+    ]
+    result = [
+        {"label": "Цена сети сейчас", "value": _q(p_now, Decimal("0.01")), "unit": f"₽/{unit}"},
+        {"label": "Цена сети квартал назад", "value": _q(p_before, Decimal("0.01")), "unit": f"₽/{unit}"},
+        {"label": "Рост", "value": pct(growth), "unit": ""},
+        {"label": "Сверх прежней цены в месяц", "value": rub(effect), "unit": ""},
+    ]
+    rules = [
+        {
+            "rule": "Цена выросла по всей сети",
+            "value": pct(growth),
+            "threshold": pct(params.M3_NET_GROWTH, 0),
+            "passed": growth > params.M3_NET_GROWTH,
+        },
+        {
+            "rule": "Сумма существенная, ₽ в месяц",
+            "value": rub(effect),
+            "threshold": rub(params.M3_MATERIALITY_RUB_MONTH),
+            "passed": effect >= params.M3_MATERIALITY_RUB_MONTH,
+        },
+    ]
+    checks = [
+        {
+            "check": "Пересчет из исходных строк совпадает с тем, что посчитал движок",
+            "ok": abs(Decimal(ev["growth"]) - growth) < Decimal("0.0005"),
+            "note": f"движок: {pct(Decimal(ev['growth']))}, пересчет: {pct(growth)}",
+        },
+        {"check": "Договорной цены на этот товар нет — сравниваем с прошлым кварталом", "ok": True},
+    ]
+    return {
+        "module": "M3",
+        "supported": True,
+        "object": product.name,
+        "restaurant": "Вся сеть",
+        "formula": "Рост = средняя цена сети за 4 недели / та же цена квартал назад − 1; "
+        "сумма = (цена сейчас − цена тогда) × количество",
+        "steps": steps,
+        "result": result,
+        "rules": rules,
+        "checks": checks,
+        "interpretation": [
+            "Рост по всей сети — это не ошибка ресторанов, а условия поставщика или рынка.",
+            "Если с поставщиком есть договор, загрузите договорные цены: тогда движок сравнит накладные "
+            "с договором.",
+            "Рост себестоимости отражается на фудкосте блюд — смотрите находки M2.",
+        ],
+    }
+
+
+def _m3_contract(session: Session, f: Finding) -> dict[str, Any]:
+    ev = f.evidence or {}
+    steps = [
+        {
+            "id": "restaurants",
+            "label": f"Переплата сверх договора по ресторанам (поставщик «{ev['supplier']}»)",
+            "value": rub(Decimal(ev["overpay"])),
+            "unit": "",
+            "rows": [{"restaurant": k, "amount": v} for k, v in ev.get("restaurants", {}).items()],
+        }
+    ]
+    result = [
+        {"label": "Цена по договору", "value": ev["contract_price"], "unit": "₽"},
+        {"label": "Средняя цена в накладных выше договора", "value": ev["paid"], "unit": "₽"},
+        {"label": "Накладных выше договора", "value": str(ev["receipts"]), "unit": ""},
+    ]
+    return {
+        "module": "M3",
+        "supported": True,
+        "object": ev["product"],
+        "restaurant": "Вся сеть",
+        "formula": "Переплата = Σ (сумма накладной − договорная цена × количество) "
+        "по накладным выше договора",
+        "steps": steps,
+        "result": result,
+        "rules": [],
+        "checks": [],
+        "interpretation": [
+            "Проверьте, не менялся ли договор: новую цену загрузите файлом «Договорные цены»."
+        ],
+    }

@@ -2,6 +2,7 @@
 
 from collections.abc import Iterator
 from datetime import date
+from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
@@ -503,3 +504,40 @@ def test_transfers_are_stored_once_and_seen_by_both_restaurants(
     assert visible("director1@a.ru", a1) == 2  # sent one, received one
     assert visible("director2@a.ru", a2) == 2
     assert visible("director3@a.ru", a3) == 0
+
+
+def test_erp_iiko_sync_collapses_names_and_contract_prices_load(
+    client: TestClient, network: Network, catalog: None, owner_engine: Engine
+) -> None:
+    hq = login(client, "admin@a.ru")
+    publish(
+        client,
+        hq,
+        upload(client, hq, "suppliers", "Код;Название;ИНН\nS1;Сырный дом;7701234567\n").json()["id"],
+    )
+    # Two names of 1С:ERP — one per supplier — are one product of iiko.
+    sync = (
+        "Код ЕРП;Номенклатура ЕРП;Код iiko;Товар iiko\n"
+        "1001;Моцарелла 1 (Сырный дом);P1;\n"
+        "1002;Моцарелла 2 (Лактика);P1;\n"
+    )
+    batch = upload(client, hq, "name_sync", sync).json()
+    assert batch["status"] == "validated", batch
+    publish(client, hq, batch["id"])
+    receipts = (
+        "Дата;Поставщик;Товар;Количество;Ед. изм.;Сумма\n"
+        "01.10.2026;Сырный дом;Моцарелла 1 (Сырный дом);10;кг;6200\n"
+        "02.10.2026;Сырный дом;Моцарелла 2 (Лактика);5;кг;3150\n"
+    )
+    r = upload(client, login(client, "director1@a.ru"), "receipts", receipts, network.a.restaurants["A1"])
+    assert r.json()["status"] == "validated" and r.json()["unmatched"] == []
+    # Contract price per gram is stored per base unit (kg).
+    contract = "Поставщик;Код товара;Ед. изм.;Цена по договору;Действует с\nСырный дом;P1;г;0,6;01.09.2026\n"
+    c = upload(client, hq, "contract_prices", contract).json()
+    assert c["template"] == "contract_prices" and c["status"] == "validated", c
+    publish(client, hq, c["id"])
+    with owner_engine.connect() as conn:
+        assert conn.execute(text("SELECT price FROM contract_prices")).scalar_one() == Decimal("600.0000")
+    assert (
+        upload(client, login(client, "director1@a.ru"), "contract_prices", contract + " ").status_code == 403
+    )

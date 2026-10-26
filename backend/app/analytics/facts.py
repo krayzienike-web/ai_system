@@ -8,7 +8,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.catalog.models import MenuItem, Product, RecipeLine, Supplier
+from app.catalog.models import ContractPrice, MenuItem, Product, RecipeLine, Supplier
 from app.catalog.recipes import Line
 from app.operations.models import InventoryCount, Receipt, Sale, Transfer, WriteOff
 from app.tenancy.models import Restaurant
@@ -78,6 +78,18 @@ class CountRow:
     actual: Decimal
 
 
+@dataclass(frozen=True)
+class ContractRow:
+    supplier: UUID
+    product: UUID
+    price: Decimal  # ₽ per base unit
+    valid_from: date
+    valid_to: date | None
+
+    def covers(self, day: date) -> bool:
+        return self.valid_from <= day and (self.valid_to is None or day <= self.valid_to)
+
+
 @dataclass
 class Facts:
     restaurants: dict[UUID, str] = field(default_factory=dict)  # id -> code
@@ -90,6 +102,7 @@ class Facts:
     transfers: list[TransferRow] = field(default_factory=list)
     write_offs: list[WriteOffRow] = field(default_factory=list)
     counts: list[CountRow] = field(default_factory=list)
+    contracts: list[ContractRow] = field(default_factory=list)
 
 
 def load_facts(session: Session) -> Facts:
@@ -152,6 +165,18 @@ def load_facts(session: Session) -> Facts:
                 InventoryCount.product_id,
                 InventoryCount.book_qty,
                 InventoryCount.actual_qty,
+            )
+        ).all()
+    ]
+    f.contracts = [
+        ContractRow(*row)
+        for row in session.execute(
+            select(
+                ContractPrice.supplier_id,
+                ContractPrice.product_id,
+                ContractPrice.price,
+                ContractPrice.valid_from,
+                ContractPrice.valid_to,
             )
         ).all()
     ]

@@ -85,6 +85,23 @@ class AliasKind(StrEnum):
     SUPPLIER = "supplier"
 
 
+class ContractPrice(IdMixin, TenantMixin, TimestampMixin, Base):
+    """A supplier's agreed price of a product for the network, per base unit (Q14: where contracts live)."""
+
+    __tablename__ = "contract_prices"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "supplier_id", "product_id", "valid_from", name="one_price_per_start"),
+        CheckConstraint("price > 0", name="price_positive"),
+        CheckConstraint("valid_to IS NULL OR valid_to >= valid_from", name="valid_range"),
+    )
+
+    supplier_id: Mapped[UUID] = mapped_column(ForeignKey("suppliers.id", ondelete="CASCADE"))
+    product_id: Mapped[UUID] = mapped_column(ForeignKey("products.id", ondelete="CASCADE"))
+    price: Mapped[Decimal] = mapped_column(Numeric(14, 4))  # ₽ per base unit, VAT included
+    valid_from: Mapped[date] = mapped_column(Date)
+    valid_to: Mapped[date | None] = mapped_column(Date)
+
+
 class NameAlias(IdMixin, TenantMixin, TimestampMixin, Base):
     """A confirmed match: how a product (dish, supplier) is called in another system's export.
 

@@ -308,6 +308,32 @@ def _record(template: str, v: dict[str, Any], lk: Lookups, warn: list[str]) -> d
             "revenue": v["revenue"],
             "discount": v["discount"] or Decimal(0),
         }
+    if template == "name_sync":
+        # Several names of 1С:ERP (one per supplier) become one product of iiko: network-wide matches.
+        product = _product(v, lk)
+        return {
+            "kind": "product",
+            "source_key": source_key(v["erp_code"], v["erp_name"]),
+            "source_text": v["erp_name"] or v["erp_code"],
+            "target_id": product.id,
+        }
+    if template == "contract_prices":
+        product = _product(v, lk)
+        vendor = _resolve(
+            "supplier", v["supplier_code"], v["supplier_name"], lk.suppliers, lk.supplier_names, lk
+        )
+        per_unit = _to_base(Decimal(1), v["unit"], product)  # how many base units one price unit is
+        if v["price"] <= 0:
+            raise _RowError("Цена по договору", "цена должна быть больше нуля")
+        if v["valid_to"] is not None and v["valid_to"] < v["valid_from"]:
+            raise _RowError("Действует по", "дата окончания раньше даты начала")
+        return {
+            "supplier_id": vendor.id,
+            "product_id": product.id,
+            "price": v["price"] / per_unit,
+            "valid_from": v["valid_from"],
+            "valid_to": v["valid_to"],
+        }
     if template == "receipts":
         product = _product(v, lk)
         supplier = None

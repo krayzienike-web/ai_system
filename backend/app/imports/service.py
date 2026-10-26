@@ -10,7 +10,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from app.catalog.aliases import TARGETS
-from app.catalog.models import MenuItem, NameAlias, Product, RecipeLine, Supplier
+from app.catalog.models import ContractPrice, MenuItem, NameAlias, Product, RecipeLine, Supplier
 from app.catalog.recipes import Line, find_cycle, lines_on
 from app.core.errors import ConflictError, ForbiddenError, InvalidError, NotFoundError
 from app.core.period import last_full_week_end
@@ -280,6 +280,35 @@ def _publish_reference(
                 )
             )
         session.execute(insert(RecipeLine), [{**r, "tenant_id": batch.tenant_id} for r in records])
+        return
+    if template.name == "name_sync":
+        # One remembered match per name of 1С:ERP for the whole network; a new file replaces an old match.
+        for r in records:
+            session.execute(
+                delete(NameAlias).where(
+                    NameAlias.restaurant_id.is_(None),
+                    NameAlias.kind == r["kind"],
+                    NameAlias.source_key == r["source_key"],
+                )
+            )
+        unique = {(r["kind"], r["source_key"]): r for r in records}
+        session.execute(
+            insert(NameAlias),
+            [{**r, "tenant_id": batch.tenant_id, "restaurant_id": None} for r in unique.values()],
+        )
+        return
+    if template.name == "contract_prices":
+        # A price for (supplier, product, start date) in the file replaces the same one.
+        for r in records:
+            session.execute(
+                delete(ContractPrice).where(
+                    ContractPrice.supplier_id == r["supplier_id"],
+                    ContractPrice.product_id == r["product_id"],
+                    ContractPrice.valid_from == r["valid_from"],
+                )
+            )
+        latest = {(r["supplier_id"], r["product_id"], r["valid_from"]): r for r in records}
+        session.execute(insert(ContractPrice), [{**r, "tenant_id": batch.tenant_id} for r in latest.values()])
         return
     model = REFERENCE[template.name]
     rows = list(

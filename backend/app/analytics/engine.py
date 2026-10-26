@@ -40,7 +40,13 @@ class RunResult:
 def detect(facts: Facts, norms: Norms) -> list[Draft]:
     usage = Usage(facts)
     costs = CostBook(facts.receipts)
-    return m1.detect(facts, m1.rows(facts, usage, costs), norms) + m2.detect(facts, norms) + m3.detect(facts)
+    return (
+        m1.detect(facts, m1.rows(facts, usage, costs), norms)
+        + m2.detect(facts, norms)
+        + m3.detect(facts)
+        + m3.detect_contracts(facts)
+        + m3.detect_network_growth(facts)
+    )
 
 
 def run(session: Session, ctx: AccessContext, today: date) -> RunResult:

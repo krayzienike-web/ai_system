@@ -168,3 +168,172 @@ def detect(facts: Facts) -> list[Draft]:
                 )
             )
     return drafts
+
+
+ACTIONS_CONTRACT = [
+    "Предъявить поставщику расхождение с договором и вернуть переплату",
+    "Включить сверку цен накладных с договором в приемку",
+]
+ACTIONS_NET_GROWTH = [
+    "Проверить, согласован ли рост цены с поставщиком и закреплен ли он в договоре",
+    "Запросить предложения других поставщиков",
+    "Пересмотреть цены блюд, где этот товар — основной ингредиент",
+]
+
+
+def _network_price(receipts: list[ReceiptRow]) -> Decimal | None:
+    qty = sum((r.qty for r in receipts), Decimal(0))
+    return None if qty <= 0 else sum((r.amount for r in receipts), Decimal(0)) / qty
+
+
+def detect_contracts(facts: Facts) -> list[Draft]:
+    """Invoices above the price agreed with the supplier (when contract prices are loaded)."""
+    span = window(facts)
+    if span is None or not facts.contracts:
+        return []
+    start, end = span
+    by_pair: dict[tuple[UUID, UUID], list[tuple[ReceiptRow, Decimal]]] = defaultdict(list)
+    contracts: dict[tuple[UUID, UUID], list] = defaultdict(list)  # type: ignore[type-arg]
+    for c in facts.contracts:
+        contracts[(c.supplier, c.product)].append(c)
+    for r in facts.receipts:
+        if not (start <= r.day <= end) or r.supplier is None or r.qty <= 0:
+            continue
+        valid = [c for c in contracts.get((r.supplier, r.product), []) if c.covers(r.day)]
+        if valid:
+            price = max(valid, key=lambda c: c.valid_from).price
+            by_pair[(r.supplier, r.product)].append((r, price))
+    drafts = []
+    for (supplier, product), rows in by_pair.items():
+        over = [(r, p) for r, p in rows if r.amount / r.qty > p * (1 + params.M3_CONTRACT_TOLERANCE)]
+        if not over:
+            continue
+        overpay = sum((r.amount - p * r.qty for r, p in over), Decimal(0))
+        effect = per_month(overpay, start, end)
+        if effect < params.M3_MATERIALITY_RUB_MONTH:
+            continue
+        info = facts.products[product]
+        name = facts.suppliers.get(supplier, "поставщик")
+        contract_price = max(p for _, p in over)
+        paid = _network_price([r for r, _ in over]) or Decimal(0)
+        share = paid / contract_price - 1
+        by_restaurant: dict[str, Decimal] = defaultdict(Decimal)
+        for r, p in over:
+            by_restaurant[facts.restaurants[r.restaurant]] += r.amount - p * r.qty
+        unit = {"kg": "кг", "l": "л", "pcs": "шт"}.get(info.unit, info.unit)
+        drafts.append(
+            Draft(
+                key=f"M3:net:{info.code}:contract",
+                module="M3",
+                kind="problem",
+                process="purchasing",
+                restaurant=None,
+                title=f"Цена выше договорной: {info.name}",
+                headline=(
+                    f"«{name}» выставляет {info.name.lower()} в среднем по {rub(paid)}/{unit} при договорной "
+                    f"{rub(contract_price)}/{unit} (+{pct(share, 0)}) — в {len(over)} накладных "
+                    f"{len(by_restaurant)} ресторанов. Переплата ≈ {rub(effect)} в месяц"
+                ),
+                effect_rub_month=effect,
+                effect_note=None,
+                confidence="high",
+                period_from=start,
+                period_to=end,
+                actions=list(ACTIONS_CONTRACT),
+                evidence={
+                    "kind": "contract",
+                    "product": info.code,
+                    "supplier": name,
+                    "contract_price": str(contract_price.quantize(Decimal("0.01"))),
+                    "paid": str(paid.quantize(Decimal("0.01"))),
+                    "overpay": str(overpay.quantize(Decimal("0.01"))),
+                    "receipts": len(over),
+                    "restaurants": {
+                        k: str(v.quantize(Decimal("0.01"))) for k, v in sorted(by_restaurant.items())
+                    },
+                },
+            )
+        )
+    return drafts
+
+
+def detect_network_growth(facts: Facts) -> list[Draft]:
+    """The whole network pays noticeably more than a quarter ago (no contract price to compare with)."""
+    if not facts.receipts:
+        return []
+    end = max(r.day for r in facts.receipts)
+    start = end - timedelta(days=params.M3_NET_WINDOW_DAYS - 1)
+    before_end = end - timedelta(days=params.M3_NET_COMPARE_DAYS)
+    before_start = before_end - timedelta(days=params.M3_NET_WINDOW_DAYS - 1)
+    with_contract = {c.product for c in facts.contracts}
+    now: dict[UUID, list[ReceiptRow]] = defaultdict(list)
+    before: dict[UUID, list[ReceiptRow]] = defaultdict(list)
+    history: dict[UUID, list[ReceiptRow]] = defaultdict(list)
+    for r in facts.receipts:
+        if r.qty <= 0:
+            continue
+        if start <= r.day <= end:
+            now[r.product].append(r)
+        elif before_start <= r.day <= before_end:
+            before[r.product].append(r)
+        if r.day <= end:
+            history[r.product].append(r)
+    drafts = []
+    for product, rows in now.items():
+        if product in with_contract or product not in before:
+            continue
+        p_now, p_before = _network_price(rows), _network_price(before[product])
+        if not p_now or not p_before:
+            continue
+        growth = p_now / p_before - 1
+        if growth <= params.M3_NET_GROWTH:
+            continue
+        qty = sum((r.qty for r in rows), Decimal(0))
+        effect = per_month((p_now - p_before) * qty, start, end)
+        if effect < params.M3_MATERIALITY_RUB_MONTH:
+            continue
+        info = facts.products[product]
+        restaurants = {r.restaurant for r in rows}
+        by_supplier: dict[UUID | None, Decimal] = defaultdict(Decimal)
+        for r in rows:
+            by_supplier[r.supplier] += r.amount
+        main = max(by_supplier, key=lambda s: by_supplier[s])
+        name = facts.suppliers.get(main, "поставщик") if main else "поставщик"
+        start_day = since(history[product], p_before * (1 + params.M3_NET_GROWTH / 2))
+        unit = {"kg": "кг", "l": "л", "pcs": "шт"}.get(info.unit, info.unit)
+        drafts.append(
+            Draft(
+                key=f"M3:net:{info.code}:growth",
+                module="M3",
+                kind="problem",
+                process="purchasing",
+                restaurant=None,
+                title=f"Цена выросла по всей сети: {info.name}",
+                headline=(
+                    f"С {dmy(start_day)} {info.name.lower()} обходится сети в {rub(p_now)}/{unit} "
+                    f"вместо {rub(p_before)}/{unit} кварталом раньше (+{pct(growth, 0)}), основной "
+                    f"поставщик — «{name}», закупают {len(restaurants)} ресторанов. "
+                    f"Это ≈ {rub(effect)} в месяц сверх прежней цены. "
+                    "Проверьте, согласован ли рост с поставщиком"
+                ),
+                effect_rub_month=effect,
+                effect_note=None,
+                confidence="high" if len(restaurants) >= 3 else "medium",
+                period_from=start,
+                period_to=end,
+                actions=list(ACTIONS_NET_GROWTH),
+                evidence={
+                    "kind": "growth",
+                    "product": info.code,
+                    "supplier": name,
+                    "price": str(p_now.quantize(Decimal("0.01"))),
+                    "price_before": str(p_before.quantize(Decimal("0.01"))),
+                    "before": [before_start.isoformat(), before_end.isoformat()],
+                    "growth": str(growth.quantize(Decimal("0.0001"))),
+                    "qty": str(qty.quantize(Decimal("0.001"))),
+                    "since": start_day.isoformat(),
+                    "restaurants": len(restaurants),
+                },
+            )
+        )
+    return drafts
