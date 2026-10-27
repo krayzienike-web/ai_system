@@ -57,6 +57,7 @@
 | TC-AUTH-07 | Сбой сети или 500 не выбрасывает из приложения, выход только при 401 | — | ⬜ |
 | TC-AUTH-08 | Ротация refresh-токена, ограничение частоты входа | — | ⬜ (бэклог, до пилота) |
 | TC-AUTH-09 | Проверка живости сервиса без входа | `test_auth.py::test_health` | ✅ |
+| TC-AUTH-10 | Без `FAI_ENV` настройки считаются рабочими и не принимают dev-секрет JWT; dev и test — принимают | `test_config.py` | ✅ |
 
 ### Изоляция данных (ISO)
 
@@ -75,6 +76,9 @@
 | TC-ISO-11 | Директор читает, но не может записать сетевые KPI, тренд и журнал пересчетов (уровень БД) | `test_isolation_db.py::test_director_reads_but_cannot_write_network_kpis_trend_and_runs` | ✅ |
 | TC-ISO-12 | Новые endpoint в границах сети и ресторана: чат по чужой находке, напоминание и тиражирование из чужой сети — 404; цены других ресторанов в таблице находки M3 директору не уходят (деталь, список, доска находок) | `test_overview.py::test_new_endpoints_keep_to_the_tenant_and_the_restaurant`, `test_a_director_gets_an_m3_finding_without_other_restaurants_prices` | ✅ |
 | TC-ISO-13 | Действия с задачами и проверками по id: старт и чек-лист чужой задачи, задача по чужой находке, черновик, предложение, запуск и отклонение проверки чужой сети — 404, ничего не меняется; отчет руководителю и счетчики чужой сети не считают нашу | `test_work_loop.py::test_work_actions_on_another_restaurant_or_network_are_not_found` | ✅ |
+| TC-ISO-14 | Журнал аудита для приложения — только добавление и чтение | `test_isolation_db.py::test_the_application_can_only_add_to_the_audit_log` | ✅ |
+| TC-ISO-15 | Движок не работает вне контекста RLS своей сети (под владельцем или в контексте чужой сети) и пишет только строки своей сети | `test_engine_store.py::test_the_engine_refuses_to_run_outside_the_networks_context` | ✅ |
+| TC-ISO-16 | Рабочая сборка фронтенда не содержит демо-снимок, демо-логины и пароль | CI: `npm run check:bundle` (`frontend/scripts/check-bundle.mjs`) | ✅ |
 
 ### Импорт данных (IMP)
 
@@ -136,6 +140,7 @@
 | TC-ENG-23 | С очередью задача уходит в воркер; без очереди или при ее недоступности — пересчет в процессе API | `test_the_queue_is_used_when_configured_and_falls_back_without_it`, `test_the_worker_runs_the_queued_run` | ✅ |
 | TC-ENG-24 | Загрузка, присоединившаяся к ожидающему пересчету, держит его до своего коммита; зависший пересчет показывается и записывается прерванным | `test_runs.py::test_an_upload_joining_the_waiting_run_holds_it_until_its_data_is_committed`, `test_a_run_left_going_on_is_shown_and_then_written_as_interrupted` | ✅ |
 | TC-ENG-25 | Сверка не падает на измененных данных и повторяет правила движка: M4 после отката инвентаризаций, M7 — техкарта заведена внутри окна | `test_check_of_a_pre_count_finding_after_the_counts_were_rolled_back`, `test_m7_dish_without_a_recipe_and_missing_exports` | ✅ |
+| TC-ENG-26 | «Пересчитать» ставит пересчет в очередь (202), а не считает в запросе; результат виден в журнале пересчетов | `test_analytics.py` (повторный пересчет), `test_runs.py::test_publishing_a_file_recomputes_the_findings` | ✅ |
 
 ### Проверка находок (REV)
 
