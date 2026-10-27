@@ -94,6 +94,34 @@ class CommonOut(BaseModel):
     finding_id: UUID | None
 
 
+class KpiOut(BaseModel):
+    food_cost_actual: Decimal | None
+    food_cost_theory: Decimal | None
+    write_offs_share: Decimal | None
+    food_cost_from: date | None
+    food_cost_to: date | None
+
+
+class ProcessTitleOut(BaseModel):
+    process: str
+    title: str
+
+
+class MatrixCellOut(BaseModel):
+    process: str
+    losses: Decimal
+    count: int
+    status: Literal["good", "warning", "critical"]
+
+
+class MatrixRowOut(BaseModel):
+    id: UUID
+    code: str
+    name: str
+    total: Decimal
+    cells: list[MatrixCellOut]  # in the order of `processes`
+
+
 class NetworkOut(BaseModel):
     restaurants: int
     losses: Decimal
@@ -108,6 +136,11 @@ class NetworkOut(BaseModel):
     trend: TrendOut
     ranking: list[RankOut]
     common: list[CommonOut]
+    processes: list[ProcessTitleOut]  # the columns of `matrix`
+    matrix: list[MatrixRowOut]  # restaurants × processes, the costliest restaurant first
+    matrix_answer: str
+    kpi: KpiOut | None  # the network's food cost and write-offs, as of the engine's last run
+    overpay: Decimal  # open purchasing problems, ₽ a month
 
 
 class ProcessOut(BaseModel):
@@ -115,14 +148,6 @@ class ProcessOut(BaseModel):
     title: str
     losses: Decimal
     findings: list[FindingOut]
-
-
-class KpiOut(BaseModel):
-    food_cost_actual: Decimal | None
-    food_cost_theory: Decimal | None
-    write_offs_share: Decimal | None
-    food_cost_from: date | None
-    food_cost_to: date | None
 
 
 class RestaurantRef(BaseModel):
@@ -219,6 +244,20 @@ def get_network(ctx: CanCompare, session: SessionDep, period: PeriodDep, today: 
         on_table_year=(n.losses + n.potential) * 12,
         ranking=[RankOut(**r.__dict__) for r in n.ranking],
         common=[CommonOut(**c.__dict__) for c in n.common],
+        processes=[ProcessTitleOut(process=p, title=t) for p, t in service.PROCESSES],
+        matrix=[
+            MatrixRowOut(
+                id=r.id,
+                code=r.code,
+                name=r.name,
+                total=r.total,
+                cells=[MatrixCellOut(**c.__dict__) for c in r.cells],
+            )
+            for r in n.matrix
+        ],
+        matrix_answer=n.matrix_answer,
+        kpi=KpiOut(**n.kpi.__dict__) if n.kpi else None,
+        overpay=n.overpay,
     )
 
 

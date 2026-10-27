@@ -6,7 +6,8 @@ import type { ApiFinding } from "../../api/types";
 import { VerifiedNote } from "../../ds/ai";
 import { buttonClass, LoadError, QuestionBlock, Reveal, Skeleton, Term } from "../../ds/primitives";
 import { AnimatedNumber, AreaTrend, PROCESS_ICON, ProfitSplit, RankList } from "../../ds/viz";
-import { money, perMonth, plural, rub, thousands } from "../../lib/format";
+import { ddmm, money, pct, perMonth, plural, rub, thousands } from "../../lib/format";
+import { ProcessMatrix } from "./ProcessMatrix";
 import { useUi } from "../../state/ui";
 
 export function NetworkPage() {
@@ -83,6 +84,45 @@ export function NetworkPage() {
             </Link>
           </div>
         </section>
+      </Reveal>
+
+      {n.kpi && (
+        <Reveal index={1}>
+          <dl className="grid gap-3 sm:grid-cols-3">
+            {[
+              {
+                label: "Фудкост сети",
+                value: n.kpi.food_cost_actual !== null ? pct((money(n.kpi.food_cost_actual) ?? 0) * 100) : "—",
+                note:
+                  n.kpi.food_cost_theory !== null
+                    ? `по техкартам — ${pct((money(n.kpi.food_cost_theory) ?? 0) * 100)}; ${ddmm(n.kpi.food_cost_from)}–${ddmm(n.kpi.food_cost_to)}`
+                    : "",
+              },
+              {
+                label: "Списания",
+                value: n.kpi.write_offs_share !== null ? pct((money(n.kpi.write_offs_share) ?? 0) * 100, 2) : "—",
+                note: "доля выручки за последние 4 недели",
+              },
+              {
+                label: "Переплаты поставщикам",
+                value: perMonth(money(n.overpay) ?? 0),
+                note: "открытые находки по закупкам",
+              },
+            ].map((k) => (
+              <div key={k.label} className="rounded-[16px] border border-line bg-surface p-4">
+                <dt className="text-sm text-ink-3">{k.label}</dt>
+                <dd className="num mt-1 font-display text-2xl font-semibold">{k.value}</dd>
+                {k.note && <dd className="mt-0.5 text-xs text-ink-3">{k.note}</dd>}
+              </div>
+            ))}
+          </dl>
+        </Reveal>
+      )}
+
+      <Reveal index={2}>
+        <QuestionBlock question="Где именно теряем?" answer={n.matrix_answer} source={<VerifiedNote>открытые проверенные находки ресторанов, ₽ в месяц; сетевые находки — в «Общих проблемах сети»</VerifiedNote>}>
+          <ProcessMatrix n={n} />
+        </QuestionBlock>
       </Reveal>
 
       <div className="grid gap-6 lg:grid-cols-2">

@@ -92,6 +92,11 @@ const homeRoute = createRoute({
 const findingsRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/findings",
+  // «Сеть» opens a restaurant's findings in one process: /findings?restaurant=<id>&process=<process>.
+  validateSearch: (search: Record<string, unknown>): { restaurant?: string; process?: string } => ({
+    restaurant: typeof search.restaurant === "string" ? search.restaurant : undefined,
+    process: typeof search.process === "string" ? search.process : undefined,
+  }),
   component: FindingsPage,
 });
 const findingRoute = createRoute({

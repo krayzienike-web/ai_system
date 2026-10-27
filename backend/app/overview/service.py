@@ -237,6 +237,23 @@ class Common:
 
 
 @dataclass
+class MatrixCell:
+    process: str
+    losses: Decimal  # open checked problems of the process, ₽ a month
+    count: int  # problems, with those not estimated in rubles
+    status: str  # good | warning | critical (same rule as a restaurant's process map)
+
+
+@dataclass
+class MatrixRow:
+    id: UUID
+    code: str
+    name: str
+    total: Decimal
+    cells: list[MatrixCell]
+
+
+@dataclass
 class Network:
     restaurants: int
     losses: Decimal
@@ -249,6 +266,10 @@ class Network:
     trend: Trend
     ranking: list[RankRow]
     common: list[Common]
+    matrix: list[MatrixRow]  # restaurants × processes (docs/10, 4.3), the costliest restaurant first
+    matrix_answer: str
+    kpi: "Kpis | None"  # the network's food cost and write-offs (the engine's last snapshot)
+    overpay: Decimal  # open purchasing problems: paying suppliers more than needed, ₽ a month
 
 
 def _process_losses(items: list[FindingWork]) -> dict[str, Decimal]:
@@ -264,6 +285,27 @@ def _status(items: list[FindingWork], process: str) -> str:
     if not problems:
         return "good"
     return "critical" if _sum(problems) >= PROCESS_CRITICAL_RUB else "warning"
+
+
+def _matrix_answer(matrix: list[MatrixRow]) -> str:
+    """The costliest process across the restaurants, in words."""
+    by_process: dict[str, Decimal] = defaultdict(lambda: ZERO)
+    places: dict[str, int] = defaultdict(int)
+    for row in matrix:
+        for c in row.cells:
+            if c.count:
+                by_process[c.process] += c.losses
+                places[c.process] += 1
+    if not places:
+        return "Открытых проблем в ресторанах нет: все процессы в норме."
+    top = max(places, key=lambda p: (by_process[p], places[p]))
+    where = words.plural(places[top], PLACES)
+    if not by_process[top]:
+        return f"Проблемы без оценки в рублях: больше всего — «{PROCESS_TITLE[top]}», в {where}."
+    return (
+        f"Больше всего теряем на процессе «{PROCESS_TITLE[top]}»: {words.per_month(by_process[top])} "
+        f"в {where}. Нажмите на ячейку — откроются находки ресторана."
+    )
 
 
 def network(session: Session, period: Period, today: date) -> Network:
@@ -320,6 +362,20 @@ def network(session: Session, period: Period, today: date) -> Network:
             )
     common.sort(key=lambda c: -(c.losses or ZERO))
 
+    matrix = []
+    for r in places:
+        mine = by_place[r.id]
+        cells = []
+        for process, _ in PROCESSES:
+            problems = [fw for fw in mine if fw.finding.kind == "problem" and fw.finding.process == process]
+            cells.append(MatrixCell(process, _sum(problems), len(problems), _status(mine, process)))
+        matrix.append(MatrixRow(r.id, r.code, r.name, sum((c.losses for c in cells), ZERO), cells))
+    matrix.sort(key=lambda row: (-row.total, -sum(c.count for c in row.cells), row.code))
+    matrix_answer = _matrix_answer(matrix)
+    network_kpi = session.execute(
+        select(KpiSnapshot).where(KpiSnapshot.restaurant_id.is_(None))
+    ).scalar_one_or_none()
+
     tasks = list(session.execute(select(Task)).scalars())
     return Network(
         restaurants=len(places),
@@ -339,6 +395,12 @@ def network(session: Session, period: Period, today: date) -> Network:
         trend=trend_of(session, None, period),
         ranking=ranking,
         common=common,
+        matrix=matrix,
+        matrix_answer=matrix_answer,
+        kpi=_kpis(network_kpi),
+        overpay=_sum(
+            [fw for fw in items if fw.finding.kind == "problem" and fw.finding.process == "purchasing"]
+        ),
     )
 
 

@@ -418,6 +418,21 @@ export interface MatchesIn {
   matches: MatchIn[];
 }
 
+export interface MatrixCellOut {
+  process: string;
+  losses: string;
+  count: number;
+  status: "good" | "warning" | "critical";
+}
+
+export interface MatrixRowOut {
+  id: string;
+  code: string;
+  name: string;
+  total: string;
+  cells: MatrixCellOut[];
+}
+
 export interface Me {
   id: string;
   email: string;
@@ -449,6 +464,11 @@ export interface NetworkOut {
   trend: TrendOut;
   ranking: RankOut[];
   common: CommonOut[];
+  processes: ProcessTitleOut[];
+  matrix: MatrixRowOut[];
+  matrix_answer: string;
+  kpi: KpiOut | null;
+  overpay: string;
 }
 
 export interface NormsIn {
@@ -500,6 +520,11 @@ export interface ProcessOut {
   title: string;
   losses: string;
   findings: FindingOut[];
+}
+
+export interface ProcessTitleOut {
+  process: string;
+  title: string;
 }
 
 export interface ProposeIn {

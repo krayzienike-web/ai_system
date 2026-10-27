@@ -649,3 +649,47 @@ def test_where_the_figures_come_from_down_to_the_invoice(
         gap_id = gap.id
     missing = client.get(f"/api/findings/{gap_id}/sources", headers=hq).json()
     assert missing["groups"] == [] and "Документов нет" in missing["note"]
+
+
+def test_restaurants_by_processes_and_the_networks_figures(
+    client: TestClient, network: Network, demo: dict[str, UUID]
+) -> None:
+    """Stage 4 (docs/10, 4.3): «Сеть» shows restaurants × processes in ₽ and the network's own figures."""
+    hq = login(client, "admin@a.ru")
+    net = client.get("/api/overview/network", headers=hq, params={"preset": "4w"}).json()
+    processes = [p["process"] for p in net["processes"]]
+    assert processes[0] == "purchasing" and len(processes) == 8
+    # Each cell: the open checked problems of that restaurant and process, summed from the list itself.
+    findings = client.get("/api/findings", headers=hq).json()
+    places = {r["id"]: r["code"] for r in client.get("/api/restaurants", headers=hq).json()}
+    expected: dict[tuple[str, str], Decimal] = {}
+    for f in findings:
+        if f["kind"] == "problem" and f["status"] != "resolved" and f["restaurant_id"]:
+            key = (places[f["restaurant_id"]], f["process"])
+            expected[key] = expected.get(key, Decimal(0)) + Decimal(f["effect_rub_month"] or 0)
+    for row in net["matrix"]:
+        assert [c["process"] for c in row["cells"]] == processes
+        for c in row["cells"]:
+            assert Decimal(c["losses"]) == expected.get((row["code"], c["process"]), Decimal(0))
+            assert (c["status"] == "good") == (c["count"] == 0)
+        assert Decimal(row["total"]) == sum(Decimal(c["losses"]) for c in row["cells"])
+    by_process: dict[str, Decimal] = {}
+    for (_, process), losses in expected.items():
+        by_process[process] = by_process.get(process, Decimal(0)) + losses
+    top = next(
+        p["title"] for p in net["processes"] if p["process"] == max(by_process, key=by_process.__getitem__)
+    )
+    assert net["matrix_answer"].startswith(f"Больше всего теряем на процессе «{top}»")
+    totals = [Decimal(r["total"]) for r in net["matrix"]]
+    assert totals == sorted(totals, reverse=True)
+    # The network's figures: food cost and write-offs from the engine, overpayment from purchasing problems.
+    assert net["kpi"] and Decimal(net["kpi"]["food_cost_actual"]) > 0
+    overpay = sum(
+        (
+            Decimal(f["effect_rub_month"] or 0)
+            for f in findings
+            if f["kind"] == "problem" and f["status"] != "resolved" and f["process"] == "purchasing"
+        ),
+        Decimal(0),
+    )
+    assert Decimal(net["overpay"]) == overpay > 0

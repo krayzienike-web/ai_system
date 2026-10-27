@@ -2768,6 +2768,76 @@
     "title": "MatchesIn",
     "type": "object"
    },
+   "MatrixCellOut": {
+    "properties": {
+     "count": {
+      "title": "Count",
+      "type": "integer"
+     },
+     "losses": {
+      "title": "Losses",
+      "type": "string"
+     },
+     "process": {
+      "title": "Process",
+      "type": "string"
+     },
+     "status": {
+      "enum": [
+       "good",
+       "warning",
+       "critical"
+      ],
+      "title": "Status",
+      "type": "string"
+     }
+    },
+    "required": [
+     "process",
+     "losses",
+     "count",
+     "status"
+    ],
+    "title": "MatrixCellOut",
+    "type": "object"
+   },
+   "MatrixRowOut": {
+    "properties": {
+     "cells": {
+      "items": {
+       "$ref": "#/components/schemas/MatrixCellOut"
+      },
+      "title": "Cells",
+      "type": "array"
+     },
+     "code": {
+      "title": "Code",
+      "type": "string"
+     },
+     "id": {
+      "format": "uuid",
+      "title": "Id",
+      "type": "string"
+     },
+     "name": {
+      "title": "Name",
+      "type": "string"
+     },
+     "total": {
+      "title": "Total",
+      "type": "string"
+     }
+    },
+    "required": [
+     "id",
+     "code",
+     "name",
+     "total",
+     "cells"
+    ],
+    "title": "MatrixRowOut",
+    "type": "object"
+   },
    "Me": {
     "properties": {
      "email": {
@@ -2880,8 +2950,29 @@
       "title": "Found Count",
       "type": "integer"
      },
+     "kpi": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/KpiOut"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
      "losses": {
       "title": "Losses",
+      "type": "string"
+     },
+     "matrix": {
+      "items": {
+       "$ref": "#/components/schemas/MatrixRowOut"
+      },
+      "title": "Matrix",
+      "type": "array"
+     },
+     "matrix_answer": {
+      "title": "Matrix Answer",
       "type": "string"
      },
      "on_table": {
@@ -2896,9 +2987,20 @@
       "title": "Overdue Tasks",
       "type": "integer"
      },
+     "overpay": {
+      "title": "Overpay",
+      "type": "string"
+     },
      "potential": {
       "title": "Potential",
       "type": "string"
+     },
+     "processes": {
+      "items": {
+       "$ref": "#/components/schemas/ProcessTitleOut"
+      },
+      "title": "Processes",
+      "type": "array"
      },
      "ranking": {
       "items": {
@@ -2928,7 +3030,12 @@
      "overdue_tasks",
      "trend",
      "ranking",
-     "common"
+     "common",
+     "processes",
+     "matrix",
+     "matrix_answer",
+     "kpi",
+     "overpay"
     ],
     "title": "NetworkOut",
     "type": "object"
@@ -3237,6 +3344,24 @@
      "findings"
     ],
     "title": "ProcessOut",
+    "type": "object"
+   },
+   "ProcessTitleOut": {
+    "properties": {
+     "process": {
+      "title": "Process",
+      "type": "string"
+     },
+     "title": {
+      "title": "Title",
+      "type": "string"
+     }
+    },
+    "required": [
+     "process",
+     "title"
+    ],
+    "title": "ProcessTitleOut",
     "type": "object"
    },
    "ProposeIn": {

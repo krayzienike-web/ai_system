@@ -1,4 +1,4 @@
-import { Link } from "@tanstack/react-router";
+import { Link, useSearch } from "@tanstack/react-router";
 import { ChevronRight, RotateCcw } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useState } from "react";
@@ -116,8 +116,9 @@ export function FindingsPage() {
   const viewer = useViewer();
   const restaurants = useRestaurants();
   const [kind, setKind] = useState<"problem" | "opportunity" | "all">("all");
-  const [process, setProcess] = useState<string>("all");
-  const [restaurant, setRestaurant] = useState<string>("all");
+  const search: { restaurant?: string; process?: string } = useSearch({ strict: false });
+  const [process, setProcess] = useState<string>(search.process ?? "all");
+  const [restaurant, setRestaurant] = useState<string>(search.restaurant ?? "all");
   const [stage, setStage] = useState<Stage>("all");
   const [lateOnly, setLateOnly] = useState(false);
   const board = useFindingBoard({

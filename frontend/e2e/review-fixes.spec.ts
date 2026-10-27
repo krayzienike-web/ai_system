@@ -42,3 +42,13 @@ test("TC-UI-10: a finding opens down to the invoices, each with its file", async
   await expect(table).toContainText(".csv");
   await expect(page.getByText(/Говядина вырезка · .*Мясной экспресс/)).toBeVisible(); // said once above the table
 });
+
+test("TC-UI-11: «Сеть» shows restaurants × processes; a cell opens that restaurant's findings there", async ({ page }) => {
+  await signInAs(page, "admin@demo.local");
+  await expect(page.getByText("Где именно теряем?")).toBeVisible();
+  await expect(page.getByText("Переплаты поставщикам")).toBeVisible();
+  await page.getByRole("button", { name: /на Тверской, Производство/ }).click();
+  await expect(page.getByRole("heading", { name: "Находки сети" })).toBeVisible();
+  await expect(page.getByRole("link", { name: /Перерасход по техкарте: Сыр Моцарелла/ })).toBeVisible();
+  await expect(page.getByRole("combobox").first()).toHaveValue(/.+/);
+});
