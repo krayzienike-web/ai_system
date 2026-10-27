@@ -3,44 +3,42 @@ import { ArrowLeft, ChevronDown, FlaskConical, MessageCircle } from "lucide-reac
 import { AnimatePresence, motion } from "motion/react";
 import { useState } from "react";
 
+import { useAppContext, useFinding } from "../../api/hooks";
+import type { FindingDetail } from "../../api/types";
 import { TrendChart } from "../../ds/TrendChart";
 import { AiBadge, VerifiedNote } from "../../ds/ai";
-import { Button, buttonClass, Card, EmptyState, Pill, QuestionBlock, Reveal } from "../../ds/primitives";
+import { Button, buttonClass, Card, EmptyState, Pill, QuestionBlock, Reveal, Skeleton } from "../../ds/primitives";
 import { BulletScale, CompositionBar, CycleSteps } from "../../ds/viz";
-import { num, perMonth, rub } from "../../lib/format";
-import { canSeeRestaurant, useViewer } from "../../lib/useViewer";
-import { EXPERIMENTS, PERIOD } from "../../mock/data";
-import { cycleStage, findingById, restaurantByCode } from "../../mock/selectors";
-import type { Experiment, Task } from "../../mock/types";
-import { usePrototype } from "../../state/prototype";
-import { useTasks } from "../counts";
+import { ddmm, money, num, perMonth, rub } from "../../lib/format";
+import { useViewer } from "../../lib/useViewer";
+import { useUi } from "../../state/ui";
 import { QuickSteps, TaskTrace } from "../tasks/trace";
-import { FindingConfidence, MoneyWords, ProcessChip, TakeToWorkDialog, useStatus } from "./parts";
+import { FindingConfidence, MoneyWords, ProcessChip, STAGE_INDEX, TakeToWorkDialog } from "./parts";
+import { ReviewTrace } from "./ReviewTrace";
 
 export function FindingPage() {
   const { findingId } = useParams({ from: "/app/findings/$findingId" });
   const viewer = useViewer();
-  const finding = findingById(findingId);
+  const finding = useFinding(findingId);
   if (!viewer) return null;
-  // Same rule as the API: a director never sees another restaurant's findings.
-  if (!finding || !canSeeRestaurant(viewer, finding.restaurantId)) {
-    return <EmptyState title="Находка не найдена">Возможно, она относится к другому ресторану.</EmptyState>;
+  if (finding.isError) {
+    // The API answers «not found» both for a missing finding and for another restaurant's one.
+    return <EmptyState title="Находка не найдена">Возможно, она относится к другому ресторану или ее уже нет в данных.</EmptyState>;
   }
-  return <FindingView key={finding.id} id={finding.id} isHq={viewer.isHq} />;
+  if (!finding.data) return <Skeleton className="mx-auto h-96 max-w-[1040px]" />;
+  return <FindingView key={finding.data.id} f={finding.data} isHq={viewer.isHq} />;
 }
 
-function FindingView({ id, isHq }: { id: string; isHq: boolean }) {
-  const f = findingById(id)!;
-  const status = useStatus(f);
-  const { openChat } = usePrototype();
+function FindingView({ f, isHq }: { f: FindingDetail; isHq: boolean }) {
+  const { openChat } = useUi();
+  const context = useAppContext();
   const [taking, setTaking] = useState(false);
   const [showEvidence, setShowEvidence] = useState(false);
-  const restaurant = f.restaurantId ? restaurantByCode(f.restaurantId) : null;
-  const experiment = EXPERIMENTS.find((e) => e.findingId === f.id);
-  const tasks = useTasks().filter((t) => t.findingId === f.id);
-  const stage = cycleStage(status);
-  const unit = f.scale?.unit ?? "";
-  const fmtScale = (n: number) => (unit === "%" ? `${n.toLocaleString("ru-RU")}%` : `${num(n)} ${unit}`);
+  const view = f.view;
+  const check = f.check;
+  const effect = money(f.effect_rub_month);
+  const scale = view?.scale;
+  const fmtScale = (n: number) => (scale?.unit === "%" ? `${n.toLocaleString("ru-RU")}%` : `${num(n)} ${scale?.unit ?? ""}`);
 
   return (
     <div className="mx-auto max-w-[1040px] space-y-6">
@@ -54,34 +52,39 @@ function FindingView({ id, isHq }: { id: string; isHq: boolean }) {
           <div className="flex flex-wrap items-center gap-3">
             <Pill tone={f.kind === "problem" ? "loss" : "gain"}>{f.kind === "problem" ? "Проблема" : "Возможность"}</Pill>
             <ProcessChip f={f} />
-            <span className="text-xs text-ink-3">{restaurant ? restaurant.name : "Вся сеть"}</span>
+            <span className="text-xs text-ink-3">{f.restaurant_name ?? "Вся сеть"}</span>
           </div>
           <h1 className="mt-3 font-display text-[26px] leading-tight font-semibold sm:text-[32px]">{f.title}</h1>
           <div className="mt-2">
             <MoneyWords f={f} size="lg" />
-            {f.effectRubMonth !== null && <span className="text-sm text-ink-3"> · около {rub(f.effectRubMonth * 12)} в год</span>}
+            {effect !== null && <span className="text-sm text-ink-3"> · около {rub(effect * 12)} в год</span>}
           </div>
-          <p className="mt-4 max-w-[70ch] text-[17px] leading-relaxed text-ink">{f.headline ?? f.summary}</p>
+          <p className="mt-4 max-w-[70ch] text-[17px] leading-relaxed text-ink">{f.headline ?? view?.summary}</p>
           <div className="mt-6 max-w-xl">
             <CycleSteps
-              current={stage}
-              notes={[undefined, status === "in_work" ? "задача поставлена" : undefined, experiment?.status === "running" ? "до 10.11" : undefined]}
+              current={STAGE_INDEX[f.work.stage]}
+              notes={[undefined, f.work.tasks_total ? "задача поставлена" : undefined, check?.status === "running" ? `до ${ddmm(check.ends_on)}` : undefined]}
             />
           </div>
+          {f.module && (
+            <div className="mt-5 border-t border-line pt-4">
+              <ReviewTrace f={f} compact />
+            </div>
+          )}
           <div className="mt-6 flex flex-wrap items-center gap-3 border-t border-line pt-5">
-            {!isHq && status === "new" && (
+            {!isHq && f.work.stage === "new" && (
               <Button variant="primary" size="lg" onClick={() => setTaking(true)}>
                 Взять в работу
               </Button>
             )}
-            {isHq && f.restaurantId && !experiment && (
+            {isHq && f.restaurant_id && !check && (
               <Link to="/checks/new/$findingId" params={{ findingId: f.id }} className={buttonClass("primary", "lg")}>
                 <FlaskConical size={16} /> Проверить на части ресторанов
               </Link>
             )}
-            {isHq && experiment && (
-              <Link to="/checks/$checkId" params={{ checkId: experiment.id }} className={buttonClass("secondary", "lg")}>
-                <FlaskConical size={16} /> Проверка: {experiment.title}
+            {isHq && check && (
+              <Link to="/checks/$checkId" params={{ checkId: check.id }} className={buttonClass("secondary", "lg")}>
+                <FlaskConical size={16} /> Проверка: {check.title}
               </Link>
             )}
             <Button variant="ghost" size="lg" onClick={() => openChat({ title: f.title, findingId: f.id })}>
@@ -91,30 +94,32 @@ function FindingView({ id, isHq }: { id: string; isHq: boolean }) {
               <FindingConfidence f={f} />
             </span>
           </div>
-          {experiment?.progress && <div className="mt-4 rounded-[12px] bg-info-soft p-4 text-sm text-info">{experiment.progress}</div>}
+          {check?.progress_text && check.status === "running" && (
+            <div className="mt-4 rounded-[12px] bg-info-soft p-4 text-sm text-info">{check.progress_text}</div>
+          )}
         </section>
       </Reveal>
 
       <div className="grid gap-6 lg:grid-cols-2">
-        {f.scale && (
+        {scale && scale.me !== null && (
           <Reveal index={1}>
             <QuestionBlock
               question="Это много?"
-              answer={scaleAnswer(f.scale)}
-              source={<VerifiedNote>{f.confidenceNote}</VerifiedNote>}
+              answer={scale.answer}
+              source={view?.confidence_note && <VerifiedNote>{view.confidence_note}</VerifiedNote>}
               className="h-full"
             >
-              <div className="text-sm font-medium">{f.scale.label}</div>
+              <div className="text-sm font-medium">{scale.label}</div>
               <BulletScale
-                me={f.scale.me}
-                network={f.scale.network}
-                norm={f.scale.norm}
-                lowerIsBetter={f.scale.lowerIsBetter}
+                me={scale.me}
+                network={scale.network ?? undefined}
+                norm={scale.norm ?? undefined}
+                lowerIsBetter={scale.lower_is_better}
                 format={fmtScale}
                 meLabel={isHq ? "Ресторан" : "Вы"}
-                networkLabel={f.scale.networkLabel ?? "Сеть"}
+                networkLabel={scale.network_label ?? "Сеть"}
               />
-              {f.scale.networkLabel && <p className="-mt-2 text-xs text-ink-3">Оранжевая отметка — {f.scale.networkLabel.toLowerCase()}.</p>}
+              {scale.network_label && <p className="-mt-2 text-xs text-ink-3">Оранжевая отметка — {scale.network_label.toLowerCase()}.</p>}
             </QuestionBlock>
           </Reveal>
         )}
@@ -124,14 +129,14 @@ function FindingView({ id, isHq }: { id: string; isHq: boolean }) {
             question="Почему так и что сделать?"
             answer={
               <span className="inline-flex items-center gap-2">
-                Вероятные причины <AiBadge basis={`${f.confidenceNote}. Причины — гипотезы ИИ по данным, их стоит проверить на месте.`} />
+                Вероятные причины <AiBadge basis={`${view?.confidence_note ?? "По загруженным данным"}. Причины — гипотезы по данным, их стоит проверить на месте.`} />
               </span>
             }
             className="h-full"
           >
-            {f.causes.length > 0 && (
+            {!!view?.causes?.length && (
               <ul className="space-y-2 text-sm text-ink-2">
-                {f.causes.map((c) => (
+                {view.causes.map((c) => (
                   <li key={c} className="flex gap-2">
                     <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-ink-3" aria-hidden />
                     {c}
@@ -140,42 +145,37 @@ function FindingView({ id, isHq }: { id: string; isHq: boolean }) {
               </ul>
             )}
             <div className="mt-5">
-              <QuickSteps f={f} />
+              <QuickSteps f={f} tasks={f.tasks} />
             </div>
           </QuestionBlock>
         </Reveal>
       </div>
 
-      {(tasks.length > 0 || experiment) && (
+      {f.result_answer && (
         <Reveal index={3}>
           <QuestionBlock
             question="Что сделали и что получилось?"
-            answer={traceAnswer(tasks, experiment)}
+            answer={f.result_answer}
             source={<VerifiedNote>результат считает система по данным после выполнения, а не со слов исполнителя</VerifiedNote>}
           >
             <div className="grid gap-4 md:grid-cols-2">
-              {tasks.map((t) => (
+              {f.tasks.map((t) => (
                 <div key={t.id} className="rounded-[16px] border border-line p-4">
-                  <div className="mb-3 font-medium">{t.title}</div>
+                  <div className="mb-3 font-medium">{isHq && t.restaurant_name ? `${t.restaurant_name}: ${t.title}` : t.title}</div>
                   <TaskTrace task={t} showFinding={false} showRestaurant={isHq} />
                 </div>
               ))}
-              {experiment && (
-                // The check page belongs to the management company; a director follows the check through its tasks.
-                <Link
-                  to={isHq ? "/checks/$checkId" : "/tasks"}
-                  params={isHq ? { checkId: experiment.id } : undefined}
-                  className="rounded-[16px] border border-line p-4 transition hover:border-ink-3"
-                >
+              {check && (
+                <Link to="/checks/$checkId" params={{ checkId: check.id }} className="rounded-[16px] border border-line p-4 transition hover:border-ink-3">
                   <div className="flex items-center gap-2 font-medium">
-                    <FlaskConical size={16} className="text-brand" /> Проверка «{experiment.title}»
+                    <FlaskConical size={16} className="text-brand" /> Проверка «{check.title}»
                   </div>
                   <div className="mt-2 text-sm text-ink-2">
-                    {experiment.result
-                      ? `Итог: +${perMonth(experiment.result.effectRubMonth)} — подтверждено сравнением с ресторанами без изменений.`
-                      : experiment.progress ?? `Ожидаем +${perMonth(experiment.expectedRubMonth)}; итог — после ${experiment.period}.`}
+                    {check.verdict === "confirmed" && money(check.effect_rub_month)
+                      ? `Итог: +${perMonth(money(check.effect_rub_month)!)} — подтверждено сравнением с ресторанами без изменений.`
+                      : (check.progress_text ?? `Ожидаем +${perMonth(money(check.expected_rub_month) ?? 0)}; итог — после ${ddmm(check.ends_on)}.`)}
                   </div>
-                  <div className="mt-2 text-sm text-brand-strong">{isHq ? "Открыть проверку →" : "Задачи проверки — в «Моих задачах» →"}</div>
+                  <div className="mt-2 text-sm text-brand-strong">Открыть проверку →</div>
                 </Link>
               )}
             </div>
@@ -183,32 +183,26 @@ function FindingView({ id, isHq }: { id: string; isHq: boolean }) {
         </Reveal>
       )}
 
-      {f.composition && (
+      {view?.composition && (
         <Reveal index={3}>
-          <QuestionBlock
-            question="Из чего сложилась потеря?"
-            answer={
-              <>
-                Из израсходованного <span className="num">{num(f.composition.parts.reduce((a, p) => a + p.value, 0))}</span> {f.composition.unit} почти все ушло
-                по техкартам, но <span className="text-loss">{num(f.composition.parts.at(-1)!.value)} {f.composition.unit}</span> ничем не объяснены.
-              </>
-            }
-            source={<VerifiedNote>{f.composition.formula}</VerifiedNote>}
-          >
-            <CompositionBar parts={f.composition.parts} format={(n) => `${num(n)} ${f.composition!.unit}`} />
+          <QuestionBlock question="Из чего сложилась потеря?" answer={view.composition.answer} source={<VerifiedNote>{view.composition.formula}</VerifiedNote>}>
+            <CompositionBar
+              parts={view.composition.parts.map((p) => ({ ...p, value: p.value ?? 0, tone: p.tone as "brand" | "neutral" | "loss" | "gain" }))}
+              format={(n) => `${num(n)} ${view.composition!.unit}`}
+            />
           </QuestionBlock>
         </Reveal>
       )}
 
-      {f.chart && (
+      {view?.chart && (
         <Reveal index={4}>
-          <QuestionBlock question="Как это менялось?" answer={f.chart.conclusion}>
-            <TrendChart spec={f.chart} restaurantLabel={isHq ? "Ресторан" : "Ваш ресторан"} />
+          <QuestionBlock question="Как это менялось?" answer={view.chart.conclusion}>
+            <TrendChart spec={view.chart} restaurantLabel={isHq ? "Ресторан" : "Ваш ресторан"} />
           </QuestionBlock>
         </Reveal>
       )}
 
-      {f.evidence && (
+      {view?.table && (
         <Reveal index={5}>
           <Card>
             <button
@@ -219,7 +213,7 @@ function FindingView({ id, isHq }: { id: string; isHq: boolean }) {
             >
               <span>
                 <span className="block text-[13px] font-semibold tracking-[0.06em] text-ink-3 uppercase">Откуда цифры</span>
-                <span className="font-medium">{f.evidence.title} — документы по строкам</span>
+                <span className="font-medium">{view.table.title}</span>
               </span>
               <ChevronDown size={18} className={showEvidence ? "rotate-180 transition" : "transition"} />
             </button>
@@ -230,7 +224,7 @@ function FindingView({ id, isHq }: { id: string; isHq: boolean }) {
                     <table className="w-full text-sm">
                       <thead className="text-left text-ink-3">
                         <tr>
-                          {f.evidence.columns.map((c, i) => (
+                          {view.table.columns.map((c, i) => (
                             <th key={c} className={`py-2 pr-4 font-medium ${i ? "text-right" : ""}`}>
                               {c}
                             </th>
@@ -238,11 +232,11 @@ function FindingView({ id, isHq }: { id: string; isHq: boolean }) {
                         </tr>
                       </thead>
                       <tbody className="num">
-                        {f.evidence.rows.map((row, r) => (
+                        {view.table.rows.map((row, r) => (
                           <tr key={r} className="border-t border-line">
                             {row.map((cell, c) => (
                               <td key={c} className={`py-2 pr-4 ${c ? "text-right" : ""}`}>
-                                {typeof cell === "number" ? num(cell) : cell}
+                                {typeof cell === "number" ? num(cell) : (cell ?? "—")}
                               </td>
                             ))}
                           </tr>
@@ -258,41 +252,11 @@ function FindingView({ id, isHq }: { id: string; isHq: boolean }) {
       )}
 
       <p className="text-xs text-ink-3">
-        Данные по {PERIOD.dataUntil}. {f.effectRubMonth !== null && `Сумма ${perMonth(f.effectRubMonth)} — оценка до уровня среднего по сети, а не до идеала.`}
+        {context.data?.data_until && <>Данные по {ddmm(context.data.data_until)}. </>}
+        {effect !== null && `Сумма ${perMonth(effect)} — оценка до уровня среднего по сети, а не до идеала.`}
       </p>
 
       <TakeToWorkDialog f={f} open={taking} onClose={() => setTaking(false)} />
     </div>
-  );
-}
-
-function traceAnswer(tasks: Task[], experiment?: Experiment) {
-  const confirmed = tasks.reduce((acc, t) => acc + (t.outcome?.verdict === "confirmed" ? (t.outcome.effectRubMonth ?? 0) : 0), 0);
-  if (confirmed) return `Сработало: +${perMonth(confirmed)} — посчитано по данным после выполнения.`;
-  if (experiment?.result) return `Проверка подтвердила эффект +${perMonth(experiment.result.effectRubMonth)}.`;
-  const done = tasks.filter((t) => t.status === "done").length;
-  if (done) return `Задачи выполнены (${done} из ${tasks.length}), результат в рублях посчитаем после инвентаризации.`;
-  return `В работе: ${tasks.length ? `задач — ${tasks.length}` : "идет проверка"}. Как только выполнят — здесь появится отчет и результат.`;
-}
-
-function scaleAnswer(s: NonNullable<ReturnType<typeof findingById>>["scale"]) {
-  if (!s) return null;
-  const ref = s.network ?? s.norm;
-  if (ref === undefined) return null;
-  const refName = s.network !== undefined ? (s.networkLabel ?? "среднее по сети").toLowerCase() : "норма";
-  const worse = s.lowerIsBetter ? s.me > ref : s.me < ref;
-  const ratio = s.me / ref;
-  const diff =
-    s.unit === "%"
-      ? `на ${(s.me - ref).toLocaleString("ru-RU", { maximumFractionDigits: 1 })} пункта`
-      : ratio >= 1.5
-        ? `в ${ratio.toLocaleString("ru-RU", { maximumFractionDigits: 1 })} раза`
-        : `на ${Math.round(Math.abs(ratio - 1) * 100)}%`;
-  return (
-    <>
-      {worse ? "Да. " : "Нет. "}
-      {s.label}: {diff} {worse ? (s.lowerIsBetter ? "выше" : "ниже") : "лучше"}, чем {refName}
-      {s.norm !== undefined && s.network !== undefined ? `, при норме ${s.norm.toLocaleString("ru-RU")}${s.unit === "%" ? "%" : ` ${s.unit}`}` : ""}.
-    </>
   );
 }

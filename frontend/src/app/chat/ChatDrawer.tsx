@@ -43,7 +43,7 @@ function Typed({ text, onDone }: { text: string; onDone: () => void }) {
 function AssistantMessage({ m, last }: { m: Message; last: boolean }) {
   const navigate = useNavigate();
   const viewer = useViewer();
-  const { createTasks, closeChat, findingStatus } = usePrototype();
+  const { createTasks, closeChat, findingStatus } = useUi();
   const [done, setDone] = useState(!last);
   const finish = useCallback(() => setDone(true), []);
   const a = m.answer;
@@ -244,7 +244,7 @@ export function ChatPanel({ context, className }: { context: ChatContextRef | nu
 }
 
 export function ChatDrawer() {
-  const { chat, closeChat } = usePrototype();
+  const { chat, closeChat } = useUi();
   return (
     <AnimatePresence>
       {chat.open && (

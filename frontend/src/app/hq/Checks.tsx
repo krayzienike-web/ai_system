@@ -9,7 +9,7 @@ import { perMonth, rub } from "../../lib/format";
 import { EXPERIMENTS, RESTAURANTS } from "../../mock/data";
 import { findingById, restaurantByCode } from "../../mock/selectors";
 import type { Experiment } from "../../mock/types";
-import { usePrototype } from "../../state/prototype";
+import { useUi } from "../../state/ui";
 import { useTasks } from "../counts";
 import { TaskTrace } from "../tasks/trace";
 
@@ -35,7 +35,7 @@ function RestaurantChips({ codes, tone }: { codes: string[]; tone: "test" | "con
 }
 
 function useStage(e: Experiment) {
-  const { experimentStatus } = usePrototype();
+  const { experimentStatus } = useUi();
   const d = experimentStatus[e.id];
   if (d === "rejected") return "rejected" as const;
   if (d === "approved") return "running" as const;
@@ -51,7 +51,7 @@ const VERDICT = {
 export function CheckPage() {
   const { checkId } = useParams({ from: "/app/checks/$checkId" });
   const e = EXPERIMENTS.find((x) => x.id === checkId);
-  const { decideExperiment, proposeRollout, rollouts } = usePrototype();
+  const { decideExperiment, proposeRollout, rollouts } = useUi();
   const stage = useStage(e ?? EXPERIMENTS[0]!);
   const tasks = useTasks();
   if (!e) return <EmptyState title="Проверка не найдена" />;
@@ -237,7 +237,7 @@ export function NewCheckPage() {
   const { findingId } = useParams({ from: "/app/checks/new/$findingId" });
   const f = findingById(findingId);
   const navigate = useNavigate();
-  const { sendDraft } = usePrototype();
+  const { sendDraft } = useUi();
   const [step, setStep] = useState(0);
   const [action, setAction] = useState(0);
   const [control, setControl] = useState<string[]>(() => RESTAURANTS.map((r) => r.code).filter((c) => c !== f?.restaurantId));

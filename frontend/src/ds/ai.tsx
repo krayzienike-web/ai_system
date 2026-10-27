@@ -2,8 +2,7 @@ import { Calculator, Sparkles, X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { type ReactNode, useState } from "react";
 
-import type { Confidence } from "../mock/types";
-import { usePrototype } from "../state/prototype";
+import { useUi } from "../state/ui";
 import { cx, EASE } from "./primitives";
 
 /**
@@ -48,6 +47,8 @@ export function AiBadge({ basis }: { basis: ReactNode }) {
   );
 }
 
+type Confidence = "high" | "medium" | "low";
+
 const CONFIDENCE_WORD: Record<Confidence, string> = { high: "Уверены", medium: "Уверены средне", low: "Пока предположение" };
 
 /** Confidence as a word plus the reason, never a bare percentage. */
@@ -80,7 +81,7 @@ export function VerifiedNote({ children }: { children: ReactNode }) {
 
 /** Bottom toast with an optional "Отменить". */
 export function ToastHost() {
-  const { toast, dismissToast } = usePrototype();
+  const { toast, dismissToast } = useUi();
   return (
     <div className="pointer-events-none fixed inset-x-0 bottom-20 z-50 flex justify-center px-4 lg:bottom-8">
       <AnimatePresence>

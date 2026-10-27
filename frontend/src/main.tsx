@@ -7,17 +7,17 @@ import { createRoot } from "react-dom/client";
 
 import { ToastHost } from "./ds/ai";
 import { router } from "./router";
-import { PrototypeProvider } from "./state/prototype";
+import { UiProvider } from "./state/ui";
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
-      <PrototypeProvider>
+      <UiProvider>
         <RouterProvider router={router} />
         <ToastHost />
-      </PrototypeProvider>
+      </UiProvider>
     </QueryClientProvider>
   </StrictMode>,
 );

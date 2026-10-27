@@ -3,25 +3,21 @@ import { Check, CheckCircle2, Clock, Plus, XCircle } from "lucide-react";
 import { motion } from "motion/react";
 import { type FormEvent, useState } from "react";
 
+import { useAppContext, useCreateTasks, useRestaurants } from "../../api/hooks";
+import type { ApiFinding, ApiTask, TaskOutcome } from "../../api/types";
 import { Button, cx, EASE } from "../../ds/primitives";
-import { dateIn, daysUntil, DUE_PRESETS, todayLabel } from "../../lib/dates";
-import { perMonth } from "../../lib/format";
+import { ddmm, money, perMonth } from "../../lib/format";
 import { useViewer } from "../../lib/useViewer";
-import { RESTAURANTS } from "../../mock/data";
-import { findingById } from "../../mock/selectors";
-import type { Finding, Task, TaskOutcome } from "../../mock/types";
-import { usePrototype } from "../../state/prototype";
-import { useTasks } from "../counts";
-
-const restaurantName = (code: string) => RESTAURANTS.find((r) => r.code === code)?.name ?? code;
+import { useUi } from "../../state/ui";
 
 /** The measured result of a task in one line: worked (₽) / did not work / not measured yet. */
-export function OutcomePill({ outcome }: { outcome?: TaskOutcome }) {
+export function OutcomePill({ outcome }: { outcome?: TaskOutcome | null }) {
   if (!outcome) return null;
+  const effect = money(outcome.effect_rub_month);
   if (outcome.verdict === "confirmed") {
     return (
       <span className="inline-flex items-center gap-1.5 rounded-full bg-gain-soft px-2.5 py-1 text-xs font-semibold text-gain">
-        <CheckCircle2 size={13} /> Сработало{outcome.effectRubMonth ? `: +${perMonth(outcome.effectRubMonth)}` : ""}
+        <CheckCircle2 size={13} /> Сработало{effect ? `: +${perMonth(effect)}` : ""}
       </span>
     );
   }
@@ -51,51 +47,52 @@ const DOT: Record<StepState, string> = {
 
 /**
  * Traceability of one task: found → task set → done (report) → result in ₽.
- * The result is computed by code after the recount or the check, never typed by a person.
+ * The result is computed by the system after the recount or the check, never typed by a person.
  */
-export function TaskTrace({ task, showFinding = true, showRestaurant = false }: { task: Task; showFinding?: boolean; showRestaurant?: boolean }) {
+export function TaskTrace({ task, showFinding = true, showRestaurant = false }: { task: ApiTask; showFinding?: boolean; showRestaurant?: boolean }) {
   const viewer = useViewer();
-  const finding = task.findingId ? findingById(task.findingId) : undefined;
   const done = task.status === "done";
-  const late = !done && (task.status === "overdue" || daysUntil(task.due) < 0);
   const o = task.outcome;
 
   const steps: { title: string; state: StepState; body: React.ReactNode }[] = [
     {
       title: "Нашли",
       state: "done",
-      body: finding ? (
-        showFinding ? (
-          <Link to="/findings/$findingId" params={{ findingId: finding.id }} className="text-brand-strong hover:underline">
-            {finding.title}
-          </Link>
+      body:
+        task.finding_id && task.finding_title ? (
+          showFinding ? (
+            <Link to="/findings/$findingId" params={{ findingId: task.finding_id }} className="text-brand-strong hover:underline">
+              {task.finding_title}
+            </Link>
+          ) : (
+            <span className="text-ink-2">{task.finding_title}</span>
+          )
         ) : (
-          <span className="text-ink-2">{finding.title}</span>
-        )
-      ) : (
-        <span className="text-ink-2">{task.source}</span>
-      ),
+          <span className="text-ink-2">{task.source}</span>
+        ),
     },
     {
       title: "Поставили задачу",
       state: "done",
       body: (
         <span className="text-ink-2">
-          {task.createdAt} · {task.assignedBy === "hq" ? "управляющая компания" : "директор"}
-          {showRestaurant && ` → ${restaurantName(task.restaurantId)}`} · срок {task.due}
+          {ddmm(task.created_on)} · {task.assigned_by === "hq" ? "управляющая компания" : "директор"}
+          {showRestaurant && task.restaurant_name && ` → ${task.restaurant_name}`} · срок {ddmm(task.due_on)}
         </span>
       ),
     },
     {
       title: "Выполнили",
-      state: done ? "done" : late ? "bad" : "current",
+      state: done ? "done" : task.late ? "bad" : "current",
       body: done ? (
         <span className="text-ink-2">
-          {task.doneAt}
+          {ddmm(task.done_on)}
           {task.report && <span className="mt-1 block rounded-[10px] bg-paper px-3 py-2 text-ink">«{task.report}»</span>}
         </span>
       ) : (
-        <span className={late ? "font-medium text-loss" : "text-ink-3"}>{late ? `Просрочено, срок был ${task.due}` : `В работе, срок до ${task.due}`}</span>
+        <span className={task.late ? "font-medium text-loss" : "text-ink-3"}>
+          {task.late ? `Просрочено, срок был ${ddmm(task.due_on)}` : `В работе, срок до ${ddmm(task.due_on)}`}
+        </span>
       ),
     },
     {
@@ -106,10 +103,10 @@ export function TaskTrace({ task, showFinding = true, showRestaurant = false }: 
           <OutcomePill outcome={o} />
           <span className="block text-ink-2">
             {o.text}
-            {o.measuredOn && <span className="text-ink-3"> · посчитано {o.measuredOn}</span>}
+            {o.measured_on && <span className="text-ink-3"> · посчитано {ddmm(o.measured_on)}</span>}
           </span>
-          {task.experimentId && viewer?.isHq && (
-            <Link to="/checks/$checkId" params={{ checkId: task.experimentId }} className="inline-block text-brand-strong hover:underline">
+          {task.experiment_id && viewer?.isHq && (
+            <Link to="/checks/$checkId" params={{ checkId: task.experiment_id }} className="inline-block text-brand-strong hover:underline">
               Как проверяли →
             </Link>
           )}
@@ -144,31 +141,17 @@ export function TaskTrace({ task, showFinding = true, showRestaurant = false }: 
   );
 }
 
-/** Builds tasks for one step: one per restaurant (a network-wide finding goes to every director). */
-function stepTasks(f: Finding, step: string, index: number, byHq: boolean, days: number): Task[] {
-  const codes = f.restaurantId ? [f.restaurantId] : RESTAURANTS.map((r) => r.code);
-  return codes.map((code) => ({
-    id: `q-${f.id}-${index}-${code}`,
-    restaurantId: code,
-    title: step,
-    source: byHq ? "Поставлено управляющей компанией" : "Взято директором из находки",
-    findingId: f.id,
-    assignedBy: byHq ? "hq" : "director",
-    createdAt: todayLabel(),
-    due: dateIn(days),
-    status: "assigned",
-  }));
-}
-
 /** "Что сделать" with a one-click task on every step: HQ assigns it to the director, a director takes it. */
-export function QuickSteps({ f }: { f: Finding }) {
+export function QuickSteps({ f, tasks }: { f: ApiFinding; tasks: ApiTask[] }) {
   const viewer = useViewer();
-  const tasks = useTasks();
-  const { createTasks } = usePrototype();
-  const [days, setDays] = useState<number>(DUE_PRESETS[1].days);
+  const create = useCreateTasks();
+  const context = useAppContext();
+  const { notify } = useUi();
+  const [days, setDays] = useState(7);
   if (!viewer) return null;
   const byHq = viewer.isHq;
-  const forWhom = f.restaurantId ? (byHq ? "директору" : "себе") : "всем директорам";
+  const forWhom = f.restaurant_id ? (byHq ? "директору" : "себе") : "всем директорам";
+  const option = context.data?.due_options.find((o) => o.days === days);
 
   return (
     <div>
@@ -176,7 +159,7 @@ export function QuickSteps({ f }: { f: Finding }) {
         <span className="text-sm font-medium">Что сделать</span>
         <span className="flex items-center gap-1 text-xs text-ink-3">
           Срок:
-          {DUE_PRESETS.map((p) => (
+          {context.data?.due_options.map((p) => (
             <button
               key={p.days}
               type="button"
@@ -191,7 +174,7 @@ export function QuickSteps({ f }: { f: Finding }) {
       </div>
       <ol className="mt-2 space-y-2 text-sm">
         {f.actions.map((a, i) => {
-          const existing = tasks.filter((t) => t.findingId === f.id && t.title === a);
+          const existing = tasks.filter((t) => t.title === a);
           return (
             <li key={a} className="flex flex-wrap items-start gap-3 rounded-[12px] border border-line p-3">
               <span className="num grid h-6 w-6 shrink-0 place-items-center rounded-full bg-brand-soft text-xs font-semibold text-brand-strong">{i + 1}</span>
@@ -199,21 +182,29 @@ export function QuickSteps({ f }: { f: Finding }) {
               {existing.length ? (
                 byHq ? (
                   <span className="inline-flex items-center gap-1 pt-0.5 text-xs font-medium text-brand-strong">
-                    <Check size={13} /> Поставлено до {existing[0]!.due}
+                    <Check size={13} /> Поставлено до {ddmm(existing[0]!.due_on)}
                     {existing.length > 1 && ` · ${existing.length} рест.`}
                   </span>
                 ) : (
                   <Link to="/tasks" className="inline-flex items-center gap-1 pt-0.5 text-xs font-medium text-brand-strong hover:underline">
-                    <Check size={13} /> Задача до {existing[0]!.due} →
+                    <Check size={13} /> Задача до {ddmm(existing[0]!.due_on)} →
                   </Link>
                 )
               ) : (
                 <Button
                   size="sm"
+                  disabled={!option || create.isPending}
                   onClick={() =>
-                    createTasks(
-                      stepTasks(f, a, i, byHq, days),
-                      byHq ? `Задача поставлена ${forWhom}, срок ${dateIn(days)}` : `Задача в «Моих задачах», срок ${dateIn(days)}`,
+                    create.mutate(
+                      { title: a, finding_id: f.id, due_on: option!.due_on },
+                      {
+                        onSuccess: () =>
+                          notify(
+                            byHq
+                              ? `Задача поставлена ${forWhom}, срок ${ddmm(option!.due_on)}`
+                              : `Задача в «Моих задачах», срок ${ddmm(option!.due_on)}`,
+                          ),
+                      },
                     )
                   }
                 >
@@ -231,32 +222,34 @@ export function QuickSteps({ f }: { f: Finding }) {
 /** One-line task creation without a finding: what, where, by when. */
 export function QuickTaskForm() {
   const viewer = useViewer();
-  const { createTasks } = usePrototype();
+  const create = useCreateTasks();
+  const context = useAppContext();
+  const restaurants = useRestaurants();
+  const { notify } = useUi();
   const [title, setTitle] = useState("");
   const [where, setWhere] = useState("all");
-  const [days, setDays] = useState<number>(DUE_PRESETS[1].days);
+  const [days, setDays] = useState(7);
   if (!viewer) return null;
+  const option = context.data?.due_options.find((o) => o.days === days);
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
     const text = title.trim();
-    if (!text) return;
-    const codes = viewer.isHq ? (where === "all" ? RESTAURANTS.map((r) => r.code) : [where]) : [viewer.restaurantCode ?? ""];
-    const stamp = Date.now();
-    createTasks(
-      codes.map((code) => ({
-        id: `n-${stamp}-${code}`,
-        restaurantId: code,
+    if (!text || !option) return;
+    const all = (restaurants.data ?? []).map((r) => r.id);
+    create.mutate(
+      {
         title: text,
-        source: viewer.isHq ? "Поставлено управляющей компанией" : "Добавлено директором",
-        assignedBy: viewer.isHq ? "hq" : "director",
-        createdAt: todayLabel(),
-        due: dateIn(days),
-        status: "assigned",
-      })),
-      viewer.isHq ? `Задача поставлена: ${codes.length > 1 ? "всем директорам" : restaurantName(codes[0]!)}` : "Задача добавлена",
+        due_on: option.due_on,
+        restaurant_ids: viewer.isHq ? (where === "all" ? all : [where]) : undefined,
+      },
+      {
+        onSuccess: () => {
+          notify(viewer.isHq ? (where === "all" ? "Задача поставлена всем директорам" : "Задача поставлена") : "Задача добавлена");
+          setTitle("");
+        },
+      },
     );
-    setTitle("");
   };
 
   return (
@@ -276,8 +269,8 @@ export function QuickTaskForm() {
           className="h-10 rounded-[10px] border border-line-strong bg-surface px-2 text-sm outline-none focus:border-brand"
         >
           <option value="all">Всем директорам</option>
-          {RESTAURANTS.map((r) => (
-            <option key={r.code} value={r.code}>
+          {(restaurants.data ?? []).map((r) => (
+            <option key={r.id} value={r.id}>
               {r.name}
             </option>
           ))}
@@ -289,13 +282,13 @@ export function QuickTaskForm() {
         aria-label="Срок"
         className="h-10 rounded-[10px] border border-line-strong bg-surface px-2 text-sm outline-none focus:border-brand"
       >
-        {DUE_PRESETS.map((p) => (
+        {context.data?.due_options.map((p) => (
           <option key={p.days} value={p.days}>
-            {p.label} · до {dateIn(p.days)}
+            {p.label} · до {ddmm(p.due_on)}
           </option>
         ))}
       </select>
-      <Button type="submit" variant="primary" disabled={!title.trim()}>
+      <Button type="submit" variant="primary" disabled={!title.trim() || !option || create.isPending}>
         <Plus size={15} /> Поставить
       </Button>
     </form>

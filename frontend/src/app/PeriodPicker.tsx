@@ -5,11 +5,11 @@ import { useEffect, useRef, useState } from "react";
 import { Button, cx, EASE } from "../ds/primitives";
 import { TODAY } from "../lib/dates";
 import { customRangeError, iso, PRESETS, resolvePeriod } from "../lib/period";
-import { usePrototype } from "../state/prototype";
+import { useUi } from "../state/ui";
 
 /** Date filter for every screen: presets by full weeks or a custom range (same rules as the API). */
 export function PeriodPicker() {
-  const { period, setPeriod } = usePrototype();
+  const { period, setPeriod } = useUi();
   const [open, setOpen] = useState(false);
   const current = resolvePeriod(period);
   const [from, setFrom] = useState(iso(current.from));

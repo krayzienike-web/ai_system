@@ -18,14 +18,14 @@ import {
   weeklyActions,
 } from "../../mock/selectors";
 import type { Finding, ProcessKey, Task } from "../../mock/types";
-import { usePrototype } from "../../state/prototype";
+import { useUi } from "../../state/ui";
 import { useTasks } from "../counts";
 import { OutcomePill } from "../tasks/trace";
 import { ActionCard, FindingRow, TakeToWorkDialog, useStatus } from "../findings/parts";
 
 /** The weekly view of one restaurant. Director's home; HQ opens it from "Рестораны" (readOnly). */
 export function WeekView({ code, readOnly = false }: { code: string; readOnly?: boolean }) {
-  const { openChat, findingStatus, notify } = usePrototype();
+  const { openChat, findingStatus, notify } = useUi();
   const [taking, setTaking] = useState<Finding | null>(null);
   const [process, setProcess] = useState<ProcessKey | null>(null);
   const tasks = useTasks();

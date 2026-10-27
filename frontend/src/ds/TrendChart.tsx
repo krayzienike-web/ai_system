@@ -6,7 +6,9 @@ import { Table2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { num } from "../lib/format";
-import type { ChartSpec } from "../mock/types";
+import type { FindingView } from "../api/types";
+
+type ChartSpec = NonNullable<FindingView["chart"]>;
 import { Button } from "./primitives";
 
 echarts.use([LineChart, GridComponent, LegendComponent, MarkLineComponent, TooltipComponent, SVGRenderer]);
@@ -33,21 +35,21 @@ export function TrendChart({ spec, restaurantLabel = "Ресторан" }: { spe
         color: SERIES_RESTAURANT,
         endLabel: { show: true, formatter: restaurantLabel, color: INK_SECONDARY },
         markLine:
-          spec.norm !== undefined
+          spec.norm !== undefined && spec.norm !== null
             ? {
                 silent: true,
                 symbol: "none",
                 lineStyle: { color: "#14202b", type: "dashed", width: 1.5 },
-                label: { formatter: spec.normLabel ?? "Норма", color: INK_SECONDARY, position: "insideEndBottom" },
+                label: { formatter: spec.norm_label ?? "Норма", color: INK_SECONDARY, position: "insideEndBottom" },
                 data: [{ yAxis: spec.norm }],
               }
             : undefined,
       },
-      ...(spec.networkAvg
+      ...(spec.network_avg
         ? [
             {
               name: "Среднее по сети",
-              data: spec.networkAvg,
+              data: spec.network_avg,
               color: SERIES_NETWORK,
               endLabel: { show: true, formatter: "Среднее по сети", color: INK_SECONDARY },
             },
@@ -112,7 +114,7 @@ export function TrendChart({ spec, restaurantLabel = "Ресторан" }: { spe
               <tr>
                 <th className="py-1 pr-4 font-normal">Период</th>
                 <th className="py-1 pr-4 text-right font-normal">{restaurantLabel}</th>
-                {spec.networkAvg && <th className="py-1 text-right font-normal">Среднее по сети</th>}
+                {spec.network_avg && <th className="py-1 text-right font-normal">Среднее по сети</th>}
               </tr>
             </thead>
             <tbody className="tabular-nums">
@@ -120,7 +122,7 @@ export function TrendChart({ spec, restaurantLabel = "Ресторан" }: { spe
                 <tr key={label} className="border-t border-line">
                   <td className="py-1 pr-4">{label}</td>
                   <td className="py-1 pr-4 text-right">{fmt(spec.restaurant[i] ?? 0, spec.unit)}</td>
-                  {spec.networkAvg && <td className="py-1 text-right">{fmt(spec.networkAvg[i] ?? 0, spec.unit)}</td>}
+                  {spec.network_avg && <td className="py-1 text-right">{fmt(spec.network_avg[i] ?? 0, spec.unit)}</td>}
                 </tr>
               ))}
             </tbody>

@@ -6,13 +6,13 @@ import { AnimatedNumber, AreaTrend } from "../../ds/viz";
 import { num, perMonth, plural, rub } from "../../lib/format";
 import { EXPERIMENTS, FINDINGS, PERIOD } from "../../mock/data";
 import { networkTotals, networkTrend, restaurantByCode, trendInPeriod } from "../../mock/selectors";
-import { usePrototype } from "../../state/prototype";
+import { useUi } from "../../state/ui";
 import { usePeriod, useTasks } from "../counts";
 import { OutcomePill } from "../tasks/trace";
 
 /** One page for the head of the network: found / taken into work / confirmed. */
 export function ReportPage() {
-  const { findingStatus } = usePrototype();
+  const { findingStatus } = useUi();
   const tasks = useTasks();
   const doneTasks = tasks.filter((t) => t.status === "done");
   // What did not work or was not done: failed checks, tasks without effect, overdue tasks.

@@ -9,7 +9,7 @@ import { plural, rub } from "../lib/format";
 import { useViewer } from "../lib/useViewer";
 import { findingById } from "../mock/selectors";
 import type { Task } from "../mock/types";
-import { usePrototype } from "../state/prototype";
+import { useUi } from "../state/ui";
 import { useTasks } from "./counts";
 import { OutcomePill, QuickTaskForm, TaskTrace } from "./tasks/trace";
 
@@ -25,7 +25,7 @@ function dueWords(t: Task) {
 const isLate = (t: Task) => t.status !== "done" && (t.status === "overdue" || daysUntil(t.due) < 0);
 
 function TaskCard({ task }: { task: Task }) {
-  const { setTaskStatus, toggleCheck, taskChecks } = usePrototype();
+  const { setTaskStatus, toggleCheck, taskChecks } = useUi();
   const [reporting, setReporting] = useState(false);
   const [report, setReport] = useState("");
   const [photo, setPhoto] = useState<string | null>(null);

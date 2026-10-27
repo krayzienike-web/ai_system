@@ -8,7 +8,7 @@ import { rub } from "../../lib/format";
 import { RESTAURANTS } from "../../mock/data";
 import { findingById, restaurantByCode } from "../../mock/selectors";
 import type { Experiment } from "../../mock/types";
-import { usePrototype } from "../../state/prototype";
+import { useUi } from "../../state/ui";
 import { useInbox } from "../counts";
 
 const names = (codes: string[]) => codes.map((c) => restaurantByCode(c)?.name ?? c).join(", ");
@@ -81,7 +81,7 @@ function ProposedRow({ e, onDecide }: { e: Experiment; onDecide: (id: string, d:
 
 export function DecisionsPage() {
   const { experiments, overdue, drafts } = useInbox();
-  const { decideExperiment, notify } = usePrototype();
+  const { decideExperiment, notify } = useUi();
   const total = experiments.length + overdue.length + drafts.length;
 
   return (

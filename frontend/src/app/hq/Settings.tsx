@@ -13,7 +13,7 @@ import {
 } from "../../ds/primitives";
 import { useViewer } from "../../lib/useViewer";
 import { EngineParamsSection } from "./EngineParams";
-import { usePrototype } from "../../state/prototype";
+import { useUi } from "../../state/ui";
 
 const KINDS: { kind: ReasonKind; title: string }[] = [
   { kind: "loss", title: "Потеря" },
@@ -112,7 +112,7 @@ function PctInput({
 
 function NormsForm({ norms }: { norms: Norms }) {
   const viewer = useViewer();
-  const { notify } = usePrototype();
+  const { notify } = useUi();
   const save = useSaveNorms();
   const [d, setD] = useState<Draft>(() => draftOf(norms));
   const readOnly = !viewer?.isAdmin;

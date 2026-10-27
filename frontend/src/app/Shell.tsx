@@ -31,7 +31,7 @@ import { cx } from "../ds/primitives";
 import { DEMO } from "../api/client";
 import { PERIOD } from "../mock/data";
 import { PeriodPicker } from "./PeriodPicker";
-import { usePrototype } from "../state/prototype";
+import { useUi } from "../state/ui";
 import { ChatDrawer } from "./chat/ChatDrawer";
 import { useInboxCount, useOpenTaskCount } from "./counts";
 import { useReviewCount } from "./hq/Review";
@@ -141,7 +141,7 @@ export function Shell() {
   const { data: me, error: meError } = useMe();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { openChat } = usePrototype();
+  const { openChat } = useUi();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const counts = {
     tasks: useOpenTaskCount(),
