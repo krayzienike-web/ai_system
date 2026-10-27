@@ -11,7 +11,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "e2e": "playwright test",
-    "build:demo": "tsc -b && VITE_DEMO=1 vite build --base ./ --outDir dist-demo"
+    "build:demo": "tsc -b && VITE_DEMO=1 vite build --base ./ --outDir dist-demo",
+    "check:bundle": "node scripts/check-bundle.mjs"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.104.5",

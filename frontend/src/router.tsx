@@ -6,32 +6,50 @@ import {
   Navigate,
   redirect,
 } from "@tanstack/react-router";
-import type { ComponentType } from "react";
+import { type ComponentType, lazy, Suspense } from "react";
 
 import { DEMO, tokens } from "./api/client";
-import { DataPage } from "./app/DataPage";
-import { DesignSystemPage } from "./app/DesignSystemPage";
-import { WeekView } from "./app/director/Week";
-import { FindingPage } from "./app/findings/FindingPage";
-import { FindingsPage } from "./app/findings/FindingsPage";
-import { CheckPage, NewCheckPage } from "./app/hq/Checks";
-import { DecisionsPage } from "./app/hq/Decisions";
-import { NetworkPage } from "./app/hq/Network";
-import { ReportPage } from "./app/hq/Report";
-import { ReviewFindingPage, ReviewPage } from "./app/hq/Review";
-import { RestaurantPage, RestaurantsPage } from "./app/hq/Restaurants";
-import { SettingsPage } from "./app/hq/Settings";
 import { Shell } from "./app/Shell";
-import { TasksPage } from "./app/TasksPage";
+import { Skeleton } from "./ds/primitives";
 import { useViewer } from "./lib/useViewer";
 import { LoginPage } from "./pages/Login";
+
+/** A screen loaded when first opened: the first visit downloads the shell, not every screen and chart library. */
+function screen<M, K extends keyof M>(load: () => Promise<M>, name: K): () => React.JSX.Element {
+  const Lazy = lazy(() => load().then((m) => ({ default: m[name] as ComponentType })));
+  return function Screen() {
+    return (
+      <Suspense fallback={<Skeleton className="h-96" />}>
+        <Lazy />
+      </Suspense>
+    );
+  };
+}
+
+const DataPage = screen(() => import("./app/DataPage"), "DataPage");
+const DesignSystemPage = screen(() => import("./app/DesignSystemPage"), "DesignSystemPage");
+const FindingPage = screen(() => import("./app/findings/FindingPage"), "FindingPage");
+const FindingsPage = screen(() => import("./app/findings/FindingsPage"), "FindingsPage");
+const CheckPage = screen(() => import("./app/hq/Checks"), "CheckPage");
+const NewCheckPage = screen(() => import("./app/hq/Checks"), "NewCheckPage");
+const DecisionsPage = screen(() => import("./app/hq/Decisions"), "DecisionsPage");
+const NetworkPage = screen(() => import("./app/hq/Network"), "NetworkPage");
+const ReportPage = screen(() => import("./app/hq/Report"), "ReportPage");
+const ReviewPage = screen(() => import("./app/hq/Review"), "ReviewPage");
+const ReviewFindingPage = screen(() => import("./app/hq/Review"), "ReviewFindingPage");
+const RestaurantsPage = screen(() => import("./app/hq/Restaurants"), "RestaurantsPage");
+const RestaurantPage = screen(() => import("./app/hq/Restaurants"), "RestaurantPage");
+const SettingsPage = screen(() => import("./app/hq/Settings"), "SettingsPage");
+const TasksPage = screen(() => import("./app/TasksPage"), "TasksPage");
+const WeekView = lazy(() => import("./app/director/Week").then((m) => ({ default: m.WeekView })));
 
 /** Screens for the management company only. The API refuses them to a director; the UI never dead-ends there. */
 function hqOnly(Page: ComponentType) {
   return function HqOnly() {
     const viewer = useViewer();
     if (!viewer) return null;
-    return viewer.isHq ? <Page /> : <Navigate to="/" />;
+    // By the permission the API checks (ADR 0007, p. 8), not by the role's name.
+    return viewer.can("network.compare") ? <Page /> : <Navigate to="/" />;
   };
 }
 
@@ -40,7 +58,9 @@ function Home() {
   if (!viewer) return null;
   if (viewer.isHq) return <NetworkPage />;
   return viewer.restaurantCode ? (
-    <WeekView code={viewer.restaurantCode} />
+    <Suspense fallback={<Skeleton className="h-96" />}>
+      <WeekView code={viewer.restaurantCode} />
+    </Suspense>
   ) : null;
 }
 

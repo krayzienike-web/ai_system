@@ -1,5 +1,3 @@
-import { DemoAuthError, demoRequest } from "./demo";
-
 // Tokens live in localStorage for the MVP; moving the refresh token to an httpOnly cookie is planned.
 const ACCESS = "fai.access";
 const REFRESH = "fai.refresh";
@@ -81,10 +79,12 @@ export async function api<T>(
   retry = true,
 ): Promise<T> {
   if (DEMO) {
+    // Loaded only in the demo build: the recorded answers and demo logins never reach a production bundle.
+    const demo = await import("./demo");
     try {
-      return (await demoRequest(path, init, tokens.access)) as T;
+      return (await demo.demoRequest(path, init, tokens.access)) as T;
     } catch (e) {
-      throw e instanceof DemoAuthError ? new ApiError(401, e.message) : e;
+      throw e instanceof demo.DemoAuthError ? new ApiError(401, e.message) : e;
     }
   }
   const headers = new Headers(init.headers);

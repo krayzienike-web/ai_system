@@ -3,12 +3,13 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { motion } from "motion/react";
 import { type FormEvent, useState } from "react";
 
-import { ApiError, DEMO, login } from "../api/client";
+import { ApiError, login } from "../api/client";
 import { Logo } from "../brand/Logo";
 import { Button, EASE } from "../ds/primitives";
 
 // Demo accounts are offered in the prototype and in development only, never in a production build.
-const SHOW_DEMO = DEMO || import.meta.env.DEV;
+// Inlined (not the imported DEMO) so that the build drops the block and the demo logins with it.
+const SHOW_DEMO = import.meta.env.VITE_DEMO === "1" || import.meta.env.DEV;
 const DEMO_USERS = [
   { email: "admin@demo.local", label: "Управляющая компания", hint: "вся сеть" },
   { email: "director1@demo.local", label: "Директор ресторана", hint: "Тверская" },

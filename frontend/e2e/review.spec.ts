@@ -4,7 +4,7 @@ import { expect, test } from "@playwright/test";
 
 import { open, signIn } from "./helpers";
 
-const PENDING = "Цена выросла по всей сети: Лосось охлажденный"; // left for review in the demo network
+const PENDING = "Закончится до поставки: Паста спагетти"; // found today in the demo network, waits for review
 
 test("TC-REV-01: a confirmed finding appears in Находки with its path", async ({ page }) => {
   await signIn(page, "Управляющая компания");
