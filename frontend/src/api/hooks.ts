@@ -27,6 +27,7 @@ import type {
   CheckDetail,
   CheckDraft,
   FindingDetail,
+  FindingSources,
   FindingBoard,
   HeadReport,
   NetworkOverview,
@@ -323,6 +324,14 @@ export const useFindings = () =>
 
 export const useFinding = (id: string) =>
   useQuery({ queryKey: ["finding", id], queryFn: () => api<FindingDetail>(`/findings/${id}`) });
+
+/** The loaded rows behind a finding («Откуда цифры»), asked when the reader opens them. */
+export const useFindingSources = (id: string, enabled: boolean) =>
+  useQuery({
+    queryKey: ["finding", id, "sources"],
+    queryFn: () => api<FindingSources>(`/findings/${id}/sources`),
+    enabled,
+  });
 
 export const useTasks = (late = false) =>
   useQuery({

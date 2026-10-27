@@ -3752,6 +3752,111 @@
     "title": "ScaleView",
     "type": "object"
    },
+   "SourceColumnOut": {
+    "properties": {
+     "key": {
+      "title": "Key",
+      "type": "string"
+     },
+     "label": {
+      "title": "Label",
+      "type": "string"
+     },
+     "type": {
+      "enum": [
+       "text",
+       "date",
+       "qty",
+       "money"
+      ],
+      "title": "Type",
+      "type": "string"
+     }
+    },
+    "required": [
+     "key",
+     "label",
+     "type"
+    ],
+    "title": "SourceColumnOut",
+    "type": "object"
+   },
+   "SourceGroupOut": {
+    "properties": {
+     "columns": {
+      "items": {
+       "$ref": "#/components/schemas/SourceColumnOut"
+      },
+      "title": "Columns",
+      "type": "array"
+     },
+     "kind": {
+      "enum": [
+       "receipts",
+       "counts",
+       "write_offs",
+       "transfers",
+       "sales"
+      ],
+      "title": "Kind",
+      "type": "string"
+     },
+     "rows": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "title": "Rows",
+      "type": "array"
+     },
+     "same": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Same",
+      "type": "array"
+     },
+     "title": {
+      "title": "Title",
+      "type": "string"
+     },
+     "total": {
+      "title": "Total",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "kind",
+     "title",
+     "columns",
+     "rows",
+     "total",
+     "same"
+    ],
+    "title": "SourceGroupOut",
+    "type": "object"
+   },
+   "SourcesOut": {
+    "properties": {
+     "groups": {
+      "items": {
+       "$ref": "#/components/schemas/SourceGroupOut"
+      },
+      "title": "Groups",
+      "type": "array"
+     },
+     "note": {
+      "title": "Note",
+      "type": "string"
+     }
+    },
+    "required": [
+     "note",
+     "groups"
+    ],
+    "title": "SourcesOut",
+    "type": "object"
+   },
    "TableView": {
     "properties": {
      "columns": {
@@ -5645,6 +5750,55 @@
      }
     ],
     "summary": "Review Finding",
+    "tags": [
+     "findings"
+    ]
+   }
+  },
+  "/api/findings/{finding_id}/sources": {
+   "get": {
+    "description": "«Откуда цифры»: the loaded rows behind the finding, each with the file it came from.\nThe same access as the finding's card; a director gets only their restaurant's rows.",
+    "operationId": "get_sources_api_findings__finding_id__sources_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "finding_id",
+      "required": true,
+      "schema": {
+       "format": "uuid",
+       "title": "Finding Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/SourcesOut"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Sources",
     "tags": [
      "findings"
     ]

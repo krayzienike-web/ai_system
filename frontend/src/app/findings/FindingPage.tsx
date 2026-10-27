@@ -7,6 +7,7 @@ import { useAppContext, useFinding } from "../../api/hooks";
 import type { FindingDetail } from "../../api/types";
 import { TrendChart } from "../../ds/TrendChart";
 import { VerifiedNote } from "../../ds/ai";
+import { SourceDocuments } from "./Sources";
 import { Button, buttonClass, Card, EmptyState, Pill, QuestionBlock, Reveal, Skeleton } from "../../ds/primitives";
 import { BulletScale, CompositionBar, CycleSteps } from "../../ds/viz";
 import { ddmm, money, num, perMonth, rub } from "../../lib/format";
@@ -247,6 +248,10 @@ function FindingView({ f, isHq }: { f: FindingDetail; isHq: boolean }) {
           </Card>
         </Reveal>
       )}
+
+      <Reveal index={7}>
+        <SourceDocuments findingId={f.id} />
+      </Reveal>
 
       <p className="text-xs text-ink-3">
         {context.data?.data_until && <>Данные по {ddmm(context.data.data_until)}. </>}

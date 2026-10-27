@@ -27,6 +27,10 @@ export function points(value: number): string {
 
 export const num = (value: number) => nf.format(value);
 
+/** Exact money as in a document: 1132.2 → "1 132,20 ₽". */
+export const kopecks = (value: number) =>
+  `${value.toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₽`;
+
 export const pct = (value: number, digits = 1) =>
   `${value.toLocaleString("ru-RU", { minimumFractionDigits: digits, maximumFractionDigits: digits })}%`;
 

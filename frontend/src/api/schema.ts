@@ -587,6 +587,26 @@ export interface ScaleView {
   answer?: string | null;
 }
 
+export interface SourceColumnOut {
+  key: string;
+  label: string;
+  type: "text" | "date" | "qty" | "money";
+}
+
+export interface SourceGroupOut {
+  kind: "receipts" | "counts" | "write_offs" | "transfers" | "sales";
+  title: string;
+  columns: SourceColumnOut[];
+  rows: Record<string, unknown>[];
+  total: number;
+  same: string[];
+}
+
+export interface SourcesOut {
+  note: string;
+  groups: SourceGroupOut[];
+}
+
 export interface TableView {
   title: string;
   columns: string[];

@@ -31,3 +31,14 @@ test("TC-UI-09: the period picker is only where the period matters", async ({ pa
   await signInAs(page, "director2@demo.local");
   await expect(picker).toHaveCount(0);
 });
+
+test("TC-UI-10: a finding opens down to the invoices, each with its file", async ({ page }) => {
+  await signInAs(page, "admin@demo.local");
+  await open(page, /^Находки$/);
+  await page.getByRole("link", { name: /Говядина вырезка/ }).first().click();
+  await page.getByRole("button", { name: /Документы/ }).click();
+  const table = page.getByRole("table").last();
+  await expect(table).toContainText("Накладная");
+  await expect(table).toContainText(".csv");
+  await expect(page.getByText(/Говядина вырезка · .*Мясной экспресс/)).toBeVisible(); // said once above the table
+});

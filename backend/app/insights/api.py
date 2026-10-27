@@ -13,7 +13,7 @@ from app.core import words
 from app.core.deps import SessionDep, require
 from app.core.errors import ForbiddenError, NotFoundError
 from app.core.period import TodayDep
-from app.insights import review, service
+from app.insights import review, service, sources
 from app.insights.models import Finding, ReviewStatus
 from app.insights.review import RejectReason, Verdict
 from app.insights.service import FindingWork
@@ -320,3 +320,44 @@ def review_finding(
     (out,) = findings_out(session, ctx, [fw])
     session.commit()
     return out
+
+
+class SourceColumnOut(BaseModel):
+    key: str
+    label: str
+    type: Literal["text", "date", "qty", "money"]
+
+
+class SourceGroupOut(BaseModel):
+    kind: Literal["receipts", "counts", "write_offs", "transfers", "sales"]
+    title: str
+    columns: list[SourceColumnOut]
+    rows: list[dict[str, Any]]  # by column key, plus `unit`, `file`, `loaded_on` where known
+    total: int  # rows that match; `rows` holds at most 200 of them
+    same: list[str]  # what every row shares (the product, the restaurant), shown once above the table
+
+
+class SourcesOut(BaseModel):
+    note: str
+    groups: list[SourceGroupOut]
+
+
+@router.get("/findings/{finding_id}/sources")
+def get_sources(finding_id: UUID, ctx: CanRead, session: SessionDep, today: TodayDep) -> SourcesOut:
+    """«Откуда цифры»: the loaded rows behind the finding, each with the file it came from.
+    The same access as the finding's card; a director gets only their restaurant's rows."""
+    s = sources.sources(session, finding_id, today=today)
+    return SourcesOut(
+        note=s.note,
+        groups=[
+            SourceGroupOut(
+                kind=g.kind,
+                title=g.title,
+                columns=[SourceColumnOut(key=c.key, label=c.label, type=c.type) for c in g.columns],
+                rows=g.rows,
+                total=g.total,
+                same=g.same,
+            )
+            for g in s.groups
+        ],
+    )

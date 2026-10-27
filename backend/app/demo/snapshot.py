@@ -89,6 +89,7 @@ def record(client: TestClient, email: str) -> dict[str, Any]:
             continue
         seen.add(f["id"])
         get(f"/findings/{f['id']}")
+        get(f"/findings/{f['id']}/sources")
         if hq:
             get(f"/findings/{f['id']}/verification")
             if f["restaurant_id"] and f["review_status"] in (None, "confirmed"):

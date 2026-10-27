@@ -141,6 +141,8 @@ export type RejectReason = "data" | "logic" | "false_alarm" | "other";
 /** Shapes generated from the API's OpenAPI schema (backend `python -m app.openapi`): the screens use them as is. */
 export type ApiFinding = S.FindingOut;
 export type FindingDetail = S.FindingDetailOut;
+export type FindingSources = S.SourcesOut;
+export type SourceGroup = S.SourceGroupOut;
 export type FindingView = S.FindingView;
 export type ProcessKey = S.FindingOut["process"];
 export type ApiTask = S.TaskOut;

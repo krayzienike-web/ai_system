@@ -6,6 +6,7 @@ from datetime import date, timedelta
 from decimal import Decimal
 from uuid import UUID, uuid4
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine, select, text
@@ -23,6 +24,7 @@ from app.core.security import hash_password
 from app.demo import showcase
 from app.demo.generator import generate
 from app.demo.loader import load
+from app.insights.models import Finding
 from app.main import app
 from app.tenancy.context import load_access_context
 from app.tenancy.models import Restaurant, Role, RoleAssignment, User
@@ -580,3 +582,70 @@ def test_since_the_last_count_and_the_quarter_in_the_picker_and_the_report(
     assert client.get("/api/overview/network", headers=hq, params={"preset": "quarter"}).status_code == 200
     missing = client.get("/api/reports/head", headers=foreign, params={"preset": "since_count"})
     assert missing.status_code == 422 and "Инвентаризаций еще не было" in missing.json()["detail"]
+
+
+def test_where_the_figures_come_from_down_to_the_invoice(
+    client: TestClient, network: Network, demo: dict[str, UUID], owner_engine: Engine
+) -> None:
+    """Stage 4: «Откуда цифры» — the loaded rows behind a finding, with their file; the card's rules."""
+    hq, director, foreign = (
+        login(client, "admin@a.ru"),
+        login(client, "r01@a.ru"),
+        login(client, "admin@b.ru"),
+    )
+    with owner_engine.connect() as c:
+        ids: dict[str, UUID] = dict(
+            c.execute(text("SELECT key, id FROM findings WHERE tenant_id = :t"), {"t": network.a.id}).all()
+        )
+        r01 = c.execute(text("SELECT name FROM restaurants WHERE id = :r"), {"r": demo["R01"]}).scalar_one()
+
+    def sources(key: str, headers: dict[str, str]) -> httpx.Response:
+        response: httpx.Response = client.get(f"/api/findings/{ids[key]}/sources", headers=headers)
+        return response
+
+    # A supplier's price: the invoices, with number, supplier, price and the file they came from.
+    price = sources("M3:R02:P08", hq).json()
+    (invoices,) = price["groups"]
+    assert invoices["kind"] == "receipts" and invoices["total"] == len(invoices["rows"]) > 0
+    row = invoices["rows"][0]
+    assert row["doc_no"] and row["file"].endswith(".csv")
+    # One product, one restaurant, one supplier: said once, not repeated on every line.
+    assert {"Говядина вырезка", "Мясной экспресс"} <= set(invoices["same"])
+    assert "product" not in {c["key"] for c in invoices["columns"]}
+    assert row["unit"] == "кг"
+    # A network-wide finding: every restaurant's invoices, for HQ.
+    growth = sources("M3:net:P09:growth", hq).json()
+    assert len({r["restaurant"] for r in growth["groups"][0]["rows"]}) > 1
+
+    # The director: their restaurant's finding shows only their restaurant's rows, opening count included.
+    own = sources("M1:R01:P01", director).json()
+    kinds = {g["kind"]: g for g in own["groups"]}
+    assert all(r["restaurant"] == r01 for g in own["groups"] for r in g["rows"])
+    assert len(kinds["counts"]["rows"]) == 2  # the counts that open and close the period
+    # Another restaurant's finding, a network-wide one, another network: not found.
+    assert sources("M3:R02:P08", director).status_code == 404
+    assert sources("M3:net:P09:growth", director).status_code == 404
+    assert sources("M3:R02:P08", foreign).status_code == 404
+    # A skipped count: the counts the restaurant did make.
+    overdue = sources("M4:R08:overdue", hq).json()
+    assert [g["kind"] for g in overdue["groups"]] == ["counts"]
+    # A finding about what was never loaded: no documents, and it says so.
+    with get_sessionmaker()() as session:
+        load_access_context(session, network.a.users["admin@a.ru"], network.a.id)
+        gap = Finding(
+            tenant_id=network.a.id,
+            restaurant_id=demo["R01"],
+            module="M7",
+            kind="problem",
+            process="accounting",
+            title="Нет выгрузки",
+            headline="h",
+            status="new",
+            found_on=date(2026, 10, 20),
+            evidence={"kind": "gap", "source": "receipts", "last": "2025-01-01"},
+        )
+        session.add(gap)
+        session.commit()
+        gap_id = gap.id
+    missing = client.get(f"/api/findings/{gap_id}/sources", headers=hq).json()
+    assert missing["groups"] == [] and "Документов нет" in missing["note"]
