@@ -485,7 +485,7 @@ export interface PeriodOption {
   date_to: string;
 }
 
-export type PeriodPreset = "week" | "prev_week" | "4w" | "13w" | "month";
+export type PeriodPreset = "week" | "prev_week" | "4w" | "13w" | "month" | "quarter" | "since_count";
 
 export type Permission = "restaurants.read" | "restaurants.manage" | "users.manage" | "network.compare" | "data.upload" | "catalog.manage" | "experiments.propose" | "experiments.launch" | "analytics.run" | "findings.review" | "norms.manage" | "tasks.assign" | "tasks.execute" | "ai.chat";
 

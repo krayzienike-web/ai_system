@@ -15,7 +15,7 @@ from typing import Any
 from fastapi.testclient import TestClient
 
 from app.cli import DEMO_TODAY
-from app.core.period import get_today
+from app.core.period import PeriodPreset, get_today
 from app.main import app
 
 OUT = Path(__file__).resolve().parents[3] / "frontend" / "src" / "api" / "demo" / "snapshot.json"
@@ -27,7 +27,7 @@ USERS = [
     "director2@demo.local",
     "director3@demo.local",
 ]
-PRESETS = ["week", "prev_week", "4w", "13w", "month"]
+PRESETS = [p.value for p in PeriodPreset]
 # Board variants recorded to check the prototype's filtering against the server's (frontend contract test).
 BOARD_CHECKS = ["kind=problem", "stage=doing", "late=true", "restaurant=net", "process=purchasing"]
 

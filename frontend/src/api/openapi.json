@@ -3157,7 +3157,9 @@
      "prev_week",
      "4w",
      "13w",
-     "month"
+     "month",
+     "quarter",
+     "since_count"
     ],
     "title": "PeriodPreset",
     "type": "string"

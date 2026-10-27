@@ -2,8 +2,10 @@
 
 See docs/02-analytics-spec.md, "Период отчета". A period is either a preset resolved against "today"
 or an explicit inclusive date range. Weeks run Monday to Sunday, and presets end on the last full week,
-so a weekly number never mixes a finished and an unfinished week. «Прошлый месяц» is the last full
-calendar month (Q11 in docs/open-questions.md: «с последней инвентаризации» is still to be decided).
+so a weekly number never mixes a finished and an unfinished week. «Прошлый месяц» and «прошлый квартал»
+are the last full calendar month and quarter. «С последней инвентаризации» runs from the day after the last
+stock count to yesterday (Q11); restaurants count on their own days (Q15), so for the network it starts after
+the earliest of the restaurants' last counts — every restaurant's own period fits in it.
 """
 
 from dataclasses import dataclass
@@ -12,6 +14,10 @@ from enum import StrEnum
 from typing import Annotated
 
 from fastapi import Depends, HTTPException, Query, status
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
+
+from app.core.deps import AccessDep, SessionDep
 
 MAX_DAYS = 366
 
@@ -22,6 +28,8 @@ class PeriodPreset(StrEnum):
     FOUR_WEEKS = "4w"  # last 4 full weeks
     THIRTEEN_WEEKS = "13w"  # last 13 full weeks (a quarter)
     MONTH = "month"  # last full calendar month
+    QUARTER = "quarter"  # last full calendar quarter
+    SINCE_COUNT = "since_count"  # from the day after the last stock count to yesterday
 
 
 class PeriodError(ValueError):
@@ -39,10 +47,17 @@ class Period:
 
     def previous(self) -> "Period":
         """The period right before this one: the baseline for "better / worse".
-        A calendar month compares with the month before it, anything else with the same number of days."""
+        Whole calendar months (a month, a quarter) compare with as many months before them, anything else
+        with the same number of days."""
         if self.date_from.day == 1 and (self.date_to + timedelta(days=1)).day == 1:
+            months = (
+                (self.date_to.year - self.date_from.year) * 12 + self.date_to.month - self.date_from.month + 1
+            )
             end = self.date_from - timedelta(days=1)
-            return Period(end.replace(day=1), end)
+            start = end.replace(day=1)
+            for _ in range(months - 1):
+                start = (start - timedelta(days=1)).replace(day=1)
+            return Period(start, end)
         return Period(self.date_from - timedelta(days=self.days), self.date_from - timedelta(days=1))
 
 
@@ -56,7 +71,10 @@ def resolve_period(
     preset: PeriodPreset | None = None,
     date_from: date | None = None,
     date_to: date | None = None,
+    last_count: date | None = None,
 ) -> Period:
+    """`last_count` (for «с последней инвентаризации»): the last stock count day the caller sees, at least
+    two days ago so that the period has a day of data in it (see `last_count_day`)."""
     if preset is not None and (date_from is not None or date_to is not None):
         raise PeriodError("Pass either a preset or dates, not both")
     if preset is None and date_from is None and date_to is None:
@@ -64,6 +82,18 @@ def resolve_period(
     if preset is PeriodPreset.MONTH:
         end = today.replace(day=1) - timedelta(days=1)
         return Period(end.replace(day=1), end)
+    if preset is PeriodPreset.QUARTER:
+        first_month = (today.month - 1) // 3 * 3 + 1
+        end = today.replace(month=first_month, day=1) - timedelta(days=1)
+        return Period(end.replace(month=end.month - 2, day=1), end)
+    if preset is PeriodPreset.SINCE_COUNT:
+        if last_count is None:
+            raise PeriodError("Инвентаризаций еще не было: выберите другой период")
+        start = last_count + timedelta(days=1)
+        end = today - timedelta(days=1)
+        if start > end or (end - start).days + 1 > MAX_DAYS:
+            raise PeriodError("Нет подходящей инвентаризации: выберите другой период")
+        return Period(start, end)
     if preset is not None:
         end = last_full_week_end(today)
         weeks = {
@@ -95,14 +125,38 @@ def get_today() -> date:
 TodayDep = Annotated[date, Depends(get_today)]
 
 
+def last_count_day(session: Session, today: date) -> date | None:
+    """The day «с последней инвентаризации» starts after: each restaurant's last count at least two days ago,
+    the earliest of them (row-level security limits the restaurants to what the caller sees)."""
+    from app.operations.models import InventoryCount  # core stays importable without the domain models
+
+    per_restaurant = (
+        select(func.max(InventoryCount.day).label("day"))
+        .where(InventoryCount.day <= today - timedelta(days=2))
+        .group_by(InventoryCount.restaurant_id)
+        .subquery()
+    )
+    return session.execute(select(func.min(per_restaurant.c.day))).scalar_one_or_none()
+
+
+def get_last_count(
+    session: SessionDep,
+    ctx: AccessDep,  # the access context first: the count days are read under row-level security
+    today: TodayDep,
+    preset: Annotated[PeriodPreset | None, Query()] = None,
+) -> date | None:
+    return last_count_day(session, today) if preset is PeriodPreset.SINCE_COUNT else None
+
+
 def get_period(
     today: TodayDep,
+    last_count: Annotated[date | None, Depends(get_last_count)],
     preset: Annotated[PeriodPreset | None, Query()] = None,
     date_from: Annotated[date | None, Query()] = None,
     date_to: Annotated[date | None, Query()] = None,
 ) -> Period:
     try:
-        return resolve_period(today, preset, date_from, date_to)
+        return resolve_period(today, preset, date_from, date_to, last_count)
     except PeriodError as e:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e)) from e
 

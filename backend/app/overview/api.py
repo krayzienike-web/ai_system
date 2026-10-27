@@ -7,9 +7,10 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
 from app.core.deps import SessionDep, require
-from app.core.period import PeriodDep, PeriodPreset, TodayDep, resolve_period
+from app.core.period import PeriodDep, PeriodError, PeriodPreset, TodayDep, last_count_day, resolve_period
 from app.insights.api import FindingOut, findings_out
 from app.insights.service import FindingWork
 from app.insights.work import WorkStage
@@ -30,6 +31,8 @@ PERIOD_TITLES = [
     (PeriodPreset.FOUR_WEEKS, "4 недели"),
     (PeriodPreset.THIRTEEN_WEEKS, "13 недель"),
     (PeriodPreset.MONTH, "Прошлый месяц"),
+    (PeriodPreset.QUARTER, "Прошлый квартал"),
+    (PeriodPreset.SINCE_COUNT, "С последней инвентаризации"),
 ]
 
 
@@ -170,6 +173,19 @@ class BadgesOut(BaseModel):
     open_tasks: int
 
 
+def _period_options(session: Session, today: date) -> list[PeriodOption]:
+    """The picker's presets with their dates; «с последней инвентаризации» only once there is a count."""
+    last_count = last_count_day(session, today)
+    options = []
+    for p, title in PERIOD_TITLES:
+        try:
+            r = resolve_period(today, p, last_count=last_count)
+        except PeriodError:
+            continue
+        options.append(PeriodOption(preset=p, title=title, date_from=r.date_from, date_to=r.date_to))
+    return options
+
+
 @router.get("/overview/context")
 def get_context(ctx: CanRead, session: SessionDep, today: TodayDep) -> ContextOut:
     c = service.context(session, today)
@@ -181,11 +197,7 @@ def get_context(ctx: CanRead, session: SessionDep, today: TodayDep) -> ContextOu
             DueOption(label=label, days=days, due_on=today + timedelta(days=days))
             for label, days in DUE_OPTIONS
         ],
-        periods=[
-            PeriodOption(preset=p, title=title, date_from=r.date_from, date_to=r.date_to)
-            for p, title in PERIOD_TITLES
-            for r in [resolve_period(today, p)]
-        ],
+        periods=_period_options(session, today),
     )
 
 

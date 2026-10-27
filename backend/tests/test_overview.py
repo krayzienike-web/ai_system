@@ -542,3 +542,41 @@ def test_a_director_gets_an_m3_finding_without_other_restaurants_prices(
     on_board = next(f for g in board["groups"] for f in g["items"] if f["id"] == beef["id"])
     for shown in (as_director, listed["view"], on_board["view"]):
         assert not any(name in str(shown) for name in others), others
+
+
+def test_since_the_last_count_and_the_quarter_in_the_picker_and_the_report(
+    client: TestClient, network: Network, demo: dict[str, UUID], owner_engine: Engine
+) -> None:
+    """Q11 (27.10.2026): «прошлый квартал» and «с последней инвентаризации»; each viewer's own count days."""
+    hq, director, foreign = (
+        login(client, "admin@a.ru"),
+        login(client, "r01@a.ru"),
+        login(client, "admin@b.ru"),
+    )
+    query = (
+        "SELECT min(last) FROM (SELECT max(day) AS last FROM inventory_counts "
+        "WHERE tenant_id = :t AND day <= DATE '2026-10-18' {only} GROUP BY restaurant_id) x"
+    )
+    with owner_engine.connect() as c:
+        network_last = c.execute(text(query.format(only="")), {"t": network.a.id}).scalar_one()
+        r01_last = c.execute(
+            text(query.format(only="AND restaurant_id = :r")), {"t": network.a.id, "r": demo["R01"]}
+        ).scalar_one()
+    assert network_last is not None and r01_last is not None
+
+    def picker(headers: dict[str, str]) -> dict[str, tuple[str, str]]:
+        periods = client.get("/api/overview/context", headers=headers).json()["periods"]
+        return {p["preset"]: (p["date_from"], p["date_to"]) for p in periods}
+
+    since = (str(network_last + timedelta(days=1)), "2026-10-19")  # to yesterday (today is 20.10)
+    assert picker(hq)["since_count"] == since
+    assert picker(hq)["quarter"] == ("2026-07-01", "2026-09-30")
+    # A director counts from their own restaurant's last count; another network has no counts at all.
+    assert picker(director)["since_count"] == (str(r01_last + timedelta(days=1)), "2026-10-19")
+    assert "since_count" not in picker(foreign) and "quarter" in picker(foreign)
+
+    report = client.get("/api/reports/head", headers=hq, params={"preset": "since_count"}).json()
+    assert (report["date_from"], report["date_to"]) == since
+    assert client.get("/api/overview/network", headers=hq, params={"preset": "quarter"}).status_code == 200
+    missing = client.get("/api/reports/head", headers=foreign, params={"preset": "since_count"})
+    assert missing.status_code == 422 and "Инвентаризаций еще не было" in missing.json()["detail"]

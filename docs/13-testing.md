@@ -104,7 +104,8 @@
 | TC-CAT-03 | Поставщик и товар с одинаковым названием сопоставляются независимо (интерфейс) | — | ⬜ |
 | TC-NORM-01 | Нормы по умолчанию, права на изменение, проверка значений | `test_norms.py` | ✅ |
 | TC-NORM-02 | Причины списания из выгрузки сводятся к стандартным | `test_reasons_of_an_export_map_to_standard_ones`, `test_import_classifies_write_off_reasons_and_warns_about_unknown` | ✅ |
-| TC-PER-01 | Периоды: недели пн–вс, последний полный месяц, свой диапазон включительно; интерфейс берет готовые периоды с сервера (`/overview/context`), сам не считает | `test_period.py`, `test_overview.py::test_overview_screens_follow_the_access_rules` | ✅ |
+| TC-PER-01 | Периоды: недели пн–вс, последний полный месяц и квартал (сравнение с предыдущим), свой диапазон включительно; интерфейс берет готовые периоды с сервера (`/overview/context`), сам не считает | `test_period.py`, `test_overview.py::test_overview_screens_follow_the_access_rules` | ✅ |
+| TC-PER-02 | «С последней инвентаризации»: со дня после нее по вчера; у сети — после самой ранней из последних инвентаризаций ресторанов, у директора — своего ресторана; без инвентаризаций периода нет в списке, запрос — 422 | `test_period.py::test_since_the_last_count_runs_from_the_day_after_it_to_yesterday`, `test_overview.py::test_since_the_last_count_and_the_quarter_in_the_picker_and_the_report` | ✅ |
 
 ### Аналитический движок (ENG)
 

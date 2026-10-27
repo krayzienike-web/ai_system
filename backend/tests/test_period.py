@@ -5,7 +5,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.core.period import Period, PeriodDep, PeriodError, PeriodPreset, resolve_period
+from app.core.period import Period, PeriodDep, PeriodError, PeriodPreset, get_last_count, resolve_period
 
 FRIDAY = date(2026, 10, 23)
 
@@ -35,6 +35,34 @@ def test_month_is_last_full_calendar_month() -> None:
     assert Period(date(2026, 3, 1), date(2026, 3, 31)).previous() == Period(
         date(2026, 2, 1), date(2026, 2, 28)
     )
+
+
+def test_quarter_is_last_full_calendar_quarter_and_compares_with_the_one_before() -> None:
+    """Q11 (27.10.2026): «прошлый квартал» — the last full calendar quarter."""
+    quarter = resolve_period(FRIDAY, PeriodPreset.QUARTER)
+    assert quarter == Period(date(2026, 7, 1), date(2026, 9, 30))
+    assert quarter.previous() == Period(date(2026, 4, 1), date(2026, 6, 30))
+    # The quarter's last day is not over yet; January looks back to October–December.
+    assert resolve_period(date(2026, 9, 30), PeriodPreset.QUARTER) == Period(
+        date(2026, 4, 1), date(2026, 6, 30)
+    )
+    assert resolve_period(date(2027, 1, 5), PeriodPreset.QUARTER) == Period(
+        date(2026, 10, 1), date(2026, 12, 31)
+    )
+    assert Period(date(2026, 1, 1), date(2026, 3, 31)).previous() == Period(
+        date(2025, 10, 1), date(2025, 12, 31)
+    )
+
+
+def test_since_the_last_count_runs_from_the_day_after_it_to_yesterday() -> None:
+    """Q11 (27.10.2026): «с последней инвентаризации»."""
+    assert resolve_period(FRIDAY, PeriodPreset.SINCE_COUNT, last_count=date(2026, 10, 15)) == Period(
+        date(2026, 10, 16), date(2026, 10, 22)
+    )
+    with pytest.raises(PeriodError, match="Инвентаризаций еще не было"):
+        resolve_period(FRIDAY, PeriodPreset.SINCE_COUNT)
+    with pytest.raises(PeriodError, match="Нет подходящей инвентаризации"):
+        resolve_period(FRIDAY, PeriodPreset.SINCE_COUNT, last_count=date(2025, 1, 1))
 
 
 def test_default_is_last_full_week() -> None:
@@ -69,6 +97,7 @@ def test_invalid_periods_are_rejected(kwargs: dict[str, Any]) -> None:
 
 def test_dependency_parses_query_and_rejects_bad_input() -> None:
     app = FastAPI()
+    app.dependency_overrides[get_last_count] = lambda: None  # no database here: no counts yet
 
     @app.get("/p")
     def read(period: PeriodDep) -> dict[str, str]:
@@ -81,5 +110,7 @@ def test_dependency_parses_query_and_rejects_bad_input() -> None:
     }
     assert client.get("/p", params={"preset": "4w"}).status_code == 200
     assert client.get("/p", params={"preset": "month"}).json()["from"].endswith("-01")
-    assert client.get("/p", params={"preset": "quarter"}).status_code == 422
+    assert client.get("/p", params={"preset": "quarter"}).json()["from"].endswith("-01")
+    assert client.get("/p", params={"preset": "since_count"}).status_code == 422  # no counts
+    assert client.get("/p", params={"preset": "year"}).status_code == 422
     assert client.get("/p", params={"date_from": "2026-10-18", "date_to": "2026-10-01"}).status_code == 422

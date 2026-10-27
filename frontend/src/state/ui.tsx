@@ -2,7 +2,9 @@
 // comes from the API (ADR 0007); nothing here computes figures or decides anything.
 import { createContext, type ReactNode, useCallback, useContext, useMemo, useRef, useState } from "react";
 
-export type PeriodPreset = "week" | "prev_week" | "4w" | "13w" | "month";
+import type { PeriodPreset } from "../api/schema";
+
+export type { PeriodPreset };
 export type PeriodChoice = { preset: PeriodPreset } | { from: string; to: string }; // ISO dates
 
 export interface ChatContextRef {
