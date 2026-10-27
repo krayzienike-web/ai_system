@@ -24,7 +24,7 @@ import { motion } from "motion/react";
 import { useEffect } from "react";
 
 import { ApiError, tokens } from "../api/client";
-import { useAppContext, useBadges, useMe } from "../api/hooks";
+import { useAppContext, useBadges, useMe, useRefreshWhenRunIsDone } from "../api/hooks";
 import { ddmm } from "../lib/format";
 import { ROLE_LABELS } from "../api/types";
 import { Logo, LogoMark } from "../brand/Logo";
@@ -142,6 +142,7 @@ export function Shell() {
   const queryClient = useQueryClient();
   const { openChat } = useUi();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+  useRefreshWhenRunIsDone();
   const badges = useBadges();
   const context = useAppContext();
   const counts = {
@@ -246,15 +247,19 @@ export function Shell() {
             <span className="lg:hidden">
               <Logo compact />
             </span>
-            <PeriodPicker />
-            <div className="hidden min-w-0 items-center gap-2 text-sm text-ink-2 md:flex">
-              {context.data?.data_until && <span>данные по {ddmm(context.data.data_until)}</span>}
+            {/* Only the screens that use the period show it: «Сеть» (HQ home) and «Отчет». */}
+            {me.role !== "restaurant_director" && (pathname === "/" || pathname === "/report") && <PeriodPicker />}
+            <div className="flex min-w-0 items-center gap-2 text-sm text-ink-2">
+              {context.data?.data_until && (
+                <span className="hidden md:inline">данные по {ddmm(context.data.data_until)}</span>
+              )}
               {DEMO && (
                 <span
-                  className="rounded-full bg-spark/25 px-2 py-0.5 text-[11px] font-medium text-ink"
+                  className="rounded-full bg-spark/25 px-2 py-0.5 text-[11px] font-medium whitespace-nowrap text-ink"
                   title="Ответы сервера на демо-сети, записанные заранее: действия в прототипе меняют только сам объект, итоги — на момент записи"
                 >
-                  Прототип · демо-сеть
+                  Прототип<span className="hidden md:inline"> · демо-сеть</span>
+                  {context.data?.data_until && <span className="md:hidden"> · {ddmm(context.data.data_until)}</span>}
                 </span>
               )}
             </div>

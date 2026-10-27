@@ -205,6 +205,15 @@ def propose(
 ) -> Experiment:
     """A check of a finding, sent to the HQ admin to launch."""
     d = draft(session, ctx, finding_id)
+    session.refresh(d.finding, with_for_update=True)  # two proposals at once: one waits for the other
+    open_check = session.execute(
+        select(Experiment.id).where(
+            Experiment.finding_id == d.finding.id,
+            Experiment.status.in_((ExperimentStatus.PROPOSED, ExperimentStatus.RUNNING)),
+        )
+    ).first()
+    if open_check:
+        raise InvalidError("По этой находке уже есть проверка")
     if action not in d.actions:
         raise InvalidError("Выберите меру из находки")
     if weeks not in {w for w, _ in DURATIONS}:

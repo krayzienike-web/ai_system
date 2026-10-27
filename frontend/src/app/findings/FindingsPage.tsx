@@ -5,7 +5,7 @@ import { useState } from "react";
 
 import { useFindingBoard, useRestaurants } from "../../api/hooks";
 import type { ApiFinding, FindingBoard } from "../../api/types";
-import { cx, EASE, EmptyState, PageTitle, Reveal, Skeleton } from "../../ds/primitives";
+import { cx, EASE, EmptyState, LoadError, PageTitle, Reveal, Skeleton } from "../../ds/primitives";
 import { PROCESS_ICON } from "../../ds/viz";
 import { money, plural, rub } from "../../lib/format";
 import { useViewer } from "../../lib/useViewer";
@@ -142,7 +142,9 @@ export function FindingsPage() {
         }
       />
 
-      {!b ? (
+      {board.isError ? (
+        <LoadError error={board.error} />
+      ) : !b ? (
         <Skeleton className="h-96" />
       ) : (
         <>

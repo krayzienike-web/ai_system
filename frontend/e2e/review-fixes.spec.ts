@@ -1,0 +1,33 @@
+// Code review 27.10.2026 (docs/reviews/2026-10-27-code-review.md): what the prototype must not let happen.
+import { expect, test } from "@playwright/test";
+
+import { open, signInAs } from "./helpers";
+
+test("TC-UI-07: a card taken into work leaves «Моя неделя» and cannot be taken twice", async ({ page }) => {
+  await signInAs(page, "director2@demo.local");
+  const take = page.getByRole("button", { name: "Взять в работу" });
+  await expect(take).toHaveCount(1);
+  await take.click();
+  await page.getByRole("dialog").getByRole("button", { name: "Взять в работу" }).click();
+  await expect(page.getByText("Задача в «Моих задачах»")).toBeVisible();
+  await expect(take).toHaveCount(0);
+});
+
+test("TC-UI-08: the HQ analyst sees checks and overdue tasks but no buttons they may not press", async ({ page }) => {
+  await signInAs(page, "analyst@demo.local");
+  await open(page, /Ждут решения/);
+  await expect(page.getByRole("heading", { name: /Проверки к запуску/ })).toBeVisible();
+  await expect(page.getByText("Запускает администратор УК").first()).toBeVisible();
+  await expect(page.getByRole("button", { name: "Запустить" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /Напомнить/ })).toHaveCount(0);
+});
+
+test("TC-UI-09: the period picker is only where the period matters", async ({ page }) => {
+  const picker = page.locator('header button[aria-haspopup="dialog"]');
+  await signInAs(page, "analyst@demo.local");
+  await expect(picker).toHaveCount(1); // «Сеть»
+  await open(page, /Ждут решения/);
+  await expect(picker).toHaveCount(0);
+  await signInAs(page, "director2@demo.local");
+  await expect(picker).toHaveCount(0);
+});

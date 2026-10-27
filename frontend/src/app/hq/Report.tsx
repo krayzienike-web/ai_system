@@ -2,7 +2,7 @@ import { CheckCircle2, XCircle } from "lucide-react";
 
 import { useAppContext, useHeadReport } from "../../api/hooks";
 import { VerifiedNote } from "../../ds/ai";
-import { Card, PageTitle, QuestionBlock, Reveal, Skeleton } from "../../ds/primitives";
+import { Card, LoadError, PageTitle, QuestionBlock, Reveal, Skeleton } from "../../ds/primitives";
 import { AnimatedNumber, AreaTrend } from "../../ds/viz";
 import { ddmm, money, num, perMonth, plural, rub } from "../../lib/format";
 import { useUi } from "../../state/ui";
@@ -20,6 +20,7 @@ export function ReportPage() {
   const report = useHeadReport(period);
   const context = useAppContext();
   const r = report.data;
+  if (report.isError) return <LoadError error={report.error} />;
   if (!r) return <Skeleton className="mx-auto h-[600px] max-w-[1040px]" />;
 
   const trend = r.trend.on_table.map((v) => money(v) ?? 0);

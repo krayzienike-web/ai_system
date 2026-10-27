@@ -4,7 +4,7 @@ import { ArrowDownRight, ArrowUpRight, Inbox } from "lucide-react";
 import { useNetworkOverview } from "../../api/hooks";
 import type { ApiFinding } from "../../api/types";
 import { VerifiedNote } from "../../ds/ai";
-import { buttonClass, QuestionBlock, Reveal, Skeleton, Term } from "../../ds/primitives";
+import { buttonClass, LoadError, QuestionBlock, Reveal, Skeleton, Term } from "../../ds/primitives";
 import { AnimatedNumber, AreaTrend, PROCESS_ICON, ProfitSplit, RankList } from "../../ds/viz";
 import { money, perMonth, plural, rub, thousands } from "../../lib/format";
 import { useUi } from "../../state/ui";
@@ -14,6 +14,7 @@ export function NetworkPage() {
   const { period } = useUi();
   const overview = useNetworkOverview(period);
   const n = overview.data;
+  if (overview.isError) return <LoadError error={overview.error} />;
   if (!n) return <Skeleton className="h-[600px]" />;
 
   const losses = money(n.losses) ?? 0;

@@ -205,21 +205,33 @@ export function useReviewFinding() {
   });
 }
 
-/** The latest recalculation; polled while one waits or runs, and the screens refresh when it is done. */
+const RUN_POLL_MS = 3000;
+/** The server marks a run that went on longer as interrupted; a run waiting longer than this has no worker. */
+const RUN_POLL_LIMIT_MS = 30 * 60_000;
+
+/** The latest recalculation; polled while one waits or runs, never on error and not forever. */
 export function useLatestRun() {
-  const client = useQueryClient();
-  const query = useQuery({
+  return useQuery({
     queryKey: ["analytics-run"],
     queryFn: () => api<LatestRun | null>("/analytics/runs/latest"),
-    refetchInterval: (q) => (q.state.data && ["queued", "running"].includes(q.state.data.status) ? 3000 : false),
+    refetchInterval: (q) => runPollInterval(q.state.data, q.state.error, Date.now()),
   });
-  const status = query.data?.status;
+}
+
+export function runPollInterval(run: LatestRun | null | undefined, error: unknown, now: number): number | false {
+  if (error || !run || !["queued", "running"].includes(run.status)) return false;
+  return now - Date.parse(run.requested_at) < RUN_POLL_LIMIT_MS ? RUN_POLL_MS : false;
+}
+
+/** Mounted once in the shell: when a recalculation finishes, whatever screen is open shows the new findings. */
+export function useRefreshWhenRunIsDone() {
+  const client = useQueryClient();
+  const status = useLatestRun().data?.status;
   const before = useRef(status);
   useEffect(() => {
     if (before.current && ["queued", "running"].includes(before.current) && status === "done") refreshWork(client);
     before.current = status;
   }, [status, client]);
-  return query;
 }
 
 export function useRunAnalytics() {
@@ -256,9 +268,10 @@ export function useSaveEngineParams() {
 // ------------------------------------------------------------------ screens (ADR 0007: the API computes, screens draw)
 
 /** After an action, everything that is computed from the work on findings is stale. */
-const STATIC = new Set(["me", "restaurants", "import-templates", "catalog", "norms", "engine-params", "context"]);
+const STATIC = new Set(["me", "restaurants", "imports/templates", "catalog", "norms", "engine-params", "context"]);
+export const isStatic = (key: readonly unknown[]) => STATIC.has(String(key[0])) || STATIC.has(`${String(key[0])}/${String(key[1])}`);
 function refreshWork(client: ReturnType<typeof useQueryClient>) {
-  return client.invalidateQueries({ predicate: (q) => !STATIC.has(String(q.queryKey[0])) });
+  return client.invalidateQueries({ predicate: (q) => !isStatic(q.queryKey) });
 }
 
 /** `?preset=week` or `?date_from=…&date_to=…` for the period chosen in the header. */

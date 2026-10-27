@@ -232,6 +232,26 @@ export function Skeleton({ className }: { className?: string }) {
   return <div className={cx("animate-pulse rounded-lg bg-ink/5", className)} />;
 }
 
+/** The server's reason a request failed (it is written for people), or `fallback` when there is none. */
+export function ErrorText({ error, fallback = "Не получилось, попробуйте еще раз", className }: { error: unknown; fallback?: string; className?: string }) {
+  if (!error) return null;
+  const text = error instanceof Error && error.message && !/^\d{3}\b/.test(error.message) ? error.message : fallback;
+  return (
+    <p role="alert" className={cx("text-sm text-loss", className)}>
+      {text}
+    </p>
+  );
+}
+
+/** A screen whose data did not load: says so (with the server's reason) instead of loading forever. */
+export function LoadError({ error, title = "Не получилось загрузить данные" }: { error: unknown; title?: string }) {
+  return (
+    <EmptyState title={title}>
+      <ErrorText error={error} fallback="Обновите страницу чуть позже." className="text-ink-3" />
+    </EmptyState>
+  );
+}
+
 export function EmptyState({ title, children, action }: { title: string; children?: ReactNode; action?: ReactNode }) {
   return (
     <div className="rounded-[16px] border border-dashed border-line-strong bg-surface px-6 py-10 text-center">

@@ -292,6 +292,9 @@ def test_checks_are_drafted_proposed_and_rolled_out(
     proposed = client.post("/api/checks", headers=analyst, json=body).json()
     assert proposed["status"] == "proposed" and [p["code"] for p in proposed["test"]] == ["R05"]
     assert proposed["finding_title"] == cream["title"]
+    # Code review 27.10.2026: a second click must not make a second check of the same finding.
+    again = client.post("/api/checks", headers=analyst, json=body)
+    assert again.status_code == 422 and "уже есть проверка" in again.json()["detail"]
     assert client.get(f"/api/checks/{proposed['id']}", headers=foreign).status_code == 404
 
     checks = client.get("/api/checks", headers=hq).json()

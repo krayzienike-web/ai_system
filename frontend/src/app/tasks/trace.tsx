@@ -5,7 +5,7 @@ import { type FormEvent, useState } from "react";
 
 import { useAppContext, useCreateTasks, useRestaurants } from "../../api/hooks";
 import type { ApiFinding, ApiTask, TaskOutcome } from "../../api/types";
-import { Button, cx, EASE } from "../../ds/primitives";
+import { Button, cx, EASE, ErrorText } from "../../ds/primitives";
 import { ddmm, money, perMonth } from "../../lib/format";
 import { useViewer } from "../../lib/useViewer";
 import { useUi } from "../../state/ui";
@@ -150,6 +150,7 @@ export function QuickSteps({ f, tasks }: { f: ApiFinding; tasks: ApiTask[] }) {
   const [days, setDays] = useState(7);
   if (!viewer) return null;
   const byHq = viewer.isHq;
+  const mayCreate = viewer.can(byHq ? "tasks.assign" : "tasks.execute");
   const forWhom = f.restaurant_id ? (byHq ? "директору" : "себе") : "всем директорам";
   const option = context.data?.due_options.find((o) => o.days === days);
 
@@ -190,7 +191,7 @@ export function QuickSteps({ f, tasks }: { f: ApiFinding; tasks: ApiTask[] }) {
                     <Check size={13} /> Задача до {ddmm(existing[0]!.due_on)} →
                   </Link>
                 )
-              ) : (
+              ) : !mayCreate ? null : (
                 <Button
                   size="sm"
                   disabled={!option || create.isPending}
@@ -215,6 +216,7 @@ export function QuickSteps({ f, tasks }: { f: ApiFinding; tasks: ApiTask[] }) {
           );
         })}
       </ol>
+      <ErrorText error={create.error} fallback="Не получилось поставить задачу. Попробуйте еще раз." className="mt-2" />
     </div>
   );
 }
@@ -229,7 +231,7 @@ export function QuickTaskForm() {
   const [title, setTitle] = useState("");
   const [where, setWhere] = useState("all");
   const [days, setDays] = useState(7);
-  if (!viewer) return null;
+  if (!viewer || !viewer.can(viewer.isHq ? "tasks.assign" : "tasks.execute")) return null;
   const option = context.data?.due_options.find((o) => o.days === days);
 
   const submit = (e: FormEvent) => {
@@ -291,6 +293,7 @@ export function QuickTaskForm() {
       <Button type="submit" variant="primary" disabled={!title.trim() || !option || create.isPending}>
         <Plus size={15} /> Поставить
       </Button>
+      <ErrorText error={create.error} fallback="Не получилось поставить задачу. Попробуйте еще раз." className="w-full" />
     </form>
   );
 }

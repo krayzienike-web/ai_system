@@ -5,8 +5,9 @@ import { AnimatePresence, motion } from "motion/react";
 
 import { useCheckAction, useChecks, useTaskAction, useTasks } from "../../api/hooks";
 import type { Check } from "../../api/types";
-import { Button, Card, cx, EmptyState, PageTitle, Reveal, Skeleton } from "../../ds/primitives";
+import { Button, Card, cx, EmptyState, ErrorText, PageTitle, Reveal, Skeleton } from "../../ds/primitives";
 import { ddmm, money, plural, rub } from "../../lib/format";
+import { useViewer } from "../../lib/useViewer";
 import { useUi } from "../../state/ui";
 
 const names = (places: Check["test"]) => places?.map((p) => p.name).join(", ") ?? "";
@@ -31,7 +32,7 @@ function Section({ icon, title, count, children }: { icon: React.ReactNode; titl
 const exit = { opacity: 0, x: 60, transition: { duration: 0.3 } };
 
 /** A proposed check as one scannable row; details (hypothesis, tasks) unfold on demand. */
-function ProposedRow({ e, onDecide }: { e: Check; onDecide: (id: string, d: "launch" | "reject") => void }) {
+function ProposedRow({ e, onDecide, canDecide, busy }: { e: Check; onDecide: (id: string, d: "launch" | "reject") => void; canDecide: boolean; busy: boolean }) {
   const [open, setOpen] = useState(false);
   return (
     <motion.li layout exit={{ opacity: 0, height: 0, transition: { duration: 0.25 } }} className="overflow-hidden">
@@ -50,14 +51,18 @@ function ProposedRow({ e, onDecide }: { e: Check; onDecide: (id: string, d: "lau
           <span className="num block font-display text-lg font-semibold text-gain">+{rub(money(e.expected_rub_month) ?? 0)}</span>
           <span className="block text-[11px] text-ink-3">в месяц, если сработает</span>
         </span>
-        <span className="col-span-2 flex gap-2 pl-6 sm:col-span-1 sm:pl-0">
-          <Button size="sm" variant="primary" onClick={() => onDecide(e.id, "launch")}>
-            Запустить
-          </Button>
-          <Button size="sm" variant="ghost" onClick={() => onDecide(e.id, "reject")}>
-            Отклонить
-          </Button>
-        </span>
+        {canDecide ? (
+          <span className="col-span-2 flex gap-2 pl-6 sm:col-span-1 sm:pl-0">
+            <Button size="sm" variant="primary" disabled={busy} onClick={() => onDecide(e.id, "launch")}>
+              Запустить
+            </Button>
+            <Button size="sm" variant="ghost" disabled={busy} onClick={() => onDecide(e.id, "reject")}>
+              Отклонить
+            </Button>
+          </span>
+        ) : (
+          <span className="col-span-2 pl-6 text-xs text-ink-3 sm:col-span-1 sm:pl-0">Запускает администратор УК</span>
+        )}
       </div>
       <AnimatePresence initial={false}>
         {open && (
@@ -85,6 +90,8 @@ export function DecisionsPage() {
   const check = useCheckAction();
   const task = useTaskAction();
   const { notify } = useUi();
+  const viewer = useViewer();
+  if (checks.isError || overdue.isError) return <EmptyState title="Не получилось загрузить решения">Обновите страницу чуть позже.</EmptyState>;
   if (!checks.data || !overdue.data) return <Skeleton className="mx-auto h-96 max-w-[920px]" />;
   const proposed = checks.data;
   const late = overdue.data;
@@ -106,10 +113,11 @@ export function DecisionsPage() {
             <ul className="divide-y divide-line">
               <AnimatePresence initial={false}>
                 {proposed.map((e) => (
-                  <ProposedRow key={e.id} e={e} onDecide={decide} />
+                  <ProposedRow key={e.id} e={e} onDecide={decide} canDecide={!!viewer?.can("experiments.launch")} busy={check.isPending} />
                 ))}
               </AnimatePresence>
             </ul>
+            <ErrorText error={check.error} className="px-4 pb-3" />
           </Card>
         </motion.div>
       </Section>
@@ -125,15 +133,18 @@ export function DecisionsPage() {
                   {t.reminded_on && ` · напомнили ${ddmm(t.reminded_on)}`}
                 </div>
               </div>
-              <Button
-                disabled={task.isPending}
-                onClick={() => task.mutate({ id: t.id, action: "remind" }, { onSuccess: () => notify("Директору отправлено напоминание") })}
-              >
-                <BellRing size={15} /> Напомнить
-              </Button>
+              {viewer?.can("tasks.assign") && (
+                <Button
+                  disabled={task.isPending}
+                  onClick={() => task.mutate({ id: t.id, action: "remind" }, { onSuccess: () => notify("Директору отправлено напоминание") })}
+                >
+                  <BellRing size={15} /> Напомнить
+                </Button>
+              )}
             </Card>
           </motion.div>
         ))}
+        <ErrorText error={task.error} />
       </Section>
     </div>
   );

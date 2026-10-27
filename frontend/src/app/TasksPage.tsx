@@ -1,11 +1,11 @@
 import { Link, Navigate } from "@tanstack/react-router";
-import { Camera, Check } from "lucide-react";
+import { Check } from "lucide-react";
 import { motion } from "motion/react";
 import { useState } from "react";
 
 import { useTaskAction, useTasks } from "../api/hooks";
 import type { ApiTask } from "../api/types";
-import { Button, Card, cx, EmptyState, PageTitle, Reveal, Skeleton } from "../ds/primitives";
+import { Button, Card, cx, EmptyState, ErrorText, PageTitle, Reveal, Skeleton } from "../ds/primitives";
 import { ddmm, money, plural, rub } from "../lib/format";
 import { useViewer } from "../lib/useViewer";
 import { useUi } from "../state/ui";
@@ -25,7 +25,6 @@ function TaskCard({ task }: { task: ApiTask }) {
   const { notify } = useUi();
   const [reporting, setReporting] = useState(false);
   const [report, setReport] = useState("");
-  const [photo, setPhoto] = useState<string | null>(null);
   const checks = task.checklist_done;
   const steps = task.checklist;
   const late = task.late;
@@ -58,7 +57,7 @@ function TaskCard({ task }: { task: ApiTask }) {
               <li key={s}>
                 <button
                   type="button"
-                  disabled={done}
+                  disabled={done || action.isPending}
                   onClick={() => action.mutate({ id: task.id, action: "checklist", body: { index: i, done: !checks[i] } })}
                   className="flex w-full items-center gap-3 rounded-[10px] px-2 py-2 text-left text-[15px] hover:bg-paper disabled:hover:bg-transparent"
                 >
@@ -86,12 +85,17 @@ function TaskCard({ task }: { task: ApiTask }) {
           )}
           {!done && !reporting && (
             <>
-              {task.status === "assigned" && <Button onClick={() => action.mutate({ id: task.id, action: "start" })}>Начать</Button>}
+              {task.status === "assigned" && (
+                <Button disabled={action.isPending} onClick={() => action.mutate({ id: task.id, action: "start" })}>
+                  Начать
+                </Button>
+              )}
               <Button variant="primary" onClick={() => setReporting(true)}>
                 Готово
               </Button>
             </>
           )}
+          <ErrorText error={action.error} className="w-full" />
         </div>
         {reporting && (
           <div className="space-y-2 border-t border-line p-5">
@@ -104,10 +108,7 @@ function TaskCard({ task }: { task: ApiTask }) {
               aria-label="Отчет о выполнении"
             />
             <div className="flex flex-wrap items-center gap-3">
-              <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-ink-2 hover:text-ink">
-                <Camera size={16} /> {photo ? `Фото: ${photo}` : "Приложить фото"}
-                <input type="file" accept="image/*" className="sr-only" onChange={(e) => setPhoto(e.target.files?.[0]?.name ?? null)} />
-              </label>
+              {/* A photo of the result comes with file storage in the API (backlog); until then no field that keeps nothing. */}
               <span className="ml-auto flex gap-2">
                 <Button variant="ghost" onClick={() => setReporting(false)}>
                   Отмена

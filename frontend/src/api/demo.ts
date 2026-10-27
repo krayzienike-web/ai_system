@@ -50,6 +50,19 @@ const daysBetween = (from: string, to: string) =>
 // ------------------------------------------------------------------ what the prototype's actions changed
 
 const findingPatch = new Map<string, Partial<ApiFinding>>();
+/** What the actions did to a finding's work, applied to each viewer's own recorded `work` (the server shows a
+ * director no checks, so a director's stage never becomes «checking»). */
+interface WorkDelta {
+  tasks: number;
+  taken: boolean;
+  waiting: boolean;
+  checking: boolean;
+}
+const workPatch = new Map<string, WorkDelta>();
+const touchWork = (id: string, change: Partial<WorkDelta>) => {
+  const w = workPatch.get(id) ?? { tasks: 0, taken: false, waiting: false, checking: false };
+  workPatch.set(id, { ...w, ...change, tasks: w.tasks + (change.tasks ?? 0) });
+};
 const taskPatch = new Map<string, Partial<ApiTask>>();
 const checkPatch = new Map<string, Partial<Check>>();
 const newTasks: ApiTask[] = [];
@@ -72,21 +85,38 @@ function collect(value: unknown) {
 }
 Object.values(USERS).forEach((u) => collect(u.answers));
 
-/** Applies the actions' changes to every finding, task and check inside an answer. */
-function overlay<T>(value: T): T {
-  const walk = (v: unknown) => {
-    if (Array.isArray(v)) v.forEach(walk);
-    else if (v && typeof v === "object") {
-      const o = v as Record<string, unknown>;
+const isFinding = (o: Record<string, unknown>) => typeof o.id === "string" && "work" in o && "kind" in o;
+
+/** Applies the actions' changes to every finding, task and check inside an answer, as `v` would see them. */
+function overlay<T>(v: Viewer, value: T): T {
+  const walk = (x: unknown) => {
+    if (Array.isArray(x)) x.forEach(walk);
+    else if (x && typeof x === "object") {
+      const o = x as Record<string, unknown>;
       if (typeof o.id === "string") {
-        const f = "work" in o && "kind" in o ? findingPatch.get(o.id) : undefined;
-        if (f) Object.assign(o, { ...f, work: { ...(o.work as object), ...(f.work ?? {}) } });
+        if (isFinding(o)) {
+          Object.assign(o, findingPatch.get(o.id) ?? {});
+          const w = workPatch.get(o.id);
+          if (w) {
+            const work = { ...(o.work as ApiFinding["work"]) };
+            work.tasks_total += w.tasks;
+            if (w.taken && work.stage === "new") work.stage = "doing";
+            if (v.hq && w.checking) Object.assign(work, { stage: "checking", check_waiting_launch: false });
+            else if (v.hq && w.waiting) work.check_waiting_launch = true;
+            o.work = work;
+          }
+          // The server never tells a director who reviewed a finding or why.
+          if (!v.hq) Object.assign(o, { review_note: null, review_reason: null, reviewed_by_name: null });
+        }
         const t = "checklist_done" in o ? taskPatch.get(o.id) : undefined;
         if (t) Object.assign(o, t);
-        const c = "hypothesis" in o ? checkPatch.get(o.id) : undefined;
+        const c = "hypothesis" in o || "progress_text" in o ? checkPatch.get(o.id) : undefined;
         if (c) Object.assign(o, c);
       }
       Object.values(o).forEach(walk);
+      // A restaurant's «what to do» cards are findings nobody has taken yet (overview/service.py).
+      if (Array.isArray(o.actions) && o.actions.some((a) => a && typeof a === "object" && isFinding(a as Record<string, unknown>)))
+        o.actions = (o.actions as ApiFinding[]).filter((a) => a.work.stage === "new");
     }
   };
   walk(value);
@@ -126,14 +156,12 @@ function findingsOf(v: Viewer): ApiFinding[] {
   const extra = [...pool.findings.values()].filter(
     (f) => !ids.has(f.id) && checked(f) && f.status !== "dismissed" && (v.hq || (f.restaurant_id !== null && f.restaurant_id === v.restaurantId)),
   );
-  return overlay(clone([...recorded, ...extra]))
-    .filter(checked)
-    .map((f) => (v.hq ? f : { ...f, review_note: null, review_reason: null, reviewed_by_name: null }));
+  return overlay(v, clone([...recorded, ...extra])).filter(checked);
 }
 
 function tasksOf(v: Viewer, late: boolean): ApiTask[] {
   const recorded = (v.user.answers["/tasks"] as ApiTask[]) ?? [];
-  const all = overlay(clone([...recorded, ...newTasks.filter((t) => visibleTask(v, t))]));
+  const all = overlay(v, clone([...recorded, ...newTasks.filter((t) => visibleTask(v, t))]));
   return late ? all.filter((t) => t.late) : all;
 }
 
@@ -217,12 +245,9 @@ function markTaken(findingId: string | null | undefined, count: number) {
   if (!findingId) return;
   const f = pool.findings.get(findingId);
   if (!f) return;
-  const before = { ...f.work, ...(findingPatch.get(findingId)?.work ?? {}) };
-  findingPatch.set(findingId, {
-    ...findingPatch.get(findingId),
-    status: f.status === "new" ? "in_work" : f.status,
-    work: { ...before, stage: before.stage === "new" ? "doing" : before.stage, tasks_total: before.tasks_total + count },
-  });
+  const status = findingPatch.get(findingId)?.status ?? f.status;
+  findingPatch.set(findingId, { ...findingPatch.get(findingId), status: status === "new" ? "in_work" : status });
+  touchWork(findingId, { tasks: count, taken: true });
 }
 
 function createTasks(v: Viewer, body: { title: string; due_on: string; finding_id?: string; restaurant_ids?: string[]; checklist?: string[] }) {
@@ -252,8 +277,9 @@ function createTasks(v: Viewer, body: { title: string; due_on: string; finding_i
 }
 
 function taskAction(v: Viewer, id: string, action: string, body: Record<string, unknown>) {
-  const task = overlay(clone(pool.tasks.get(id) ?? newTasks.find((t) => t.id === id)));
-  if (!task || !visibleTask(v, task)) throw new ApiError(404, "Task not found");
+  const found = pool.tasks.get(id) ?? newTasks.find((t) => t.id === id);
+  if (!found || !visibleTask(v, found)) throw new ApiError(404, "Task not found");
+  const task = overlay(v, clone(found));
   const patch = (p: Partial<ApiTask>) => {
     const created = newTasks.find((t) => t.id === id);
     if (created) Object.assign(created, p);
@@ -269,8 +295,10 @@ function taskAction(v: Viewer, id: string, action: string, body: Record<string, 
   if (task.status === "done") throw new ApiError(422, "The task is already done");
   if (action === "start") return patch({ status: "in_progress" });
   if (action === "checklist") {
+    const index = Number(body.index);
+    if (!Number.isInteger(index) || index < 0 || index >= task.checklist.length) throw new ApiError(422, "Нет такого пункта чек-листа");
     const marks = [...task.checklist_done];
-    marks[Number(body.index)] = Boolean(body.done);
+    marks[index] = Boolean(body.done);
     return patch({ checklist_done: marks });
   }
   return patch({
@@ -285,8 +313,9 @@ function taskAction(v: Viewer, id: string, action: string, body: Record<string, 
 function checkAction(v: Viewer, id: string, action: string) {
   forbid(v.hq, "Forbidden");
   forbid(v.admin, "Only HQ admins launch checks");
-  const check = overlay(clone(pool.checks.get(id) ?? newChecks.find((c) => c.id === id)));
-  if (!check) throw new ApiError(404, "Проверка не найдена");
+  const found = pool.checks.get(id) ?? newChecks.find((c) => c.id === id);
+  if (!found) throw new ApiError(404, "Проверка не найдена");
+  const check = overlay(v, clone(found));
   const patch = (p: Partial<Check>) => {
     const created = newChecks.find((c) => c.id === id);
     if (created) Object.assign(created, p);
@@ -313,9 +342,9 @@ function checkAction(v: Viewer, id: string, action: string) {
   );
   newTasks.push(...tasks);
   patch({ status: "running" });
-  if (check.finding_id) {
-    const f = pool.findings.get(check.finding_id)!;
-    findingPatch.set(check.finding_id, { ...findingPatch.get(check.finding_id), status: "in_experiment", work: { ...f.work, ...(findingPatch.get(check.finding_id)?.work ?? {}), stage: "checking", check_waiting_launch: false } });
+  if (check.finding_id && pool.findings.has(check.finding_id)) {
+    findingPatch.set(check.finding_id, { ...findingPatch.get(check.finding_id), status: "in_experiment" });
+    touchWork(check.finding_id, { checking: true, taken: true });
   }
   return tasks;
 }
@@ -326,6 +355,7 @@ function propose(v: Viewer, body: { finding_id: string; action: string; control_
     | { finding_title: string; actions: string[]; test: { id: string; code: string; name: string }; candidates: { restaurant_id: string; code: string; name: string }[]; expected_rub_month: string }
     | undefined;
   if (!draft) throw new ApiError(422, "Для этой находки проверку не поставить");
+  if (openCheck(v, body.finding_id)) throw new ApiError(422, "По этой находке уже есть проверка");
   if (!draft.actions.includes(body.action)) throw new ApiError(422, "Выберите меру из находки");
   seq += 1;
   const starts = addDays(TODAY, 3);
@@ -357,9 +387,14 @@ function propose(v: Viewer, body: { finding_id: string; action: string; control_
     control: draft.candidates.filter((c) => body.control_ids.includes(c.restaurant_id)).map((c) => ({ id: c.restaurant_id, code: c.code, name: c.name })),
   };
   newChecks.push(check);
-  const f = pool.findings.get(body.finding_id);
-  if (f) findingPatch.set(f.id, { ...findingPatch.get(f.id), work: { ...f.work, ...(findingPatch.get(f.id)?.work ?? {}), check_waiting_launch: true } });
+  touchWork(body.finding_id, { waiting: true });
   return check;
+}
+
+/** The finding's check that is waiting for a launch or going on (one at a time, as on the server). */
+function openCheck(v: Viewer, findingId: string): Check | undefined {
+  const all = overlay(v, clone([...pool.checks.values(), ...newChecks]));
+  return all.filter((c) => c.finding_id === findingId && (c.status === "proposed" || c.status === "running")).at(-1);
 }
 
 function review(v: Viewer, id: string, body: { verdict: string; reason?: string; note?: string }) {
@@ -378,7 +413,7 @@ function review(v: Viewer, id: string, body: { verdict: string; reason?: string;
     reviewed_on: reopen ? null : TODAY,
     reviewed_by_name: reopen ? null : v.me.full_name,
   });
-  return overlay(clone(f));
+  return overlay(v, clone(f));
 }
 
 // ------------------------------------------------------------------ requests
@@ -448,10 +483,10 @@ export function demoRequest(path: string, init: RequestInit, token: string | nul
   const reviewing = /^\/findings\?review=(pending|confirmed|rejected)$/.exec(path);
   if (reviewing) {
     forbid(v.hq, "Находки проверяет управляющая компания");
-    return overlay(clone([...pool.findings.values()])).filter((f) => f.review_status === reviewing[1]);
+    return overlay(v, clone([...pool.findings.values()])).filter((f) => f.review_status === reviewing[1]);
   }
   if (route === "/checks" && v.hq) {
-    const all = overlay(clone([...(answers["/checks"] as Check[]), ...newChecks]));
+    const all = overlay(v, clone([...(answers["/checks"] as Check[]), ...newChecks]));
     return q.get("status") ? all.filter((c) => c.status === q.get("status")) : all;
   }
   const check = /^\/checks\/(demo-check-\d+)$/.exec(path);
@@ -465,19 +500,27 @@ export function demoRequest(path: string, init: RequestInit, token: string | nul
     const recorded = answers[path] as Record<string, unknown> | undefined;
     const fromPool = findingsOf(v).find((f) => f.id === finding[1]);
     if ((!recorded || !v.hq) && !fromPool) throw new ApiError(404, "Finding not found");
-    const detail = overlay(clone(recorded ?? { ...fromPool, tasks: [], check: null, result_answer: null })) as Record<string, unknown> & { tasks: ApiTask[] };
+    const detail = overlay(v, clone(recorded ?? { ...fromPool, tasks: [], check: null, result_answer: null })) as Record<string, unknown> & {
+      tasks: ApiTask[];
+      check: unknown;
+    };
     detail.tasks = [...detail.tasks, ...newTasks.filter((t) => t.finding_id === finding[1] && visibleTask(v, t))];
+    const started = v.hq ? newChecks.filter((c) => c.finding_id === finding[1]).at(-1) : undefined;
+    if (started) {
+      const { id, title, status, verdict, effect_rub_month, expected_rub_month, starts_on, ends_on, progress_text } = started;
+      detail.check = { id, title, status, verdict, effect_rub_month, expected_rub_month, starts_on, ends_on, progress_text };
+    }
     return detail;
   }
   const recordedCheck = /^\/checks\/([^/?]+)$/.exec(path);
   if (recordedCheck && answers[path]) {
-    const detail = overlay(clone(answers[path])) as { tasks: ApiTask[] };
+    const detail = overlay(v, clone(answers[path])) as { tasks: ApiTask[] };
     detail.tasks = [...detail.tasks, ...newTasks.filter((t) => t.experiment_id === recordedCheck[1])];
     return detail;
   }
   if (path === "/restaurants") return restaurants(v);
   if (path === "/auth/me") return v.me;
-  if (path in answers) return overlay(clone(answers[path]));
+  if (path in answers) return overlay(v, clone(answers[path]));
   // Answers that depend on the viewer: forbidden for a director, missing otherwise.
   // (another restaurant's page is «not found», as on the server).
   const hqOnly =
@@ -485,5 +528,7 @@ export function demoRequest(path: string, init: RequestInit, token: string | nul
     route.endsWith("/verification") ||
     ["/overview/network", "/reports", "/checks"].some((p) => route === p || route.startsWith(`${p}/`));
   if (!v.hq && hqOnly) throw new ApiError(403, "Forbidden");
+  if ((route === "/overview/network" || route === "/reports/head") && q.has("date_from"))
+    throw new ApiError(422, "В прототипе доступны только готовые периоды: неделя, месяц, квартал");
   throw new ApiError(404, "Не найдено");
 }

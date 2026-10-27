@@ -107,6 +107,63 @@ describe("demo isolation", () => {
   });
 });
 
+describe("demo follows the server after the actions (code review 27.10.2026)", () => {
+  const directors = Object.keys(users).filter((e) => e.startsWith("director"));
+  const detail = (id: string, token: string) =>
+    get<ApiFinding & { tasks: ApiTask[]; check: { status: string } | null }>(`/findings/${id}`, token);
+
+  it("drops a «what to do» card once the director takes it into work", () => {
+    const director = "director2@demo.local"; // R02: the demo's one untaken card
+    const week = () => get<{ actions: ApiFinding[] }>("/overview/restaurants/R02", director).actions;
+    const card = week()[0]!;
+    send("/tasks", director, "POST", { title: card.title, due_on: "2026-11-10", finding_id: card.id });
+    expect(week().map((f) => f.id)).not.toContain(card.id);
+    expect(detail(card.id, director).work.stage).toBe("doing");
+  });
+
+  it("shows a check to HQ only, refuses a second one and keeps the director's own stage", () => {
+    const draftKey = Object.keys(users[ANALYST]!.answers).find((k) => {
+      const id = k.split("finding_id=")[1];
+      return k.startsWith("/checks/draft") && directors.some((d) => get<ApiFinding[]>("/findings", d).some((f) => f.id === id && f.work.stage === "doing")) && // leaves the «new» ones to the tests below
+        !["proposed", "running"].includes(detail(id!, ADMIN).check?.status ?? "");
+    })!;
+    const id = draftKey.split("finding_id=")[1]!;
+    const director = directors.find((d) => get<ApiFinding[]>("/findings", d).some((f) => f.id === id))!;
+    const draft = users[ANALYST]!.answers[draftKey] as { actions: string[] };
+    const directorStage = detail(id, director).work.stage;
+    const body = { finding_id: id, action: draft.actions[0], control_ids: [], weeks: 4 };
+    const check = send<Check>("/checks", ANALYST, "POST", body);
+    expect(status(() => send("/checks", ANALYST, "POST", body))).toBe(422);
+    expect(detail(id, ADMIN).check?.status).toBe("proposed");
+    expect(detail(id, ADMIN).work.check_waiting_launch).toBe(true);
+    expect(detail(id, director).work.check_waiting_launch).toBe(false);
+
+    send(`/checks/${check.id}/launch`, ADMIN, "POST");
+    expect(detail(id, ADMIN).work.stage).toBe("checking");
+    expect(detail(id, ADMIN).check?.status).toBe("running");
+    expect(detail(id, director).work.stage).toBe(directorStage === "new" ? "doing" : directorStage);
+    expect(detail(id, director).check).toBeNull();
+  });
+
+  it("never tells a director who reviewed a finding, in the list or in the detail", () => {
+    const [f] = get<ApiFinding[]>("/findings", DIRECTOR);
+    send(`/findings/${f!.id}/review`, ADMIN, "POST", { verdict: "reopen" });
+    send(`/findings/${f!.id}/review`, ADMIN, "POST", { verdict: "confirm", note: "сверила с накладными" });
+    expect(detail(f!.id, ADMIN).reviewed_by_name).toBeTruthy();
+    const seen = detail(f!.id, DIRECTOR);
+    expect([seen.reviewed_by_name, seen.review_note, seen.review_reason]).toEqual([null, null, null]);
+  });
+
+  it("answers what the server would instead of breaking", () => {
+    expect(status(() => get("/overview/network?date_from=2026-09-01&date_to=2026-09-30", ADMIN))).toBe(422);
+    expect(status(() => send("/tasks/no-such-task/start", DIRECTOR, "POST"))).toBe(404);
+    expect(status(() => send("/checks/no-such-check/launch", ADMIN, "POST"))).toBe(404);
+    const task = get<ApiTask[]>("/tasks", DIRECTOR).find((t) => t.status !== "done")!;
+    expect(status(() => send(`/tasks/${task.id}/checklist`, DIRECTOR, "POST", { index: 999, done: true }))).toBe(422);
+  });
+});
+
+
 describe("demo actions", () => {
   it("takes a finding into work and lets only the director do the task", () => {
     const f = get<ApiFinding[]>("/findings", DIRECTOR).find((x) => x.work.stage === "new")!;

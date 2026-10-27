@@ -35,7 +35,14 @@ export function PeriodPicker() {
     <div ref={box} className="relative">
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => {
+          // The custom range starts from the period on screen (its dates come from the API, maybe after the first render).
+          if (!open) {
+            setFrom(range[0] ?? "");
+            setTo(range[1] ?? "");
+          }
+          setOpen(!open);
+        }}
         aria-expanded={open}
         aria-haspopup="dialog"
         className="inline-flex h-9 items-center gap-2 rounded-full border border-line-strong bg-surface px-3 text-sm font-medium text-ink transition hover:border-brand"

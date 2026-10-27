@@ -6,8 +6,9 @@ import { useState } from "react";
 import { useCheck, useCheckAction, useCheckDraft, useProposeCheck } from "../../api/hooks";
 import type { Check } from "../../api/types";
 import { AiBadge, VerifiedNote } from "../../ds/ai";
-import { Button, Card, cx, EASE, EmptyState, PageTitle, Pill, QuestionBlock, Reveal, Skeleton } from "../../ds/primitives";
+import { Button, Card, cx, EASE, EmptyState, ErrorText, PageTitle, Pill, QuestionBlock, Reveal, Skeleton } from "../../ds/primitives";
 import { ddmm, money, perMonth, plural, rub } from "../../lib/format";
+import { useViewer } from "../../lib/useViewer";
 import { useUi } from "../../state/ui";
 import { TaskTrace } from "../tasks/trace";
 
@@ -44,6 +45,8 @@ export function CheckPage() {
   const { checkId } = useParams({ from: "/app/checks/$checkId" });
   const check = useCheck(checkId);
   const action = useCheckAction();
+  const viewer = useViewer();
+  const canLaunch = !!viewer?.can("experiments.launch");
   const { notify } = useUi();
   if (check.isError) return <EmptyState title="Проверка не найдена" />;
   const e = check.data;
@@ -108,11 +111,14 @@ export function CheckPage() {
                 </span>
                 {e.rollout_on ? (
                   <span className="text-sm font-medium text-gain">Отправлено во все рестораны {ddmm(e.rollout_on)}</span>
-                ) : (
+                ) : canLaunch ? (
                   <Button variant="primary" disabled={action.isPending} onClick={() => run("rollout", "Задачи отправлены директорам всех ресторанов")}>
                     Ввести во всех ресторанах
                   </Button>
+                ) : (
+                  <span className="text-sm text-ink-3">Решение о вводе принимает администратор УК</span>
                 )}
+                <ErrorText error={action.error} className="w-full" />
               </div>
             )}
           </section>
@@ -177,15 +183,19 @@ export function CheckPage() {
             question="Что будет после запуска?"
             answer={`Директорам ${(e.test ?? []).map((p) => p.name).join(", ")} придут задачи со сроком и чек-листом. Замер начнется автоматически.`}
           >
-            <div className="flex flex-wrap gap-2">
-              <Button variant="primary" size="lg" disabled={action.isPending} onClick={() => run("launch", "Проверка запущена, задачи отправлены директорам")}>
-                Запустить и поставить задачи
-              </Button>
-              <Button size="lg" disabled={action.isPending} onClick={() => run("reject", "Проверка отклонена")}>
-                Отклонить
-              </Button>
-            </div>
-            {action.isError && <p className="mt-2 text-sm text-loss">{(action.error as Error).message}</p>}
+            {canLaunch ? (
+              <div className="flex flex-wrap gap-2">
+                <Button variant="primary" size="lg" disabled={action.isPending} onClick={() => run("launch", "Проверка запущена, задачи отправлены директорам")}>
+                  Запустить и поставить задачи
+                </Button>
+                <Button size="lg" disabled={action.isPending} onClick={() => run("reject", "Проверка отклонена")}>
+                  Отклонить
+                </Button>
+              </div>
+            ) : (
+              <p className="text-sm text-ink-3">Проверка ждет решения администратора УК.</p>
+            )}
+            <ErrorText error={action.error} className="mt-2" />
           </QuestionBlock>
         </Reveal>
       )}
