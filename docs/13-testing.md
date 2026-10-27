@@ -17,13 +17,16 @@
 Все четыре уровня идут в CI на каждый push (`.github/workflows/ci.yml`, задачи `backend`, `frontend`, `e2e`).
 
 **Покрытие бэкенда** меряется на каждом прогоне, порог — 90 % строк и ветвлений (`pyproject.toml`,
-`[tool.coverage]`). Ниже порога CI красный. На 27.10.2026 — 93 % (217 тестов бэкенда, 23 — фронтенда, 10 e2e). Слабые места:
+`[tool.coverage]`). Ниже порога CI красный. На 27.10.2026 (после ревью этапа 3) — 93 % (225 тестов бэкенда, 23 — фронтенда, 10 e2e). Слабые места:
 
 | Модуль | Покрытие | Что не покрыто |
 |--------|----------|----------------|
-| `analytics/verify.py` | 76 % | сверка сетевых находок M1 и контрактов M3 (см. «Пробелы») |
-| `tasks/service.py` | 87 % | редкие ошибки назначения |
-| `insights/review.py` | 88 % | ошибки вердиктов («нет находки», повторное подтверждение) |
+| `chat/service.py` | 83 % | редкие вопросы чата (нет данных, неизвестная находка) |
+| `overview/trend.py` | 87 % | запись недели без находок и повторная запись той же недели |
+| `tasks/service.py` | 88 % | редкие ошибки назначения |
+| `analytics/verify.py` | 89 % | ветки сверки на неполных данных |
+| `insights/review.py` | 89 % | ошибки вердиктов («нет находки», повторное подтверждение) |
+| `demo/snapshot.py`, `openapi.py` | 16 %, 0 % | служебные: работают в `make demo-snapshot` и `make api-types`, проверяются в CI их результатом |
 
 `app/cli.py` (служебные команды) в покрытие не входит.
 
@@ -53,6 +56,7 @@
 | TC-AUTH-06 | Вход записывается в аудит | `test_login_is_audited` | ✅ |
 | TC-AUTH-07 | Сбой сети или 500 не выбрасывает из приложения, выход только при 401 | — | ⬜ |
 | TC-AUTH-08 | Ротация refresh-токена, ограничение частоты входа | — | ⬜ (бэклог, до пилота) |
+| TC-AUTH-09 | Проверка живости сервиса без входа | `test_auth.py::test_health` | ✅ |
 
 ### Изоляция данных (ISO)
 
@@ -60,16 +64,17 @@
 |----|------------|------|--------|
 | TC-ISO-01 | RLS включен на каждой таблице, роль приложения его не обходит | `test_isolation_db.py::test_rls_enabled_on_every_public_table`, `test_app_role_cannot_bypass_rls` | ✅ |
 | TC-ISO-02 | Без контекста не видно ничего; директор видит свой ресторан; УК — только свою сеть | `test_no_context_sees_nothing`, `test_director_context_sees_own_rows_only`, `test_hq_context_limited_to_its_tenant` | ✅ |
-| TC-ISO-03 | Нельзя писать в чужую сеть и вне своего ресторана | `test_cannot_write_into_another_tenant`, `test_director_cannot_create_restaurant_outside_scope` | ✅ |
-| TC-ISO-04 | Рестораны и пользователи через API — только своей сети, управляет администратор УК | `test_isolation_api.py` (10 тестов) | ✅ |
-| TC-ISO-05 | Находки и задачи: директор — только свои, без сетевых; чужая сеть — 404 | `test_work_loop.py::test_director_sees_only_own_findings_and_no_network_wide`, `test_other_tenant_cannot_touch_checks_or_tasks` | ✅ |
-| TC-ISO-06 | Загрузки, соответствия названий, свежесть данных — в границах ресторана и сети | `test_imports_api.py::test_director_uploads_own_restaurant_and_sees_only_own_batches`, `test_freshness_per_restaurant_and_isolation`, `test_matching_rules_and_isolation`, `test_alias_visibility_and_rights` | ✅ |
+| TC-ISO-03 | Нельзя писать в чужую сеть и вне своего ресторана | `test_cannot_write_into_another_tenant`, `test_director_cannot_create_restaurant_outside_scope`, `test_role_scope_constraint` | ✅ |
+| TC-ISO-04 | Рестораны и пользователи через API — только своей сети, управляет администратор УК | `test_isolation_api.py` (11 тестов) | ✅ |
+| TC-ISO-05 | Находки и задачи: директор — только свои, без сетевых; чужая сеть — 404 | `test_work_loop.py::test_director_sees_only_own_findings_and_no_network_wide`, `test_hq_sees_all_findings_of_own_tenant_only`, `test_director_sees_only_own_tasks`, `test_other_tenant_cannot_touch_checks_or_tasks` | ✅ |
+| TC-ISO-06 | Загрузки, соответствия названий, свежесть данных — в границах ресторана и сети | `test_imports_api.py::test_director_uploads_own_restaurant_and_sees_only_own_batches`, `test_freshness_per_restaurant_and_isolation`, `test_matching_rules_and_isolation`, `test_alias_visibility_and_rights`, `test_isolation_db.py::test_director_cannot_change_or_delete_network_wide_name_matches` | ✅ |
 | TC-ISO-07 | Находки на проверке, их сверка, вердикт и параметры движка не видны чужой сети; директор не видит находку на проверке | `test_isolation_api.py::test_engine_findings_and_settings_stay_within_the_tenant` | ✅ |
 | TC-ISO-08 | Демо-режим соблюдает те же правила: директор не трогает чужие файлы и данные сети, не видит непроверенное | `frontend/src/api/demo.test.ts` | ✅ |
-| TC-ISO-09 | Директор не может изменить находку на проверке и увидеть ее через задачу (уровень БД) | — | ⬜ |
-| TC-ISO-10 | Повторная загрузка и сопоставление в чужой сети — 404 | — | ⬜ |
+| TC-ISO-09 | Директор не может изменить находку на проверке и увидеть ее через задачу (уровень БД); не может вернуть свою находку на проверку | `test_isolation_db.py::test_director_can_neither_change_a_finding_under_review_nor_see_it_through_a_task` | ✅ |
+| TC-ISO-10 | Просмотр, сопоставление, публикация, повторная обработка и откат чужого файла (другой ресторан, другая сеть) — 404 и ничего не меняют; соответствие названий чужая сеть не меняет и не удаляет | `test_imports_api.py::test_another_restaurant_or_network_cannot_match_reprocess_or_roll_back_a_file` | ✅ |
 | TC-ISO-11 | Директор читает, но не может записать сетевые KPI, тренд и журнал пересчетов (уровень БД) | `test_isolation_db.py::test_director_reads_but_cannot_write_network_kpis_trend_and_runs` | ✅ |
-| TC-ISO-12 | Новые endpoint в границах сети и ресторана: чат по чужой находке, напоминание и тиражирование из чужой сети — 404; цены других ресторанов в графике M3 директору не уходят | `test_overview.py::test_new_endpoints_keep_to_the_tenant_and_the_restaurant` | ✅ |
+| TC-ISO-12 | Новые endpoint в границах сети и ресторана: чат по чужой находке, напоминание и тиражирование из чужой сети — 404; цены других ресторанов в таблице находки M3 директору не уходят (деталь, список, доска находок) | `test_overview.py::test_new_endpoints_keep_to_the_tenant_and_the_restaurant`, `test_a_director_gets_an_m3_finding_without_other_restaurants_prices` | ✅ |
+| TC-ISO-13 | Действия с задачами и проверками по id: старт и чек-лист чужой задачи, задача по чужой находке, черновик, предложение, запуск и отклонение проверки чужой сети — 404, ничего не меняется; отчет руководителю и счетчики чужой сети не считают нашу | `test_work_loop.py::test_work_actions_on_another_restaurant_or_network_are_not_found` | ✅ |
 
 ### Импорт данных (IMP)
 
@@ -77,10 +82,10 @@
 |----|------------|------|--------|
 | TC-IMP-01 | Разбор CSV (cp1251, `;`) и «красивых» XLSX с заголовками и итогами; номера строк как в файле | `test_import_parsing.py` (11 тестов) | ✅ |
 | TC-IMP-02 | Единицы приводятся к базовой; неизвестные и несовместимые — ошибка строки | `test_units_are_converted_to_base_and_unknown_or_incompatible_units_are_errors` | ✅ |
-| TC-IMP-03 | Тип файла узнается по заголовку | `test_imports_api.py::test_file_type_is_recognised_without_a_template` | ✅ |
+| TC-IMP-03 | Тип файла узнается по заголовку; шаблоны описаны для интерфейса | `test_imports_api.py::test_file_type_is_recognised_without_a_template`, `test_templates_are_described_for_the_ui` | ✅ |
 | TC-IMP-04 | Отчет об ошибках по строкам; файл с ошибками не публикуется | `test_report_lists_errors_by_row_and_failed_file_cannot_be_published` | ✅ |
 | TC-IMP-05 | Идемпотентность: публикация заменяет период, дубликат файла отклоняется, откат убирает ровно этот файл | `test_publish_replaces_the_period_and_duplicate_files_are_refused`, `test_rollback_removes_exactly_the_batch` | ✅ |
-| TC-IMP-06 | Незнакомые названия сопоставляются один раз и запоминаются; исправление пересчитывает файлы | `test_unknown_names_are_matched_once_and_remembered`, `test_wrong_match_is_fixed_and_files_are_reprocessed`, `test_reprocess_applies_the_fixed_match` | ✅ |
+| TC-IMP-06 | Незнакомые названия сопоставляются один раз и запоминаются; исправление пересчитывает файлы | `test_unknown_names_are_matched_once_and_remembered`, `test_wrong_match_is_fixed_and_files_are_reprocessed`, `test_reprocess_applies_the_fixed_match`; соответствие от УК — на всю сеть: `test_hq_admin_match_applies_to_the_whole_network` | ✅ |
 | TC-IMP-07 | Справочники сети загружает только УК | `test_reference_data_is_hq_only` | ✅ |
 | TC-IMP-08 | Перемещения хранятся один раз и видны обоим ресторанам | `test_transfers_are_stored_once_and_seen_by_both_restaurants` | ✅ |
 | TC-IMP-09 | Синхронизация названий 1С:ERP — iiko и контрактные цены | `test_erp_iiko_sync_collapses_names_and_contract_prices_load` | ✅ |
@@ -95,11 +100,11 @@
 | ID | Требование | Тест | Статус |
 |----|------------|------|--------|
 | TC-CAT-01 | Техкарты с полуфабрикатами раскладываются до сырья, циклы отклоняются | `test_recipes.py`, `test_imports_api.py::test_recipe_cycle_through_semi_finished_products_is_refused` | ✅ |
-| TC-CAT-02 | Подсказки сопоставления: правильный товар первым, чужое не предлагается | `test_matching.py` | ✅ |
+| TC-CAT-02 | Подсказки сопоставления: правильный товар первым, чужое не предлагается | `test_matching.py`, `test_demo_generator.py::test_names_from_another_system_are_suggested_correctly` | ✅ |
 | TC-CAT-03 | Поставщик и товар с одинаковым названием сопоставляются независимо (интерфейс) | — | ⬜ |
 | TC-NORM-01 | Нормы по умолчанию, права на изменение, проверка значений | `test_norms.py` | ✅ |
 | TC-NORM-02 | Причины списания из выгрузки сводятся к стандартным | `test_reasons_of_an_export_map_to_standard_ones`, `test_import_classifies_write_off_reasons_and_warns_about_unknown` | ✅ |
-| TC-PER-01 | Периоды: недели пн–вс, последний полный месяц, свой диапазон включительно — одинаково на сервере и в интерфейсе | `test_period.py`, `frontend/src/lib/period.test.ts` | ✅ |
+| TC-PER-01 | Периоды: недели пн–вс, последний полный месяц, свой диапазон включительно; интерфейс берет готовые периоды с сервера (`/overview/context`), сам не считает | `test_period.py`, `test_overview.py::test_overview_screens_follow_the_access_rules` | ✅ |
 
 ### Аналитический движок (ENG)
 
@@ -115,10 +120,12 @@
 | TC-ENG-08 | Параметры задаются для своей сети и меняют находки; меняет только администратор | `test_engine_params_are_set_per_network_and_change_the_findings` | ✅ |
 | TC-ENG-09 | Пересчет запускает только администратор УК | `test_engine_run_is_hq_admin_only` | ✅ |
 | TC-ENG-10 | На демо-сети находятся все 16 заложенных проблем (18 находок), сверка проходит для каждой; повторный пересчет идемпотентен | `test_engine_finds_planted_problems_and_review_gates_directors` | ✅ |
-| TC-ENG-11 | Движок не выдает две находки с одним ключом | проверка в `engine.run` | 🟡 (нет отдельного теста) |
-| TC-ENG-12 | Удаление устаревших находок не трогает находки с задачами и проверками | — | ⬜ |
+| TC-ENG-11 | Движок не выдает две находки с одним ключом: пересчет с дублем ключа останавливается и ничего не меняет | `test_engine_store.py::test_two_findings_with_one_key_stop_the_run` | ✅ |
+| TC-ENG-12 | Удаление устаревших находок не трогает находки с задачами, проверками, отклоненные, взятые в работу и закрытые, находки других модулей, ручные и чужой сети | `test_engine_store.py::test_stale_findings_go_only_if_nobody_has_worked_on_them` | ✅ |
 | TC-ENG-13 | Пересчет на 100+ ресторанах укладывается во время | ручной замер 27.10.2026: 108 ресторанов, 221 тыс. строк продаж — 7 с ([ревью](reviews/2026-10-27-code-review.md)) | ✅ (замер, не в CI) |
 | TC-ENG-14 | M1 сравнивает ресторан с сетью, когда у ресторанов свои дни инвентаризаций (Q15); слишком далекие периоды не сравниваются | `test_m1_compares_restaurants_counting_on_their_own_days` | ✅ |
+| TC-ENG-15 | M1 показывает «Расход меньше техкарты» как риск качества без рублей; мелкое отклонение и малый товар — нет (E3) | `test_m1_shows_usage_below_the_recipe_as_a_quality_risk` | 🟡 (нет теста сверки по шагам) |
+| TC-ENG-16 | M7 находит блюдо без техкарты и пропуск выгрузки ресторана; обычная пауза в закупках и загруженная техкарта — не находка; на демо-сети — обе заложенные аномалии, сверка проходит | `test_m7_dish_without_a_recipe_and_missing_exports`, `test_engine_finds_planted_problems_and_review_gates_directors` | ✅ |
 | TC-ENG-17 | M4: списания перед инвентаризацией и пересорт; ровные списания и обычное расхождение — не находка | `test_m4_write_offs_before_counts_and_mixed_up_products` | ✅ |
 | TC-ENG-18 | M5: списания выше сети и по дням недели; разовое списание и списания как у сети — не находка | `test_m5_write_offs_above_the_network_and_on_the_same_weekdays` | ✅ |
 | TC-ENG-19 | M6: товар закончится до поставки; мелкие позиции — не находка | `test_m6_shortage_before_the_next_delivery` | ✅ |
@@ -128,8 +135,6 @@
 | TC-ENG-23 | С очередью задача уходит в воркер; без очереди или при ее недоступности — пересчет в процессе API | `test_the_queue_is_used_when_configured_and_falls_back_without_it`, `test_the_worker_runs_the_queued_run` | ✅ |
 | TC-ENG-24 | Загрузка, присоединившаяся к ожидающему пересчету, держит его до своего коммита; зависший пересчет показывается и записывается прерванным | `test_runs.py::test_an_upload_joining_the_waiting_run_holds_it_until_its_data_is_committed`, `test_a_run_left_going_on_is_shown_and_then_written_as_interrupted` | ✅ |
 | TC-ENG-25 | Сверка не падает на измененных данных и повторяет правила движка: M4 после отката инвентаризаций, M7 — техкарта заведена внутри окна | `test_check_of_a_pre_count_finding_after_the_counts_were_rolled_back`, `test_m7_dish_without_a_recipe_and_missing_exports` | ✅ |
-| TC-ENG-16 | M7 находит блюдо без техкарты и пропуск выгрузки ресторана; обычная пауза в закупках и загруженная техкарта — не находка; на демо-сети — обе заложенные аномалии, сверка проходит | `test_m7_dish_without_a_recipe_and_missing_exports`, `test_engine_finds_planted_problems_and_review_gates_directors` | ✅ |
-| TC-ENG-15 | M1 показывает «Расход меньше техкарты» как риск качества без рублей; мелкое отклонение и малый товар — нет (E3) | `test_m1_shows_usage_below_the_recipe_as_a_quality_risk` | 🟡 (нет теста сверки по шагам) |
 
 ### Проверка находок (REV)
 
@@ -149,11 +154,11 @@
 
 | ID | Требование (docs/05) | Тест | Статус |
 |----|----------------------|------|--------|
-| TC-WORK-01 | Этап работы по находке выводится из задач и проверок | `test_work_stage.py` (9 тестов) | ✅ |
-| TC-WORK-02 | УК ставит шаг директору, сетевая находка — всем директорам, чужому ресторану нельзя | `test_work_loop.py::test_hq_assigns_*`, `test_network_wide_finding_goes_to_every_director`, `test_finding_of_one_restaurant_cannot_go_to_another` | ✅ |
-| TC-WORK-03 | Директор выполняет свои задачи с отчетом; результат не пишет человек | `test_director_completes_with_report_and_result_is_pending`, `test_no_endpoint_lets_a_person_write_a_result` | ✅ |
-| TC-WORK-04 | Запуск и отклонение проверки изменений; правила вывода результата | `test_launch_sets_tasks_for_test_restaurants`, `test_reject_proposal`, `test_outcome_rules` | ✅ |
-| TC-WORK-05 | Отчет руководителю: цифры, провалы, границы периода | `test_head_report_numbers_and_failures`, `test_head_report_period_excludes_earlier_events` | ✅ |
+| TC-WORK-01 | Этап работы по находке выводится из задач и проверок | `test_work_stage.py` (9 тестов), `test_work_loop.py::test_findings_carry_work_stage`, `test_stage_filter` | ✅ |
+| TC-WORK-02 | УК ставит шаг директору, сетевая находка — всем директорам, чужому ресторану нельзя | `test_work_loop.py::test_hq_assigns_*`, `test_network_wide_finding_goes_to_every_director`, `test_finding_of_one_restaurant_cannot_go_to_another`, `test_director_takes_own_step_but_not_for_others`, `test_analyst_cannot_assign`, `test_due_date_must_be_reasonable` | ✅ |
+| TC-WORK-03 | Директор выполняет свои задачи с отчетом; результат не пишет человек | `test_director_completes_with_report_and_result_is_pending`, `test_no_endpoint_lets_a_person_write_a_result`, `test_hq_does_not_execute_and_director_cannot_complete_others` | ✅ |
+| TC-WORK-04 | Запуск и отклонение проверки изменений; правила вывода результата | `test_launch_sets_tasks_for_test_restaurants`, `test_reject_proposal`, `test_outcome_rules`, `test_check_result_reaches_its_done_tasks` | ✅ |
+| TC-WORK-05 | Отчет руководителю: цифры, провалы, границы периода | `test_head_report_numbers_and_failures`, `test_head_report_period_excludes_earlier_events`; проверки и отчет — только УК: `test_checks_and_head_report_are_hq_only` | ✅ |
 
 ### Обзоры, действия и чат на сервере (OVR, ADR 0007)
 
@@ -162,14 +167,14 @@
 | TC-OVR-01 | KPI — доли выручки; среднее по сети взвешено по выручке | `test_overview.py::test_kpis_are_shares_of_revenue_and_the_network_is_weighted_by_it` | ✅ |
 | TC-OVR-02 | «Это много?» словами: насколько и в какую сторону от сети или нормы | `test_scale_answer_says_how_far_and_which_way` | ✅ |
 | TC-OVR-03 | Числа словами как на экранах (₽, склонения, %) | `test_words` | ✅ |
-| TC-OVR-04 | Обзор сети, список ресторанов, «Моя неделя», счетчики: суммы из находок, права, чужой ресторан и чужая сеть — 404 | `test_overview_screens_follow_the_access_rules` | ✅ |
+| TC-OVR-04 | Обзор сети, список ресторанов, «Моя неделя», счетчики: суммы из находок, права, чужой ресторан и чужая сеть — 404 | `test_overview_screens_follow_the_access_rules`, `test_findings_board_filters_counts_and_sums` | ✅ |
 | TC-OVR-05 | Находка несет, как ее показать (шкала, состав, динамика, документы), и вывод «что получилось» | `test_findings_carry_how_they_are_shown` | ✅ |
 | TC-OVR-06 | Чек-лист задачи отмечает только ее директор; напоминание — администратор УК и только по просроченной | `test_task_checklist_and_reminders` | ✅ |
 | TC-OVR-07 | Черновик проверки от системы, предложение, тиражирование только сработавшей и один раз; чужая сеть — 404 | `test_checks_are_drafted_proposed_and_rolled_out` | ✅ |
 | TC-OVR-08 | Отчет руководителю с трендом и проверками; чат не показывает директору другие рестораны | `test_head_report_and_chat` | ✅ |
 | TC-OVR-09 | Тиражирование одновременно двумя запросами создает задачи один раз; вторая проверка той же находки — 422 | `test_checks_are_drafted_proposed_and_rolled_out` | ✅ |
 | TC-OVR-10 | Черновик проверки для ресторана без выручки (нет периода инвентаризаций) не падает | `test_a_check_draft_for_a_restaurant_without_revenue_yet` | ✅ |
-| TC-OVR-11 | Итоги, «в год», динамика и вывод словами приходят из API (экран не считает); чат отвечает про дефицит по находкам M6 | `test_head_report_and_chat`, `test_demo_snapshot.py` | ✅ |
+| TC-OVR-11 | Итоги, «в год», динамика и вывод словами приходят из API (экран не считает); чат отвечает про дефицит по находкам M6 | `test_trend_line_in_figures_and_words` (расчет вручную), `test_totals_a_year_and_the_trend_come_from_the_api`, `test_head_report_and_chat`, `test_demo_snapshot.py` | ✅ |
 
 ### Интерфейс (UI)
 
@@ -177,7 +182,7 @@
 |----|----------------------|------|--------|
 | TC-UI-01 | Все основные экраны помещаются на телефоне 390 px, у обеих ролей | `e2e/mobile.spec.ts` | ✅ |
 | TC-UI-02 | Деньги, проценты, склонения — по-русски | `frontend/src/lib/format.test.ts` | ✅ |
-| TC-UI-03 | Параметры движка: неверное значение объяснено и не сохраняется, «вернуть» не теряет другие правки | `e2e/settings.spec.ts`, `src/app/hq/engineParams.test.ts` | ✅ |
+| TC-UI-03 | Параметры движка: неверное значение объяснено и не сохраняется, «вернуть» не теряет другие правки | `e2e/settings.spec.ts` TC-UI-03, `src/app/hq/engineParams.test.ts` | ✅ |
 | TC-UI-04 | УК на телефоне может открыть все разделы (меню «Еще») | — | ⬜ (дефект, бэклог) |
 | TC-UI-05 | Демо-входы не показываются в рабочей сборке | — | ⬜ |
 | TC-UI-06 | Директор отмечает задачу сделанной с отчетом, она уходит в «Сделано» | `e2e/work.spec.ts` | ✅ |
@@ -189,7 +194,7 @@
 
 | ID | Требование (docs/11) | Тест | Статус |
 |----|----------------------|------|--------|
-| TC-DEMO-01 | Генерация детерминирована (одно зерно — одинаковые байты) | `test_demo_generator.py::test_same_seed_same_bytes` | ✅ |
+| TC-DEMO-01 | Генерация детерминирована (одно зерно — одинаковые байты); состав файлов и план аномалий | `test_demo_generator.py::test_same_seed_same_bytes`, `test_files_and_plan` | ✅ |
 | TC-DEMO-02 | Заложенные аномалии восстанавливаются из файлов | `test_planted_overuse_is_recoverable_from_the_files`, `test_planted_prices_and_habits` | ✅ |
 | TC-DEMO-03 | Прототип показывает ответы сервера: фильтры списка находок дают то же, что сервер на записанных вариантах (ADR 0007) | `frontend/src/api/demo.test.ts` «filters the findings list exactly as the server did» | ✅ |
 | TC-DEMO-04 | Действия в прототипе меняют только затронутое и по правилам сервера: задачи, чек-листы, напоминания, запуск проверок, вердикты | `frontend/src/api/demo.test.ts` «demo actions» | ✅ |
@@ -202,6 +207,7 @@
 
 1. ~~TC-IMP-11/12~~ — исправлено 27.10.2026.
 2. ~~TC-REV-04~~ — исправлено 27.10.2026.
-3. **TC-ISO-09/10, TC-ENG-11/12, TC-AUTH-07, TC-CAT-03, TC-UI-05** — недостающие тесты к уже работающему.
+3. ~~TC-ISO-09/10, TC-ENG-11/12~~ — тесты добавлены 27.10.2026 (после ревью этапа 3), вместе с TC-ISO-13.
+   Остаются **TC-AUTH-07, TC-CAT-03, TC-UI-05** (интерфейс; нужны Vitest/e2e) и шаг-за-шагом сверка M1 «меньше техкарты» (**TC-ENG-15**).
 4. **TC-UI-04, TC-IMP-13** — после исправления мобильного меню и для полного сценария загрузки.
 5. ~~TC-ENG-13~~ — замерено на архитектурном ревью 27.10.2026 ([отчет](reviews/2026-10-27-code-review.md)).

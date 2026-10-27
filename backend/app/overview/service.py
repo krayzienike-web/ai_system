@@ -15,7 +15,7 @@ KPI row), so the same functions serve both roles.
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, timedelta
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from itertools import pairwise
 from statistics import median
 from typing import Any
@@ -124,7 +124,7 @@ class Trend:
     def change_pct(self) -> int | None:
         if self.change is None or not self.first:
             return None
-        return int((abs(self.change) / self.first * 100).quantize(Decimal(1)))
+        return int((abs(self.change) / self.first * 100).quantize(Decimal(1), rounding=ROUND_HALF_UP))
 
     @property
     def span(self) -> str:

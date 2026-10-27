@@ -1,9 +1,9 @@
-// TC-SET-01..02 (docs/13-testing.md): engine parameters per module, validated before saving.
+// TC-UI-03 (docs/13-testing.md): engine parameters per module, validated before saving.
 import { expect, test } from "@playwright/test";
 
 import { open, signIn } from "./helpers";
 
-test("TC-SET-01: an out-of-range value is explained and cannot be saved; «вернуть» keeps other edits", async ({ page }) => {
+test("TC-UI-03: an out-of-range value is explained and cannot be saved; «вернуть» keeps other edits", async ({ page }) => {
   await signIn(page, "Управляющая компания");
   await open(page, /Нормы и настройки/);
   await page.getByText("M3 · Закупочные цены").click();

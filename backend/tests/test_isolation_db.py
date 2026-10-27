@@ -220,3 +220,58 @@ def test_director_reads_but_cannot_write_network_kpis_trend_and_runs(
         text("INSERT INTO analytics_runs (tenant_id, trigger, status) VALUES (:t, 'upload', 'queued')"),
         {"t": network.a.id},
     )
+
+
+def test_director_can_neither_change_a_finding_under_review_nor_see_it_through_a_task(
+    app_session: Session, network: Network, owner_engine: Engine
+) -> None:
+    """TC-ISO-09 (docs/12, «Проверка находок»): until HQ confirms a finding, its director's database
+    session does not see it — not directly, not by joining their own task — and cannot confirm it."""
+    a, a1 = network.a.id, network.a.restaurants["A1"]
+    pending, confirmed = uuid4(), uuid4()
+    with owner_engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO findings (id, tenant_id, restaurant_id, kind, process, title, found_on, "
+                "key, module, review_status) VALUES "
+                "(:p, :t, :r, 'problem', 'production', 'На проверке', '2026-10-01', "
+                "'M1:A1:P1', 'M1', 'pending'), "
+                "(:c, :t, :r, 'problem', 'production', 'Проверена', '2026-10-01', "
+                "'M1:A1:P2', 'M1', 'confirmed')"
+            ),
+            {"p": pending, "c": confirmed, "t": a, "r": a1},
+        )
+        # A task of A1 that points at the finding under review (e.g. set before new data sent it back).
+        conn.execute(
+            text(
+                "INSERT INTO tasks (tenant_id, restaurant_id, finding_id, title, assigned_by, "
+                "created_on, due_on) "
+                "VALUES (:t, :r, :p, 'Шаг', 'hq', '2026-10-02', '2026-10-30')"
+            ),
+            {"t": a, "r": a1, "p": pending},
+        )
+    ctx = RlsContext(a, network.a.users["director1@a.ru"], False, frozenset({a1}))
+    apply_rls_context(app_session, ctx)
+    assert _count(app_session, "findings") == 1 and _count(app_session, "tasks") == 1  # the task is theirs
+    through_task = app_session.execute(
+        text("SELECT f.title FROM tasks t JOIN findings f ON f.id = t.finding_id")
+    ).all()
+    assert through_task == []
+    for statement in (
+        "UPDATE findings SET review_status = 'confirmed' WHERE id = :p",
+        "UPDATE findings SET effect_rub_month = 0 WHERE id = :p",
+        "DELETE FROM findings WHERE id = :p",
+    ):
+        changed = app_session.execute(text(statement), {"p": pending})
+        assert changed.rowcount == 0, statement  # type: ignore[attr-defined]
+    # Nor can a director send their checked finding back under review (it would vanish from their view).
+    with pytest.raises(DBAPIError):
+        app_session.execute(
+            text("UPDATE findings SET review_status = 'pending' WHERE id = :c"), {"c": confirmed}
+        )
+    app_session.rollback()
+    with owner_engine.connect() as conn:
+        rows = conn.execute(text("SELECT id, review_status FROM findings ORDER BY title")).all()
+    assert sorted((str(i), s) for i, s in rows) == sorted(
+        [(str(pending), "pending"), (str(confirmed), "confirmed")]
+    )

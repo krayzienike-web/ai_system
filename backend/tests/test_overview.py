@@ -434,3 +434,111 @@ def test_new_endpoints_keep_to_the_tenant_and_the_restaurant(
     as_hq = AccessContext(network.a.users["admin@a.ru"], network.a.id, Role.HQ_ADMIN, None)
     assert "table" not in (_view_for(view, as_director) or {})
     assert (_view_for(view, as_hq) or {})["table"] == view["table"]
+
+
+def test_trend_line_in_figures_and_words() -> None:
+    """TC-OVR-11 (ADR 0007): the change of «найденный потенциал», its % and the answer come from
+    the server."""
+    from app.overview.service import Trend
+    from app.reports.api import _trend_answer
+
+    down = Trend(on_table=[D(12000), D(10500), D(9000)])
+    # 9 000 − 12 000 = −3 000 ₽ a month; 3 000 / 12 000 = 25 %; three points are two weeks of change.
+    assert down.change == D(-3000) and down.change_pct == 25 and down.span == "2 недели"
+    assert down.answer == "Да. За 2 недели найденный потенциал снизился с 12 тыс ₽ до 9 тыс ₽ в месяц."
+    assert _trend_answer(down, 4, 6) == (
+        "За 2 недели найденный потенциал снизился с 12 тыс ₽ до 9 тыс ₽ в месяц, "
+        "открытых находок — 4 (было 6)."
+    )
+    up = Trend(on_table=[D(8000), D(9000), D(9500), D(10000), D(10000), D(10000)])
+    # +2 000 ₽ over 5 weeks; 2 000 / 8 000 = 25 %.
+    assert (up.change, up.change_pct, up.span) == (D(2000), 25, "5 недель")
+    assert up.answer.startswith("Нет. За 5 недель найденный потенциал вырос с 8 тыс ₽ до 10 тыс ₽ в месяц")
+    flat = Trend(on_table=[D(900), D(900)])
+    assert (flat.change, flat.change_pct, flat.span) == (D(0), 0, "1 неделю")
+    assert flat.answer == "Пока нет. За 1 неделю найденный потенциал не изменился: 900 ₽ в месяц."
+    assert _trend_answer(flat, 2, 2).startswith(
+        "За 1 неделю найденный потенциал не изменился — 900 ₽ в месяц"
+    )
+    # 12,5 % rounds half up, as everywhere in the engine (not to the even 12).
+    assert Trend(on_table=[D(8000), D(7000)]).change_pct == 13
+    # Nothing found at first: no percentage of zero, the answer still in words.
+    from_zero = Trend(on_table=[D(0), D(500)])
+    assert from_zero.change == D(500) and from_zero.change_pct is None
+    single = Trend(on_table=[D(500)])
+    assert single.change is None and single.answer == "История появится после двух недель пересчетов."
+    assert (
+        _trend_answer(single, 3, 0) == "Открытых находок — 3. История появится после двух недель пересчетов."
+    )
+
+
+def test_totals_a_year_and_the_trend_come_from_the_api(
+    client: TestClient, network: Network, demo: dict[str, UUID]
+) -> None:
+    """TC-OVR-11 (code review 27.10.2026, frontend 1): the screens show these figures as they come."""
+    hq, director = login(client, "admin@a.ru"), login(client, "r01@a.ru")
+    net = client.get("/api/overview/network", headers=hq, params={"preset": "4w"}).json()
+    # «Найденный потенциал» = losses + potential a month; a year is 12 months of it.
+    assert D(net["on_table"]) == D(net["losses"]) + D(net["potential"])
+    assert D(net["on_table_year"]) == D(net["on_table"]) * 12
+    trend = net["trend"]
+    points = [D(v) for v in trend["on_table"]]
+    assert D(trend["change"]) == points[-1] - points[0]
+    assert trend["span"] and trend["answer"].split(".")[0] in ("Да", "Нет", "Пока нет")
+
+    week = client.get("/api/overview/restaurants/R01", headers=director).json()
+    assert D(week["on_table"]) == sum(
+        (
+            D(f["effect_rub_month"] or 0)
+            for f in client.get("/api/findings", headers=director).json()
+            if f["status"] not in ("resolved", "dismissed")
+        ),
+        D(0),
+    )
+
+    report = client.get("/api/reports/head", headers=hq, params={"preset": "13w"}).json()
+    for name in ("found", "in_work", "confirmed"):
+        assert D(report[f"{name}_rub_year"]) == D(report[f"{name}_rub_month"]) * 12, name
+    assert report["trend_answer"].startswith(f"За {report['trend']['span']} найденный потенциал")
+    for f in client.get("/api/findings", headers=hq).json():
+        expected = None if f["effect_rub_month"] is None else D(f["effect_rub_month"]) * 12
+        assert (None if f["effect_rub_year"] is None else D(f["effect_rub_year"])) == expected, f["title"]
+
+
+def test_a_director_gets_an_m3_finding_without_other_restaurants_prices(
+    client: TestClient, network: Network, demo: dict[str, UUID], owner_engine: Engine
+) -> None:
+    """TC-ISO-12 through the API (code review 27.10.2026, backend 1): the overpay finding of R02 shows its
+    director their price and the network's, never the prices of the other restaurants by name."""
+    hq = login(client, "admin@a.ru")
+    findings = client.get("/api/findings", headers=hq).json()
+    findings += client.get("/api/findings", headers=hq, params={"review": "pending"}).json()
+    beef = next(f for f in findings if f["title"].startswith("Закупка у дорогого поставщика"))
+    if beef["review_status"] == "pending":
+        client.post(f"/api/findings/{beef['id']}/review", headers=hq, json={"verdict": "confirm"})
+    with Session(owner_engine) as s, s.begin():
+        user = User(
+            tenant_id=network.a.id, email="r02@a.ru", full_name="R02", password_hash=hash_password(PASSWORD)
+        )
+        s.add(user)
+        s.flush()
+        s.add(
+            RoleAssignment(
+                tenant_id=network.a.id,
+                user_id=user.id,
+                role=Role.RESTAURANT_DIRECTOR,
+                restaurant_id=beef["restaurant_id"],
+            )
+        )
+    director = login(client, "r02@a.ru")
+    as_hq = client.get(f"/api/findings/{beef['id']}", headers=hq).json()["view"]
+    assert len(as_hq["table"]["rows"]) > 1  # HQ compares the restaurants
+    others = [row[0] for row in as_hq["table"]["rows"] if row[0] != beef["restaurant_name"]]
+    assert others and len(others) == len(as_hq["table"]["rows"]) - 1
+    as_director = client.get(f"/api/findings/{beef['id']}", headers=director).json()["view"]
+    assert as_director.get("table") is None and as_director["scale"]["network"] is not None
+    listed = next(f for f in client.get("/api/findings", headers=director).json() if f["id"] == beef["id"])
+    board = client.get("/api/overview/findings", headers=director).json()
+    on_board = next(f for g in board["groups"] for f in g["items"] if f["id"] == beef["id"])
+    for shown in (as_director, listed["view"], on_board["view"]):
+        assert not any(name in str(shown) for name in others), others

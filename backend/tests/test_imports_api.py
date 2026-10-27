@@ -643,3 +643,52 @@ def test_erp_iiko_sync_collapses_names_and_contract_prices_load(
         ("620.00", "600.00", "20000.00"),
         ("630.00", "600.00", "15000.00"),
     ]
+
+
+def test_another_restaurant_or_network_cannot_match_reprocess_or_roll_back_a_file(
+    client: TestClient, network: Network, catalog: None, owner_engine: Engine
+) -> None:
+    """TC-ISO-10 (CLAUDE.md, principle 2): actions on someone else's file look like a missing file — 404 —
+    and change nothing; the same for someone else's name match."""
+    director, a1 = login(client, "director1@a.ru"), network.a.restaurants["A1"]
+    waiting = upload(client, director, "receipts", RECEIPTS_1C, a1).json()  # needs matching
+    published = upload(client, director, "sales", SALES, a1).json()
+    publish(client, director, published["id"])
+    options = {o["name"]: o["id"] for o in client.get("/api/catalog/product", headers=director).json()}
+    body = {
+        "matches": [
+            {"kind": "product", "key": u["key"], "target_id": options["Сыр Моцарелла"]}
+            for u in waiting["unmatched"]
+        ]
+    }
+    for stranger in (
+        login(client, "director2@a.ru"),
+        login(client, "admin@b.ru"),
+        login(client, "director1@b.ru"),
+    ):
+        assert client.get(f"/api/imports/{waiting['id']}", headers=stranger).status_code == 404
+        assert (
+            client.post(f"/api/imports/{waiting['id']}/match", headers=stranger, json=body).status_code == 404
+        )
+        assert client.post(f"/api/imports/{waiting['id']}/publish", headers=stranger).status_code == 404
+        for action in ("reprocess", "rollback"):
+            answer = client.post(f"/api/imports/{published['id']}/{action}", headers=stranger)
+            assert answer.status_code == 404, (action, answer.text)
+    # Nothing moved: the file still waits for its names, the sales are still there, no match was remembered.
+    assert client.get(f"/api/imports/{waiting['id']}", headers=director).json()["status"] == "needs_matching"
+    assert client.get(f"/api/imports/{published['id']}", headers=director).json()["status"] == "published"
+    assert _sales_count(owner_engine) == 2
+    assert client.get("/api/aliases", headers=director).json() == []
+
+    # A name match of network A: tenant B can neither change nor delete it.
+    _match_all(client, director, waiting, "Сыр Моцарелла")
+    alias = client.get("/api/aliases", headers=director).json()[0]
+    foreign = login(client, "admin@b.ru")
+    assert (
+        client.put(
+            f"/api/aliases/{alias['id']}", headers=foreign, json={"target_id": options["Сливки 33%"]}
+        ).status_code
+        == 404
+    )
+    assert client.delete(f"/api/aliases/{alias['id']}", headers=foreign).status_code == 404
+    assert client.get("/api/aliases", headers=director).json()[0]["target_name"] == alias["target_name"]

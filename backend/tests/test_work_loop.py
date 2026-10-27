@@ -512,3 +512,50 @@ def test_check_result_reaches_its_done_tasks(owner_engine: Engine, work: Work) -
             "Нет эффекта",
             None,
         )
+
+
+def test_work_actions_on_another_restaurant_or_network_are_not_found(
+    client: TestClient, work: Work, network: Network
+) -> None:
+    """TC-ISO-13 (CLAUDE.md, principle 2): every work endpoint that takes an id treats a task, check or
+    finding of another restaurant or network as missing (404) and changes nothing."""
+    hq_b, director_b = login(client, "admin@b.ru"), login(client, "director1@b.ru")
+    director_a1 = login(client, "director1@a.ru")
+    # Tasks: A2's overdue task — A1's director and network B's director cannot start or tick it.
+    for stranger in (director_a1, director_b):
+        assert client.post(f"/api/tasks/{work.late_task}/start", headers=stranger).status_code == 404
+        tick = client.post(
+            f"/api/tasks/{work.late_task}/checklist", headers=stranger, json={"index": 0, "done": True}
+        )
+        assert tick.status_code == 404
+    # A task about another network's finding cannot be set, nor one about another restaurant's.
+    due = "2026-10-30"
+    for headers, finding in ((hq_b, work.beef), (director_a1, work.beef)):
+        made = client.post(
+            "/api/tasks", headers=headers, json={"title": "Шаг", "finding_id": str(finding), "due_on": due}
+        )
+        assert made.status_code == 404, made.text
+    # Checks of network A: network B's admin cannot draft, propose, open, launch or reject them.
+    assert client.get("/api/checks", headers=hq_b).json() == []
+    assert (
+        client.get("/api/checks/draft", headers=hq_b, params={"finding_id": str(work.beef)}).status_code
+        == 404
+    )
+    proposal = {"finding_id": str(work.beef), "action": "Шаг 1", "control_ids": [], "weeks": 4}
+    assert client.post("/api/checks", headers=hq_b, json=proposal).status_code == 404
+    for path in (f"/api/checks/{work.beef_check}/launch", f"/api/checks/{work.beef_check}/reject"):
+        assert client.post(path, headers=hq_b).status_code == 404, path
+    # Network A's checks and tasks are as they were.
+    hq_a = login(client, "admin@a.ru")
+    beef_check = client.get(f"/api/checks/{work.beef_check}", headers=hq_a).json()
+    assert beef_check["status"] == "proposed"
+    late = next(t for t in client.get("/api/tasks", headers=hq_a).json() if t["id"] == str(work.late_task))
+    assert late["status"] == "assigned"
+    # The head report and the badges of network B count nothing of network A.
+    report = client.get("/api/reports/head", headers=hq_b, params={"preset": "13w"}).json()
+    assert (
+        report["checks"] == []
+        and report["done_tasks"] == []
+        and Decimal(report["found_rub_month"]) == Decimal("1000.00")
+    )  # «Чужая находка» of B1 is network B's only finding
+    assert client.get("/api/overview/badges", headers=hq_b).json()["open_tasks"] == 0
