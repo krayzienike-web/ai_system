@@ -1,13 +1,14 @@
 """Overview screens, actions and chat on the server (ADR 0007): figures, access rules, isolation."""
 
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta
 from decimal import Decimal
 from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import Engine, select
+from sqlalchemy import Engine, select, text
 from sqlalchemy.orm import Session
 
 from app.analytics import kpi
@@ -298,9 +299,14 @@ def test_checks_are_drafted_proposed_and_rolled_out(
     detail = client.get(f"/api/checks/{worked['id']}", headers=hq).json()
     assert detail["tasks"][0]["outcome"]["verdict"] == "confirmed"
     assert client.post(f"/api/checks/{worked['id']}/rollout", headers=analyst).status_code == 403
-    tasks = client.post(f"/api/checks/{worked['id']}/rollout", headers=hq).json()
+    # Two «Ввести во всех ресторанах» at once (code review 27.10.2026): the tasks go out once.
+    with ThreadPoolExecutor(2) as pool:
+        answers = list(
+            pool.map(lambda _: client.post(f"/api/checks/{worked['id']}/rollout", headers=hq), range(2))
+        )
+    assert sorted(a.status_code for a in answers) == [200, 422]
+    tasks = next(a for a in answers if a.status_code == 200).json()
     assert len(tasks) == 14 and "R01" not in {t["restaurant_code"] for t in tasks}  # R01 already did it
-    assert client.post(f"/api/checks/{worked['id']}/rollout", headers=hq).status_code == 422
     unclear = next(c for c in checks if c["verdict"] == "inconclusive")
     assert client.post(f"/api/checks/{unclear['id']}/rollout", headers=hq).status_code == 422
 
@@ -329,6 +335,12 @@ def test_head_report_and_chat(client: TestClient, network: Network, demo: dict[s
     checks = client.post("/api/chat", headers=hq, json={"question": "Какие проверки сработали?"}).json()
     assert checks["text"].startswith("Завершено 2 проверки, сработало 1")
     assert client.get("/api/chat/suggestions", headers=director).json()[0] == "Почему у меня вырос фудкост?"
+    # Code review 27.10.2026: the shortage question is answered from the checked M6 findings (R04's pasta).
+    pending = client.get("/api/findings", headers=hq, params={"review": "pending"}).json()
+    pasta = next(f for f in pending if f["module"] == "M6")
+    client.post(f"/api/findings/{pasta['id']}/review", headers=hq, json={"verdict": "confirm"})
+    stock = client.post("/api/chat", headers=hq, json={"question": "Что закончится до поставки?"}).json()
+    assert "в разработке" not in stock["text"] and any("спагетти" in r[1].lower() for r in stock["rows"])
 
 
 def test_findings_board_filters_counts_and_sums(
@@ -355,3 +367,67 @@ def test_findings_board_filters_counts_and_sums(
     # A director's board holds only their restaurant.
     mine = client.get("/api/overview/findings", headers=director).json()
     assert {f["restaurant_code"] for g in mine["groups"] for f in g["items"]} == {"R01"}
+
+
+def test_a_check_draft_for_a_restaurant_without_revenue_yet(
+    client: TestClient, network: Network, demo: dict[str, UUID], owner_engine: Engine
+) -> None:
+    """Code review 27.10.2026: no revenue in the KPIs (no stock-count period yet) must not divide by zero."""
+    hq = login(client, "admin@a.ru")
+    cream = next(
+        f for f in client.get("/api/findings", headers=hq).json() if f["title"].endswith("Сливки 33%")
+    )
+    with owner_engine.begin() as conn:
+        conn.execute(
+            text("UPDATE kpi_snapshots SET revenue = 0 WHERE restaurant_id = :r"),
+            {"r": cream["restaurant_id"]},
+        )
+    draft = client.get("/api/checks/draft", headers=hq, params={"finding_id": cream["id"]})
+    assert draft.status_code == 200 and len(draft.json()["candidates"]) > 0
+
+
+def test_new_endpoints_keep_to_the_tenant_and_the_restaurant(
+    client: TestClient, network: Network, demo: dict[str, UUID]
+) -> None:
+    """Code review 27.10.2026: isolation of the endpoints added in stage 3 (CLAUDE.md, principle 2)."""
+    hq, director, foreign = (
+        login(client, "admin@a.ru"),
+        login(client, "r01@a.ru"),
+        login(client, "admin@b.ru"),
+    )
+    findings = client.get("/api/findings", headers=hq).json()
+    beef = next(f for f in findings if f["title"].startswith("Закупка у дорогого поставщика"))  # R02
+    network_wide = next(f for f in findings if f["restaurant_id"] is None)
+    # The chat about a finding the asker may not see says nothing of it.
+    for headers, f in ((director, beef), (director, network_wide), (foreign, beef)):
+        answer = client.post(
+            "/api/chat", headers=headers, json={"question": "Почему так?", "finding_id": f["id"]}
+        )
+        assert answer.status_code == 200
+        body = answer.json()
+        assert body["source_finding_id"] != f["id"] and f["title"] not in body["text"], f["title"]
+    # Another tenant can neither remind about the tasks nor roll the checks out.
+    late = client.get("/api/tasks", headers=hq, params={"late": True}).json()[0]
+    assert client.post(f"/api/tasks/{late['id']}/remind", headers=foreign).status_code == 404
+    worked = next(c for c in client.get("/api/checks", headers=hq).json() if c["verdict"] == "confirmed")
+    assert client.post(f"/api/checks/{worked['id']}/rollout", headers=foreign).status_code == 404
+    # The findings board of a director holds their restaurant only; another tenant's board is empty.
+    board = client.get("/api/overview/findings", headers=director).json()
+    places = {f["restaurant_code"] for g in board["groups"] for f in g["items"]}
+    assert places == {"R01"}
+    assert client.get("/api/overview/findings", headers=foreign).json()["groups"] == []
+    # Other restaurants' prices by name are HQ's: a director's view of an M3 finding has no such table.
+    from app.insights.api import _view_for
+    from app.tenancy.context import AccessContext
+
+    view = {
+        "summary": "…",
+        "table": {"rows": [["Ресторан на Арбате", 1132.0]]},
+        "table_names_restaurants": True,
+    }
+    as_director = AccessContext(
+        network.a.users["director1@a.ru"], network.a.id, Role.RESTAURANT_DIRECTOR, None
+    )
+    as_hq = AccessContext(network.a.users["admin@a.ru"], network.a.id, Role.HQ_ADMIN, None)
+    assert "table" not in (_view_for(view, as_director) or {})
+    assert (_view_for(view, as_hq) or {})["table"] == view["table"]

@@ -394,6 +394,8 @@ def _m3(d: Draft, facts: Facts) -> dict[str, Any]:
             network_label="Типичная цена сети",
             lower_is_better=True,
         ),
+        # Names other restaurants: shown only to those who may compare restaurants (insights/api.py).
+        "table_names_restaurants": True,
         "table": {
             "title": f"{product.name}: средняя цена закупки по ресторанам, {unit}",
             "columns": ["Ресторан", f"Цена, {unit}"],

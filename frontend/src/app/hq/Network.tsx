@@ -18,11 +18,9 @@ export function NetworkPage() {
 
   const losses = money(n.losses) ?? 0;
   const potential = money(n.potential) ?? 0;
-  const onTable = losses + potential;
+  const onTable = money(n.on_table) ?? 0;
   const trend = n.trend.on_table.map((v) => money(v) ?? 0);
-  const first = trend[0] ?? 0;
-  const last = trend.at(-1) ?? 0;
-  const span = plural(Math.max(trend.length - 1, 1), ["неделю", "недели", "недель"]);
+  const change = money(n.trend.change);
   const inbox = n.checks_waiting + n.overdue_tasks;
   const ranking = n.ranking.map((r) => ({
     id: r.code,
@@ -54,7 +52,7 @@ export function NetworkPage() {
               </span>
               <span className="text-lg text-white/80">тыс ₽ в месяц</span>
             </div>
-            <div className="mt-2 text-sm text-white/60">{rub(onTable * 12)} в год</div>
+            <div className="mt-2 text-sm text-white/60">{rub(money(n.on_table_year) ?? 0)} в год</div>
             <ProfitSplit losses={losses} missed={potential} format={rub} />
           </div>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
@@ -90,13 +88,7 @@ export function NetworkPage() {
         <Reveal index={1}>
           <QuestionBlock
             question="Сокращаются ли потери сети?"
-            answer={
-              trend.length < 2
-                ? "История появится после двух недель пересчетов."
-                : last <= first
-                  ? `Да. За ${span} найденный потенциал ${last < first ? `снизился с ${rub(first)} до ${rub(last)}` : `не вырос: ${rub(last)}`} в месяц.`
-                  : `Нет. За ${span} найденный потенциал вырос с ${rub(first)} до ${rub(last)} в месяц — появились новые проблемы.`
-            }
+            answer={n.trend.answer}
             source={<VerifiedNote>оценка на конец каждой недели</VerifiedNote>}
             className="h-full"
           >
@@ -106,11 +98,11 @@ export function NetworkPage() {
               format={(v) => rub(v)}
               height={150}
             />
-            {first > 0 && (
+            {change !== null && n.trend.change_pct !== null && (
               <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-sm">
-                <span className={`inline-flex items-center gap-1.5 font-medium ${last <= first ? "text-gain" : "text-loss"}`}>
-                  {last <= first ? <ArrowDownRight size={15} /> : <ArrowUpRight size={15} />} на {Math.abs(Math.round((1 - last / first) * 100))}%{" "}
-                  {last <= first ? "меньше" : "больше"}, чем {span} назад
+                <span className={`inline-flex items-center gap-1.5 font-medium ${change <= 0 ? "text-gain" : "text-loss"}`}>
+                  {change <= 0 ? <ArrowDownRight size={15} /> : <ArrowUpRight size={15} />} на {n.trend.change_pct}%{" "}
+                  {change <= 0 ? "меньше" : "больше"}, чем {n.trend.span} назад
                 </span>
                 <span className="text-xs text-ink-3">Линия — потери + упущенная выгода, ₽ в месяц. Чем ниже, тем лучше</span>
               </div>

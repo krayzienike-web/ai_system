@@ -127,3 +127,57 @@ def test_the_worker_runs_the_queued_run(monkeypatch: pytest.MonkeyPatch) -> None
     run_id, tenant_id = UUID(int=1), UUID(int=2)
     asyncio.run(worker.run_engine({}, str(run_id), str(tenant_id), "2026-10-25"))
     assert calls == [(run_id, tenant_id, date(2026, 10, 25))]
+
+
+def test_an_upload_joining_the_waiting_run_holds_it_until_its_data_is_committed(network: Network) -> None:
+    """Code review 27.10.2026: the worker must not take the run while an upload joining it is uncommitted."""
+    import threading
+    import time
+
+    director = network.a.users["director1@a.ru"]
+    with get_sessionmaker()() as first:
+        ctx = load_access_context(first, director, network.a.id)
+        assert ctx is not None
+        run = runs.request(first, ctx)
+        first.commit()
+    upload = get_sessionmaker()()
+    ctx = load_access_context(upload, director, network.a.id)
+    assert ctx is not None
+    assert runs.request(upload, ctx).id == run.id  # joins the waiting run, not committed yet
+    worker_thread = threading.Thread(target=runs.execute, args=(run.id, network.a.id, TODAY))
+    worker_thread.start()
+    time.sleep(0.5)
+    assert worker_thread.is_alive()  # waits for the upload's commit
+    upload.commit()
+    upload.close()
+    worker_thread.join(timeout=30)
+    with get_sessionmaker()() as session:
+        load_access_context(session, network.a.users["admin@a.ru"], network.a.id)
+        done = runs.latest(session)
+        assert done is not None and done.id == run.id and done.status == "done"
+
+
+def test_a_run_left_going_on_is_shown_and_then_written_as_interrupted(
+    network: Network, owner_engine: Engine
+) -> None:
+    with owner_engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO analytics_runs (tenant_id, trigger, status, started_at, requested_at) "
+                "VALUES (:t, 'upload', 'running', now() - interval '2 hours', now() - interval '2 hours')"
+            ),
+            {"t": network.a.id},
+        )
+    with get_sessionmaker()() as session:
+        ctx = load_access_context(session, network.a.users["admin@a.ru"], network.a.id)
+        assert ctx is not None
+        stale = runs.latest(session)
+        assert stale is not None and stale.status == "failed" and stale.error == "Пересчет прерван"
+        fresh = runs.request(session, ctx)
+        session.commit()
+    runs.execute(fresh.id, network.a.id, TODAY)
+    with owner_engine.connect() as conn:
+        statuses = (
+            conn.execute(text("SELECT status FROM analytics_runs ORDER BY requested_at")).scalars().all()
+        )
+    assert statuses == ["failed", "done"]

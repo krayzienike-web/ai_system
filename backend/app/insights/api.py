@@ -4,7 +4,7 @@ from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -122,6 +122,12 @@ FindingStatusName = Literal["new", "in_work", "in_experiment", "resolved", "dism
 
 
 class FindingOut(BaseModel):
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def effect_rub_year(self) -> Decimal | None:
+        """«около … в год»: the monthly effect × 12."""
+        return None if self.effect_rub_month is None else self.effect_rub_month * 12
+
     id: UUID
     restaurant_id: UUID | None
     kind: Kind
@@ -179,8 +185,17 @@ def _out(fw: FindingWork, ctx: AccessContext) -> dict[str, object]:
         "status": f.status,
         "found_on": f.found_on,
         "work": WorkOut(**fw.work.__dict__),
-        "view": f.view,
+        "view": _view_for(f.view, ctx),
     }
+
+
+def _view_for(view: dict[str, Any] | None, ctx: AccessContext) -> dict[str, Any] | None:
+    """A director sees their own figures and the network's average, never other restaurants by name."""
+    if not view or not view.get("table_names_restaurants"):
+        return view
+    if ctx.can(Permission.NETWORK_COMPARE):
+        return view
+    return {k: v for k, v in view.items() if k not in ("table", "table_names_restaurants")}
 
 
 def findings_out(session: Session, ctx: AccessContext, items: list[FindingWork]) -> list[FindingOut]:

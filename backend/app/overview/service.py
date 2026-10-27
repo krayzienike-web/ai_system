@@ -107,6 +107,48 @@ class Trend:
     returned: list[Decimal] = field(default_factory=list)
     open_findings: list[int] = field(default_factory=list)
 
+    @property
+    def first(self) -> Decimal | None:
+        return self.on_table[0] if self.on_table else None
+
+    @property
+    def last(self) -> Decimal | None:
+        return self.on_table[-1] if self.on_table else None
+
+    @property
+    def change(self) -> Decimal | None:
+        """How much «найденный потенциал» moved over the line, ₽ a month (negative: it went down — better)."""
+        return None if len(self.on_table) < 2 else self.on_table[-1] - self.on_table[0]
+
+    @property
+    def change_pct(self) -> int | None:
+        if self.change is None or not self.first:
+            return None
+        return int((abs(self.change) / self.first * 100).quantize(Decimal(1)))
+
+    @property
+    def span(self) -> str:
+        """«12 недель»: how long the line is."""
+        return words.plural(max(len(self.on_table) - 1, 1), ("неделю", "недели", "недель"))
+
+    @property
+    def answer(self) -> str:
+        """«Становится ли лучше?» in words."""
+        first, last = self.first, self.last
+        if self.change is None or first is None or last is None:
+            return "История появится после двух недель пересчетов."
+        if last < first:
+            return (
+                f"Да. За {self.span} найденный потенциал снизился с {words.rub(first)} до "
+                f"{words.rub(last)} в месяц."
+            )
+        if last == first:
+            return f"Пока нет. За {self.span} найденный потенциал не изменился: {words.per_month(last)}."
+        return (
+            f"Нет. За {self.span} найденный потенциал вырос с {words.rub(first)} до {words.rub(last)} "
+            "в месяц — появились новые проблемы."
+        )
+
 
 def trend_of(session: Session, restaurant_id: UUID | None, period: Period | None) -> Trend:
     """Weekly points; with a period — the weeks inside it plus the one before (the change is over the period),

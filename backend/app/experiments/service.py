@@ -155,7 +155,7 @@ def draft(session: Session, ctx: AccessContext, finding_id: UUID) -> Draft:
     others = [r for r in places.values() if r.id != test.id]
 
     def distance(r: Restaurant) -> Decimal:
-        if mine is None or r.id not in revenue:
+        if not mine or r.id not in revenue:  # no revenue yet (no stock-count period): no comparison
             return Decimal(10**9)
         return abs(revenue[r.id] - mine) / mine
 
@@ -244,7 +244,8 @@ def rollout(session: Session, ctx: AccessContext, experiment_id: UUID, *, today:
     """A change that worked goes to every restaurant that has not done it yet: one task each."""
     if not ctx.can(Permission.EXPERIMENTS_LAUNCH):
         raise ForbiddenError("Only HQ admins roll changes out")
-    exp = session.get(Experiment, experiment_id)
+    # Locked: a double click or two requests must not send the tasks twice.
+    exp = session.get(Experiment, experiment_id, with_for_update=True, populate_existing=True)
     if exp is None:
         raise NotFoundError("Check not found")
     if exp.verdict != Verdict.CONFIRMED:

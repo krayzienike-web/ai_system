@@ -347,6 +347,7 @@ function propose(v: Viewer, body: { finding_id: string; action: string; control_
     ci_high_rub_month: null,
     result_text: null,
     baseline: `${body.weeks} недели до проверки`,
+    weeks: body.weeks,
     progress_text: null,
     rollout_rub_month: null,
     rollout_on: null,

@@ -60,6 +60,15 @@ class TrendOut(BaseModel):
     on_table: list[Decimal]
     returned: list[Decimal]
     open_findings: list[int]
+    # The line in words and figures, so the screens compute nothing (ADR 0007).
+    change: Decimal | None  # last − first, ₽ a month; negative is better
+    change_pct: int | None  # |change| / first, %
+    span: str  # «12 недель»
+    answer: str  # «Становится ли лучше?»
+
+    @classmethod
+    def of(cls, t: service.Trend) -> "TrendOut":
+        return cls(**t.__dict__, change=t.change, change_pct=t.change_pct, span=t.span, answer=t.answer)
 
 
 class RankOut(BaseModel):
@@ -85,6 +94,8 @@ class NetworkOut(BaseModel):
     restaurants: int
     losses: Decimal
     potential: Decimal
+    on_table: Decimal  # «найденный потенциал»: losses + potential, ₽ a month
+    on_table_year: Decimal
     found_count: int
     confirmed: Decimal
     completed_checks: int
@@ -121,6 +132,7 @@ class WeekOut(BaseModel):
     restaurant: RestaurantRef
     losses: Decimal
     potential: Decimal
+    on_table: Decimal  # «найденный потенциал»: losses + potential, ₽ a month
     found_count: int
     delta_week: Decimal | None
     digest: str
@@ -189,7 +201,9 @@ def get_network(ctx: CanCompare, session: SessionDep, period: PeriodDep, today: 
         completed_checks=n.completed_checks,
         checks_waiting=n.checks_waiting,
         overdue_tasks=n.overdue_tasks,
-        trend=TrendOut(**n.trend.__dict__),
+        trend=TrendOut.of(n.trend),
+        on_table=n.losses + n.potential,
+        on_table_year=(n.losses + n.potential) * 12,
         ranking=[RankOut(**r.__dict__) for r in n.ranking],
         common=[CommonOut(**c.__dict__) for c in n.common],
     )
@@ -215,6 +229,7 @@ def get_restaurant(code: str, ctx: CanRead, session: SessionDep, today: TodayDep
         restaurant=RestaurantRef(id=r.id, code=r.code, name=r.name, city=r.city),
         losses=w.losses,
         potential=w.potential,
+        on_table=w.losses + w.potential,
         found_count=w.found_count,
         delta_week=w.delta_week,
         digest=w.digest,

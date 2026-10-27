@@ -63,8 +63,9 @@ def _no_recipe(facts: Facts, cfg: EngineParams) -> list[Draft]:
     drafts = []
     for item, sold in without.items():
         recent = [x for x in sold if start <= x[0] <= end]
-        if not recent:
-            continue  # sold without a recipe only in the past: the recipe exists now
+        valid_from = recipe_from.get(item)
+        if not recent or (valid_from is not None and valid_from <= end):
+            continue  # the recipe exists now: fixed, nothing to do
         info = facts.menu[item]
         since = min(x[0] for x in sold)
         share = sum((x[3] for x in recent), Decimal(0)) / revenue if revenue else Decimal(0)

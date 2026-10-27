@@ -23,13 +23,12 @@ export function ReportPage() {
   if (!r) return <Skeleton className="mx-auto h-[600px] max-w-[1040px]" />;
 
   const trend = r.trend.on_table.map((v) => money(v) ?? 0);
-  const [firstValue, lastValue] = [trend[0] ?? 0, trend.at(-1) ?? 0];
-  const span = plural(Math.max(trend.length - 1, 1), ["неделю", "недели", "недель"]);
+  const change = money(r.trend.change) ?? 0;
   const confirmedByTasks = money(r.confirmed_by_tasks_rub_month) ?? 0;
   const figures = [
-    { label: "Найденный потенциал прибыли", value: money(r.found_rub_month) ?? 0, note: "по открытым находкам", tone: "text-ink" },
-    { label: "В работе", value: money(r.in_work_rub_month) ?? 0, note: "задачи и проверки идут", tone: "text-brand-strong" },
-    { label: "Подтвержденный эффект", value: money(r.confirmed_rub_month) ?? 0, note: "по итогам проверок и задач", tone: "text-gain" },
+    { label: "Найденный потенциал прибыли", value: money(r.found_rub_month) ?? 0, year: money(r.found_rub_year) ?? 0, note: "по открытым находкам", tone: "text-ink" },
+    { label: "В работе", value: money(r.in_work_rub_month) ?? 0, year: money(r.in_work_rub_year) ?? 0, note: "задачи и проверки идут", tone: "text-brand-strong" },
+    { label: "Подтвержденный эффект", value: money(r.confirmed_rub_month) ?? 0, year: money(r.confirmed_rub_year) ?? 0, note: "по итогам проверок и задач", tone: "text-gain" },
   ];
 
   return (
@@ -48,7 +47,7 @@ export function ReportPage() {
               </div>
               <div className="mt-1 text-sm text-ink-2">в месяц</div>
               <div className="mt-3 text-xs text-ink-3">
-                {f.note} · {num(Math.round(f.value * 12))} ₽ в год
+                {f.note} · {num(Math.round(f.year))} ₽ в год
               </div>
             </Card>
           ))}
@@ -57,11 +56,7 @@ export function ReportPage() {
       <Reveal index={1}>
         <QuestionBlock
           question="Какая динамика по находкам?"
-          answer={
-            trend.length < 2
-              ? `Открытых находок — ${r.open_findings_now}. История появится после двух недель пересчетов.`
-              : `За ${span} найденный потенциал ${lastValue <= firstValue ? "снизился" : "вырос"} с ${num(firstValue)} ₽ до ${num(lastValue)} ₽ в месяц, открытых находок — ${r.open_findings_now} (было ${r.open_findings_before}).`
-          }
+          answer={r.trend_answer}
           source={<VerifiedNote>оценка на конец каждой недели</VerifiedNote>}
         >
           <div className="mb-4 grid gap-3 sm:grid-cols-3">
@@ -70,8 +65,8 @@ export function ReportPage() {
               { label: "Закрыто находок", value: `${r.closed_findings}`, note: "исправлены или подтверждены проверкой" },
               {
                 label: "Найденный потенциал",
-                value: `${lastValue <= firstValue ? "−" : "+"}${num(Math.abs(lastValue - firstValue))} ₽`,
-                note: `в месяц, за ${span}`,
+                value: `${change <= 0 ? "−" : "+"}${num(Math.abs(change))} ₽`,
+                note: `в месяц, за ${r.trend.span}`,
               },
             ].map((x) => (
               <div key={x.label} className="rounded-[12px] bg-paper p-4">

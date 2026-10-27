@@ -11,12 +11,12 @@ RLS when read, as always.
 
 import asyncio
 import logging
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from enum import StrEnum
 from uuid import UUID
 
 from fastapi import BackgroundTasks
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, select, text
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
@@ -27,6 +27,7 @@ from app.core.models import Base, IdMixin, TenantMixin
 from app.tenancy.context import AccessContext, system_context
 
 log = logging.getLogger(__name__)
+STALE = timedelta(minutes=30)  # a run «going on» for longer was interrupted (the process died)
 
 
 class RunStatus(StrEnum):
@@ -52,19 +53,29 @@ class AnalyticsRun(IdMixin, TenantMixin, Base):
 
 
 def request(session: Session, ctx: AccessContext) -> AnalyticsRun:
-    """The network's waiting run, created if there is none (an upload joins the one already waiting)."""
-    session.execute(
-        insert(AnalyticsRun)
-        .values(
-            tenant_id=ctx.tenant_id,
-            trigger="upload",
-            status=RunStatus.QUEUED,
-            requested_by=ctx.user_id,
-            requested_at=datetime.now(UTC),
-        )
-        .on_conflict_do_nothing(index_elements=["tenant_id"], index_where=text("status = 'queued'"))
+    """The network's waiting run, created if there is none (an upload joins the one already waiting).
+
+    Joining updates the waiting row, so it stays locked until this upload commits: the worker, which takes the
+    run with FOR UPDATE, waits and then sees this upload's data. A run already taken is not waiting any more —
+    the upload queues a new one."""
+    now = datetime.now(UTC)
+    stmt = insert(AnalyticsRun).values(
+        tenant_id=ctx.tenant_id,
+        trigger="upload",
+        status=RunStatus.QUEUED,
+        requested_by=ctx.user_id,
+        requested_at=now,
     )
-    return session.execute(select(AnalyticsRun).where(AnalyticsRun.status == RunStatus.QUEUED)).scalar_one()
+    run_id = session.execute(
+        stmt.on_conflict_do_update(
+            index_elements=["tenant_id"],
+            index_where=text("status = 'queued'"),
+            set_={"requested_at": stmt.excluded.requested_at, "requested_by": stmt.excluded.requested_by},
+        ).returning(AnalyticsRun.id)
+    ).scalar_one()
+    run = session.get(AnalyticsRun, run_id, populate_existing=True)
+    assert run is not None
+    return run
 
 
 def record_manual(session: Session, ctx: AccessContext, result: engine.RunResult) -> None:
@@ -90,6 +101,14 @@ def execute(run_id: UUID, tenant_id: UUID, today: date) -> None:
     """Runs a queued run in a session of its own. Safe twice: a run that no longer waits is left alone."""
     with get_sessionmaker()() as session:
         system_context(session, tenant_id)
+        # Runs left «going on» by a process that died are failed: the next upload queues a new one.
+        session.execute(
+            update(AnalyticsRun)
+            .where(
+                AnalyticsRun.status == RunStatus.RUNNING, AnalyticsRun.started_at < datetime.now(UTC) - STALE
+            )
+            .values(status=RunStatus.FAILED, finished_at=datetime.now(UTC), error="Пересчет прерван")
+        )
         run = session.get(AnalyticsRun, run_id, with_for_update=True)
         if run is None or run.status != RunStatus.QUEUED:
             return
@@ -136,6 +155,15 @@ async def _enqueue(url: str, run_id: UUID, tenant_id: UUID, today: date) -> None
 
 
 def latest(session: Session) -> AnalyticsRun | None:
-    return session.execute(
+    run = session.execute(
         select(AnalyticsRun).order_by(AnalyticsRun.requested_at.desc()).limit(1)
     ).scalar_one_or_none()
+    if (
+        run is not None
+        and run.status == RunStatus.RUNNING
+        and run.started_at is not None
+        and run.started_at < datetime.now(UTC) - STALE
+    ):
+        session.expunge(run)
+        run.status, run.error = RunStatus.FAILED, "Пересчет прерван"  # shown so, written by the next run
+    return run

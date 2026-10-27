@@ -1326,6 +1326,13 @@ def _m4(session: Session, f: Finding) -> dict[str, Any]:
                 ).scalars()
             )
         )
+        if len(counts) < 2:
+            return {
+                "module": "M4",
+                "supported": False,
+                "note": "Инвентаризаций ресторана теперь меньше двух — данные изменились, "
+                "пересчитайте находки",
+            }
         since, last = counts[0], counts[-1]
         costs = _costs(session)
         names = dict(session.execute(select(Product.id, Product.name)).all())
@@ -1418,8 +1425,22 @@ def _m4(session: Session, f: Finding) -> dict[str, Any]:
         by_product[code_of[c.product_id]].append(c)
     offs: dict[str, Decimal] = {}
     rows = []
+    # The engine's rule: the restaurant's counts between its first (it only opens the books) and the last one,
+    # rows with books above zero.
+    count_days = sorted(
+        set(
+            session.execute(
+                select(InventoryCount.day).where(
+                    InventoryCount.restaurant_id == restaurant.id,
+                    InventoryCount.day <= day,
+                    InventoryCount.book_qty > 0,
+                )
+            ).scalars()
+        )
+    )
+    between_days = set(count_days[1:-1])
     for code, series in by_product.items():
-        between = [c for c in series[1:-1] if c.book_qty]
+        between = [c for c in series if c.day in between_days and c.book_qty and c.book_qty > 0]
         usual = (
             med([(c.actual_qty - (c.book_qty or 0)) / (c.book_qty or 1) for c in between])
             if between
@@ -1893,68 +1914,154 @@ def _m7_negative(session: Session, f: Finding) -> dict[str, Any]:
     }
 
 
-def _m6(session: Session, f: Finding) -> dict[str, Any]:
-    """The shortage recomputed with the engine's own outlook (stock and need come from many documents)."""
-    from app.analytics import m1, m6
-    from app.analytics.facts import load_facts
-    from app.analytics.usage import Usage
+def _daily_use(
+    session: Session, restaurant_id: UUID, product: Product, first: date, end: date, lines: list[Line]
+) -> dict[date, Decimal]:
+    """Sales × the recipe version of the day, per day: the use the recipes explain."""
+    out: dict[date, Decimal] = defaultdict(Decimal)
+    per_portion: dict[tuple[UUID, date], Decimal] = {}
+    for item, day, qty in session.execute(
+        select(Sale.menu_item_id, Sale.day, Sale.qty).where(
+            Sale.restaurant_id == restaurant_id, Sale.day >= first, Sale.day <= end
+        )
+    ).all():
+        version = max((ln.valid_from for ln in lines if ln.valid_from <= day), default=day)
+        if (item, version) not in per_portion:
+            opened = explode(item, Decimal(1), lines_on(lines, version))
+            per_portion[(item, version)] = opened.get(product.id, Decimal(0))
+        out[day] += qty * per_portion[(item, version)]
+    return out
 
+
+def _m6(session: Session, f: Finding) -> dict[str, Any]:
+    """The shortage recomputed from the stored rows: the stock since the last count, the use per weekday, the
+    delivery days. The usual unexplained use added to the recipes' is the engine's (M1), shown as such."""
     ev = f.evidence or {}
     cfg = params.load(session)
-    facts = load_facts(session)
-    usage = Usage(facts)
-    rows = m1.rows(facts, usage, _costs(session), cfg)
-    outlook = next(
+    restaurant = session.get(Restaurant, f.restaurant_id)
+    product = session.execute(select(Product).where(Product.code == ev["product"])).scalar_one_or_none()
+    if restaurant is None or product is None:
+        return {"module": "M6", "supported": False, "note": "Ресторана или товара больше нет"}
+    end = date.fromisoformat(ev["data_until"])
+    count = session.execute(
+        select(InventoryCount.day, InventoryCount.actual_qty)
+        .where(
+            InventoryCount.restaurant_id == restaurant.id,
+            InventoryCount.product_id == product.id,
+            InventoryCount.day <= end,
+        )
+        .order_by(InventoryCount.day.desc())
+        .limit(1)
+    ).one_or_none()
+    if count is None:
+        return {"module": "M6", "supported": False, "note": "Инвентаризации по товару больше нет"}
+    counted_on, counted = count
+    lines = [
+        Line(r.menu_item_id or r.semi_product_id, r.product_id, r.gross_qty, r.valid_from)  # type: ignore[arg-type]
+        for r in session.execute(select(RecipeLine)).scalars()
+    ]
+    extra = 1 + Decimal(ev.get("loss", "0"))
+    history_start = end - timedelta(days=cfg.M6_HISTORY_DAYS - 1)
+    use = _daily_use(session, restaurant.id, product, min(counted_on, history_start), end, lines)
+    moved = Decimal(0)
+    for model, sign, where in (
+        (Receipt, 1, Receipt.restaurant_id == restaurant.id),
+        (Transfer, 1, Transfer.to_restaurant_id == restaurant.id),
+        (Transfer, -1, Transfer.restaurant_id == restaurant.id),
+        (WriteOff, -1, WriteOff.restaurant_id == restaurant.id),
+    ):
+        moved += sign * sum(
+            session.execute(
+                select(model.qty).where(
+                    model.product_id == product.id, model.day > counted_on, model.day <= end, where
+                )
+            ).scalars(),
+            Decimal(0),
+        )
+    used = sum((q for d, q in use.items() if counted_on < d <= end), Decimal(0)) * extra
+    stock = counted + moved - used
+    need = [Decimal(0)] * 7
+    weeks = [0] * 7
+    for i in range(cfg.M6_HISTORY_DAYS):
+        day = history_start + timedelta(days=i)
+        need[day.weekday()] += use.get(day, Decimal(0)) * extra
+        weeks[day.weekday()] += 1
+    need = [n / w if w else Decimal(0) for n, w in zip(need, weeks, strict=True)]
+    delivery_days = {
+        d.weekday()
+        for d in session.execute(
+            select(Receipt.day).where(
+                Receipt.restaurant_id == restaurant.id,
+                Receipt.product_id == product.id,
+                Receipt.day >= history_start,
+                Receipt.day <= end,
+                Receipt.qty > 0,
+            )
+        ).scalars()
+    }
+    next_delivery = next(
         (
-            o
-            for o in m6.outlooks(facts, usage, rows, cfg)
-            if o.restaurant == f.restaurant_id and facts.products[o.product].code == ev["product"]
+            end + timedelta(days=i)
+            for i in range(1, 8)
+            if (end + timedelta(days=i)).weekday() in delivery_days
         ),
         None,
     )
-    if outlook is None or outlook.next_delivery is None:
-        return {"module": "M6", "supported": False, "note": "Нет данных для расчета остатка"}
-    zero = outlook.zero_day((outlook.next_delivery - outlook.end).days)
-    restaurant = session.get(Restaurant, f.restaurant_id)
+    zero, left = None, stock
+    for i in range(1, ((next_delivery - end).days if next_delivery else 0) + 1):
+        day = end + timedelta(days=i)
+        left -= need[day.weekday()]
+        if left < 0:
+            zero = day
+            break
     days = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"]
     return {
         "module": "M6",
         "supported": True,
-        "object": facts.products[outlook.product].name,
-        "restaurant": restaurant.name if restaurant else "",
-        "period": [(outlook.end + timedelta(days=1)).isoformat(), outlook.next_delivery.isoformat()],
+        "object": product.name,
+        "restaurant": restaurant.name,
+        "period": [
+            (end + timedelta(days=1)).isoformat(),
+            next_delivery.isoformat() if next_delivery else None,
+        ],
         "formula": "Остаток = инвентаризация + движения после нее − расход; "
         "дальше — расход того же дня недели",
         "steps": [
             {
                 "id": "need",
-                "label": "Расход по дням недели (среднее за 4 недели, с обычными потерями)",
+                "label": f"Расход по дням недели за {cfg.M6_HISTORY_DAYS} дней "
+                f"(с обычными потерями +{pct(extra - 1)})",
                 "value": None,
                 "unit": "",
-                "rows": [{"day": days[i], "qty": _q(n)} for i, n in enumerate(outlook.need)],
+                "rows": [{"day": days[i], "qty": _q(n)} for i, n in enumerate(need)],
             }
         ],
         "result": [
-            {"label": "Остаток на конец данных", "value": _q(outlook.stock), "unit": ""},
+            {"label": f"Инвентаризация {counted_on:%d.%m}", "value": _q(counted), "unit": ""},
+            {"label": "Остаток на конец данных", "value": _q(stock), "unit": ""},
             {"label": "Закончится", "value": zero.isoformat() if zero else None, "unit": ""},
-            {"label": "Ближайшая поставка", "value": outlook.next_delivery.isoformat(), "unit": ""},
+            {
+                "label": "Ближайшая поставка",
+                "value": next_delivery.isoformat() if next_delivery else None,
+                "unit": "",
+            },
         ],
         "rules": [
             {
                 "rule": "Закончится раньше поставки",
                 "value": zero.isoformat() if zero else "—",
-                "threshold": outlook.next_delivery.isoformat(),
-                "passed": zero is not None and zero < outlook.next_delivery,
+                "threshold": next_delivery.isoformat() if next_delivery else "—",
+                "passed": zero is not None and next_delivery is not None and zero < next_delivery,
             }
         ],
         "checks": [
             {
-                "check": "Пересчет совпадает с тем, что посчитал движок",
+                "check": "Пересчет из исходных строк совпадает с тем, что посчитал движок",
                 "ok": zero is not None and zero.isoformat() == ev["zero_day"],
                 "note": f"движок: {ev['zero_day']}, пересчет: {zero.isoformat() if zero else '—'}",
             },
             {
-                "check": "Остаток посчитан от инвентаризации, а не от фактического остатка на полке",
+                "check": "Остаток посчитан по документам, а не по полке",
                 "ok": True,
                 "note": "проверьте полку: если товар есть, находку можно отклонить",
             },

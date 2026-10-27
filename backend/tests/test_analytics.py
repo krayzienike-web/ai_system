@@ -186,7 +186,10 @@ def test_m7_dish_without_a_recipe_and_missing_exports() -> None:
     )
 
     # Once the recipe is loaded, the dish is fine; a pause like the usual one is not a missing export.
-    f.recipe_lines.append(Line(soup, cheese, Decimal("0.05"), date(2026, 9, 1)))
+    # A recipe loaded a few days ago (code review 27.10.2026): fixed, though the window has sales without it.
+    f.recipe_lines.append(Line(soup, cheese, Decimal("0.05"), end - timedelta(days=3)))
+    assert "M7:net:M12" not in {d.key for d in m7.detect(f)}
+    f.recipe_lines[-1] = Line(soup, cheese, Decimal("0.05"), date(2026, 9, 1))
     f.receipts = [x for x in f.receipts if x.restaurant != rs[2]] + [
         ReceiptRow(rs[2], d, cheese, None, Decimal(5), Decimal(3000)) for d in days[2::2]
     ]
@@ -675,3 +678,29 @@ def test_engine_params_are_set_per_network_and_change_the_findings(
     assert other["M3_OVERPAY"] == "5"
     back = client.put("/api/settings/engine", headers=hq, json={"values": {"M3_OVERPAY": None}}).json()
     assert {p["key"]: p["value"] for p in back}["M3_OVERPAY"] == "5"
+
+
+def test_check_of_a_pre_count_finding_after_the_counts_were_rolled_back(network: Network) -> None:
+    """Code review 27.10.2026: fewer than two counts left must not crash the check (500)."""
+    from app.analytics.verify import verify
+
+    with get_sessionmaker()() as session:
+        ctx = load_access_context(session, network.a.users["admin@a.ru"], network.a.id)
+        assert ctx is not None
+        f = Finding(
+            tenant_id=network.a.id,
+            restaurant_id=network.a.restaurants["A1"],
+            key="M4:A1:pre-count",
+            module="M4",
+            kind="problem",
+            process="inventory",
+            title="t",
+            headline="h",
+            status="new",
+            found_on=date(2026, 10, 20),
+            evidence={"kind": "pre_count", "days_before": 2, "share": "0.6", "counts": []},
+        )
+        session.add(f)
+        session.flush()
+        result = verify(session, f)
+        assert result["supported"] is False and "меньше двух" in result["note"]

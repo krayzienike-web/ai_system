@@ -51,7 +51,7 @@ export function WeekView({ code, readOnly = false }: { code: string; readOnly?: 
             </div>
             <div className="mt-1 flex items-baseline gap-3">
               <span className="font-display text-[56px] leading-none font-semibold tracking-tight sm:text-[72px]">
-                <AnimatedNumber value={losses + potential} format={thousands} />
+                <AnimatedNumber value={money(w.on_table) ?? 0} format={thousands} />
               </span>
               <span className="text-lg text-white/80">тыс ₽ в месяц</span>
             </div>

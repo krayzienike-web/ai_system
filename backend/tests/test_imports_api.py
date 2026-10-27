@@ -487,8 +487,13 @@ def test_reprocess_applies_the_fixed_match(
     publish(client, director, batch["id"])
     alias = client.get("/api/aliases", headers=director).json()[0]
     client.put(f"/api/aliases/{alias['id']}", headers=director, json={"target_id": options["Сыр Моцарелла"]})
-    assert client.post(f"/api/imports/{batch['id']}/reprocess", headers=director).status_code == 200
+    with owner_engine.begin() as c:  # a stale report: re-processing must bring it up to date
+        c.execute(text("UPDATE import_batches SET rows_valid = 0, aliases_used = '[]'::jsonb"))
+    again = client.post(f"/api/imports/{batch['id']}/reprocess", headers=director)
+    assert again.status_code == 200 and again.json()["rows_valid"] == 1
     with owner_engine.connect() as c:
+        used = c.execute(text("SELECT aliases_used FROM import_batches WHERE id = :b"), {"b": batch["id"]})
+        assert used.scalar_one() == [f"product:{key}"]
         name = c.execute(
             text("SELECT p.name FROM receipts r JOIN products p ON p.id = r.product_id")
         ).scalar_one()

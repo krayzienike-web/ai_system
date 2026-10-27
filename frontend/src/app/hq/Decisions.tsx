@@ -10,7 +10,7 @@ import { ddmm, money, plural, rub } from "../../lib/format";
 import { useUi } from "../../state/ui";
 
 const names = (places: Check["test"]) => places?.map((p) => p.name).join(", ") ?? "";
-const weeks = (c: Check) => Math.round((new Date(c.ends_on).getTime() - new Date(c.starts_on).getTime()) / (7 * 86_400_000));
+const weeks = (c: Check) => c.weeks;
 
 function Section({ icon, title, count, children }: { icon: React.ReactNode; title: string; count: number; children: React.ReactNode }) {
   if (!count) return null;

@@ -441,12 +441,15 @@ def _replay(
         delete(model).where(model.restaurant_id == batch.restaurant_id, model.day >= first, model.day <= last)
     )
     for b in files:
-        result, _, _, _ = _run(session, template, b.raw, b.filename, today, b.restaurant_id)
+        result, _, _, lk = _run(session, template, b.raw, b.filename, today, b.restaurant_id)
         if result is None or result.errors or result.unmatched:
             raise InvalidError(
                 f"Файл «{b.filename}» больше не проходит проверку — загрузите его заново, "
                 "отчет покажет почему"
             )
+        if b.id == batch.id:  # the file being re-processed: its report follows the fixed matches
+            b.rows_valid = len(result.records)
+            b.aliases_used = sorted(lk.used)
         assert b.period_from is not None and b.period_to is not None
         lo, hi = max(first, b.period_from), min(last, b.period_to)
         session.execute(

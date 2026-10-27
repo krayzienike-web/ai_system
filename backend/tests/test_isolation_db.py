@@ -167,3 +167,56 @@ def test_director_cannot_change_or_delete_network_wide_name_matches(
     apply_rls_context(app_session, ctx)
     own = app_session.execute(text("DELETE FROM name_aliases WHERE restaurant_id = :r"), {"r": a1})
     assert own.rowcount == 1  # type: ignore[attr-defined]
+
+
+def test_director_reads_but_cannot_write_network_kpis_trend_and_runs(
+    app_session: Session, network: Network, owner_engine: Engine
+) -> None:
+    """Code review 27.10.2026: the engine and HQ write KPIs, the trend and the run log; directors read."""
+    a1 = network.a.restaurants["A1"]
+    with owner_engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO kpi_snapshots (tenant_id, restaurant_id, computed_on, revenue) "
+                "VALUES (:t, NULL, '2026-10-20', 100), (:t, :r, '2026-10-20', 50)"
+            ),
+            {"t": network.a.id, "r": a1},
+        )
+        conn.execute(
+            text(
+                "INSERT INTO trend_points (tenant_id, restaurant_id, week_end, losses, potential, "
+                "open_findings, returned) VALUES (:t, NULL, '2026-10-18', 1, 1, 1, 0)"
+            ),
+            {"t": network.a.id},
+        )
+        conn.execute(
+            text("INSERT INTO analytics_runs (tenant_id, trigger, status) VALUES (:t, 'upload', 'done')"),
+            {"t": network.a.id},
+        )
+    ctx = RlsContext(network.a.id, network.a.users["director1@a.ru"], False, frozenset({a1}))
+    apply_rls_context(app_session, ctx)
+    assert _count(app_session, "kpi_snapshots") == 2 and _count(app_session, "trend_points") == 1
+    for statement in (
+        "UPDATE kpi_snapshots SET revenue = 0",
+        "DELETE FROM kpi_snapshots",
+        "UPDATE trend_points SET losses = 0",
+        "DELETE FROM trend_points",
+        "UPDATE analytics_runs SET status = 'failed'",
+        "DELETE FROM analytics_runs",
+    ):
+        assert app_session.execute(text(statement)).rowcount == 0, statement  # type: ignore[attr-defined]
+    with pytest.raises(DBAPIError):
+        app_session.execute(
+            text(
+                "INSERT INTO kpi_snapshots (tenant_id, restaurant_id, computed_on, revenue) "
+                "VALUES (:t, NULL, '2026-10-21', 1)"
+            ),
+            {"t": network.a.id},
+        )
+    app_session.rollback()
+    # Asking for a run (an upload) is allowed to everyone of the network.
+    apply_rls_context(app_session, ctx)
+    app_session.execute(
+        text("INSERT INTO analytics_runs (tenant_id, trigger, status) VALUES (:t, 'upload', 'queued')"),
+        {"t": network.a.id},
+    )

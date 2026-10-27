@@ -125,6 +125,8 @@ export interface CheckDetailOut {
   test?: PlaceOut[];
   control?: PlaceOut[];
   tasks: TaskOut[];
+  /** How many weeks the check runs. */
+  weeks: number;
 }
 
 export interface CheckOut {
@@ -152,6 +154,8 @@ export interface CheckOut {
   finding_title?: string | null;
   test?: PlaceOut[];
   control?: PlaceOut[];
+  /** How many weeks the check runs. */
+  weeks: number;
 }
 
 export interface CheckRef {
@@ -285,6 +289,8 @@ export interface FindingDetailOut {
   tasks: TaskOut[];
   check: CheckRef | null;
   result_answer: string | null;
+  /** «около … в год»: the monthly effect × 12. */
+  effect_rub_year: string | null;
 }
 
 export interface FindingOut {
@@ -312,6 +318,8 @@ export interface FindingOut {
   restaurant_code?: string | null;
   restaurant_name?: string | null;
   view?: FindingView | null;
+  /** «около … в год»: the monthly effect × 12. */
+  effect_rub_year: string | null;
 }
 
 /** How a finding is shown (analytics/views.py; hand-made findings carry the same blocks). */
@@ -363,6 +371,10 @@ export interface HeadReportOut {
   network_name: string;
   confirmed_by_tasks_rub_month: string;
   trend: TrendOut;
+  trend_answer: string;
+  found_rub_year: string;
+  in_work_rub_year: string;
+  confirmed_rub_year: string;
   checks: CheckOut[];
 }
 
@@ -427,6 +439,8 @@ export interface NetworkOut {
   restaurants: number;
   losses: string;
   potential: string;
+  on_table: string;
+  on_table_year: string;
   found_count: number;
   confirmed: string;
   completed_checks: number;
@@ -650,6 +664,10 @@ export interface TrendOut {
   on_table: string[];
   returned: string[];
   open_findings: number[];
+  change: string | null;
+  change_pct: number | null;
+  span: string;
+  answer: string;
 }
 
 export interface UserIn {
@@ -683,6 +701,7 @@ export interface WeekOut {
   restaurant: app__overview__api__RestaurantRef;
   losses: string;
   potential: string;
+  on_table: string;
   found_count: number;
   delta_week: string | null;
   digest: string;

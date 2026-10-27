@@ -41,6 +41,7 @@ class CostBook:
             net[r.product].append(r)
         self._own = {k: _by_day(v) for k, v in own.items()}
         self._net = {k: _by_day(v) for k, v in net.items()}
+        self._cache: dict[tuple[UUID, UUID, date, date], Cost | None] = {}
 
     @staticmethod
     def _avg(series: tuple[list[ReceiptRow], list[date]], start: date, end: date) -> Decimal | None:
@@ -52,6 +53,13 @@ class CostBook:
         return sum((r.amount for r in chosen), Decimal(0)) / qty
 
     def cost(self, restaurant: UUID, product: UUID, start: date, end: date) -> Cost | None:
+        """The same price is asked for thousands of times (every write-off, every period): computed once."""
+        key = (restaurant, product, start, end)
+        if key not in self._cache:
+            self._cache[key] = self._cost(restaurant, product, start, end)
+        return self._cache[key]
+
+    def _cost(self, restaurant: UUID, product: UUID, start: date, end: date) -> Cost | None:
         own = self._own.get((restaurant, product), _EMPTY)
         if (value := self._avg(own, start, end)) is not None:
             return Cost(value, "own")

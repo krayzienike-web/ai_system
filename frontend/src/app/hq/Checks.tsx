@@ -51,7 +51,7 @@ export function CheckPage() {
   const effect = money(e.effect_rub_month) ?? 0;
   const expected = money(e.expected_rub_month) ?? 0;
   const rollout = money(e.rollout_rub_month);
-  const weeks = Math.round((new Date(e.ends_on).getTime() - new Date(e.starts_on).getTime()) / (7 * 86_400_000));
+  const weeks = e.weeks;
   const run = (a: "launch" | "reject" | "rollout", text: string) => action.mutate({ id: e.id, action: a }, { onSuccess: () => notify(text) });
 
   return (

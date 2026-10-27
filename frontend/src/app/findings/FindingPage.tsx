@@ -57,7 +57,7 @@ function FindingView({ f, isHq }: { f: FindingDetail; isHq: boolean }) {
           <h1 className="mt-3 font-display text-[26px] leading-tight font-semibold sm:text-[32px]">{f.title}</h1>
           <div className="mt-2">
             <MoneyWords f={f} size="lg" />
-            {effect !== null && <span className="text-sm text-ink-3"> · около {rub(effect * 12)} в год</span>}
+            {f.effect_rub_year !== null && <span className="text-sm text-ink-3"> · около {rub(money(f.effect_rub_year) ?? 0)} в год</span>}
           </div>
           <p className="mt-4 max-w-[70ch] text-[17px] leading-relaxed text-ink">{f.headline ?? view?.summary}</p>
           <div className="mt-6 max-w-xl">

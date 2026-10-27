@@ -170,10 +170,23 @@ def answer(
         )
 
     if re.search(r"законч|дефицит|запас|хватит", q):
+        risks = [fw.finding for fw in _open(session, today) if fw.finding.module == "M6"]
+        if not risks:
+            return Answer(
+                "По расчету ничего не закончится раньше ближайшей поставки. Прогноз — по остаткам от "
+                "последней инвентаризации и расходу по дням недели.",
+                suggestions=suggestions(ctx),
+            )
         return Answer(
-            "Прогноз дефицита (модуль M6) еще в разработке: остатки на дни вперед пока не считаю. "
-            "Когда он появится, здесь будут позиции, которые закончатся раньше поставки.",
-            suggestions=suggestions(ctx),
+            "Закончится раньше поставки — дозакажите или возьмите у соседнего ресторана:",
+            (["Ресторан"] if hq else []) + ["Что", "Под угрозой"],
+            [
+                ([name.get(f.restaurant_id, "") if f.restaurant_id else "Вся сеть"] if hq else [])
+                + [f.headline or f.title, f.effect_note or "—"]
+                for f in risks
+            ],
+            source="остатки по документам и расход за 4 недели",
+            source_finding_id=risks[0].id,
         )
 
     if "списан" in q:

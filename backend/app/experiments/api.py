@@ -5,7 +5,7 @@ from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -33,6 +33,12 @@ class PlaceOut(BaseModel):
 
 
 class CheckOut(BaseModel):
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def weeks(self) -> int:
+        """How many weeks the check runs."""
+        return round((self.ends_on - self.starts_on).days / 7)
+
     id: UUID
     finding_id: UUID | None
     title: str
