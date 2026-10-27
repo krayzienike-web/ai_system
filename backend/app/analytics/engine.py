@@ -29,7 +29,7 @@ from app.tenancy.audit import audit
 from app.tenancy.context import AccessContext
 from app.tenancy.permissions import Permission
 
-ALGORITHM_VERSION = "engine-1"
+ALGORITHM_VERSION = "engine-2"  # M1: peers by nearest periods, usage below the recipe
 MODULES = ("M1", "M2", "M3")  # modules this version runs; findings of other modules are left alone
 
 

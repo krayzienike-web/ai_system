@@ -285,6 +285,64 @@ def _m1_restaurant(session: Session, f: Finding) -> dict[str, Any]:
     if unit_cost is not None:
         result.append({"label": "U в рублях за период", "value": rub(unexplained * unit_cost), "unit": ""})
 
+    if ev.get("direction") == "under":
+        rules, effect = _m1_under_rules(ev, share, unexplained, unit_cost, days, cfg), None
+    else:
+        rules, effect = _m1_over_rules(session, product, ev, share, theory, unit_cost, days, cfg)
+    stored = next((p for p in reversed(ev.get("periods", [])) if p["to"] == end.isoformat()), None)
+    checks = [
+        {"check": "Обе инвентаризации загружены", "ok": True},
+        {
+            "check": "Цена закупки есть в периоде",
+            "ok": unit_cost is not None,
+            "note": None if unit_cost is not None else "сумма оценена по прошлым закупкам или по сети",
+        },
+        {
+            "check": "Пересчет из исходных строк совпадает с тем, что посчитал движок",
+            "ok": stored is not None and abs(Decimal(stored["share"]) - share) < Decimal("0.0005"),
+            "note": None
+            if stored is None
+            else f"движок: {pct(Decimal(stored['share']))}, пересчет: {pct(share)}",
+        },
+    ]
+    if ev.get("direction") != "under":
+        checks.append(
+            {
+                "check": "Сумма в находке совпадает с пересчетом",
+                "ok": effect is not None
+                and f.effect_rub_month is not None
+                and abs(effect - f.effect_rub_month) <= max(Decimal(50), f.effect_rub_month / 100),
+                "note": None
+                if effect is None
+                else f"в находке: {rub(f.effect_rub_month or Decimal(0))}, пересчет: {rub(effect)}",
+            }
+        )
+    return {
+        "module": "M1",
+        "supported": True,
+        "formula": FORMULA_M1,
+        "object": product.name,
+        "restaurant": restaurant.name,
+        "period": [first.isoformat(), end.isoformat()],
+        "steps": steps,
+        "result": result,
+        "rules": rules,
+        "checks": checks,
+        "history": ev.get("periods", []),
+        "interpretation": INTERPRETATION_M1_UNDER if ev.get("direction") == "under" else INTERPRETATION_M1,
+    }
+
+
+def _m1_over_rules(
+    session: Session,
+    product: Product,
+    ev: dict[str, Any],
+    share: Decimal,
+    theory: Decimal,
+    unit_cost: Decimal | None,
+    days: int,
+    cfg: params.EngineParams,
+) -> tuple[list[dict[str, Any]], Decimal | None]:
     norms = load_norms(session)
     allowance = norms.loss_allowance(product.category) / 100
     benchmark = Decimal(ev.get("benchmark", allowance))
@@ -322,45 +380,45 @@ def _m1_restaurant(session: Session, f: Finding) -> dict[str, Any]:
             }
         )
 
-    stored = next((p for p in reversed(ev.get("periods", [])) if p["to"] == end.isoformat()), None)
-    checks = [
-        {"check": "Обе инвентаризации загружены", "ok": True},
+    return rules, effect
+
+
+def _m1_under_rules(
+    ev: dict[str, Any],
+    share: Decimal,
+    unexplained: Decimal,
+    unit_cost: Decimal | None,
+    days: int,
+    cfg: params.EngineParams,
+) -> list[dict[str, Any]]:
+    rules: list[dict[str, Any]] = [
         {
-            "check": "Цена закупки есть в периоде",
-            "ok": unit_cost is not None,
-            "note": None if unit_cost is not None else "сумма оценена по прошлым закупкам или по сети",
-        },
-        {
-            "check": "Пересчет из исходных строк совпадает с тем, что посчитал движок",
-            "ok": stored is not None and abs(Decimal(stored["share"]) - share) < Decimal("0.0005"),
-            "note": None
-            if stored is None
-            else f"движок: {pct(Decimal(stored['share']))}, пересчет: {pct(share)}",
-        },
-        {
-            "check": "Сумма в находке совпадает с пересчетом",
-            "ok": effect is not None
-            and f.effect_rub_month is not None
-            and abs(effect - f.effect_rub_month) <= max(Decimal(50), f.effect_rub_month / 100),
-            "note": None
-            if effect is None
-            else f"в находке: {rub(f.effect_rub_month or Decimal(0))}, пересчет: {rub(effect)}",
-        },
+            "rule": "Расход меньше техкарты больше чем на порог",
+            "value": pct(-share),
+            "threshold": pct(cfg.M1_UNDER),
+            "passed": share < -cfg.M1_UNDER,
+        }
     ]
-    return {
-        "module": "M1",
-        "supported": True,
-        "formula": FORMULA_M1,
-        "object": product.name,
-        "restaurant": restaurant.name,
-        "period": [first.isoformat(), end.isoformat()],
-        "steps": steps,
-        "result": result,
-        "rules": rules,
-        "checks": checks,
-        "history": ev.get("periods", []),
-        "interpretation": INTERPRETATION_M1,
-    }
+    if ev.get("z") is not None:
+        rules.append(
+            {
+                "rule": "Ресторан выбивается из сети вниз (robust z-score)",
+                "value": ev["z"],
+                "threshold": f"−{cfg.M1_Z}",
+                "passed": Decimal(ev["z"]) < -cfg.M1_Z,
+            }
+        )
+    if unit_cost is not None:
+        shortfall = -unexplained * unit_cost * 30 / days
+        rules.append(
+            {
+                "rule": "Недостающий товар существенен, ₽ в месяц",
+                "value": rub(shortfall),
+                "threshold": rub(cfg.M1_MATERIALITY_RUB_MONTH),
+                "passed": shortfall >= cfg.M1_MATERIALITY_RUB_MONTH,
+            }
+        )
+    return rules
 
 
 def _m1_network(session: Session, f: Finding) -> dict[str, Any]:
@@ -420,6 +478,13 @@ INTERPRETATION_M1 = [
     "Если перерасход растет от периода к периоду — проблема усиливается, а не случайность.",
     "Прежде чем подтверждать: проверьте, что инвентаризации полные (товар посчитан на всех складах) и все "
     "накладные загружены.",
+]
+INTERPRETATION_M1_UNDER = [
+    "Расход меньше техкарты: на раздаче кладут меньше положенного, часть прихода не проведена или товар "
+    "заменяют другим (пересорт).",
+    "Денег это не теряет, но гость может получать не то блюдо, которое заложено в меню.",
+    "Прежде чем подтверждать: проверьте, что инвентаризации полные и что все накладные и перемещения "
+    "загружены.",
 ]
 INTERPRETATION_M1_NET = [
     "Одинаковый перерасход во всей сети — почти всегда ошибка техкарты (устаревший выход, другой поставщик), "

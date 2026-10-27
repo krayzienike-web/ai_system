@@ -1,5 +1,6 @@
 """Analytics engine: M1 arithmetic, decision rules, a full run on the demo network, manual review."""
 
+from dataclasses import replace
 from datetime import date, timedelta
 from decimal import Decimal
 from uuid import UUID, uuid4
@@ -9,7 +10,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
-from app.analytics import engine, m1, m2, m3
+from app.analytics import engine, m1, m2, m3, views
 from app.analytics.costs import CostBook
 from app.analytics.facts import (
     ContractRow,
@@ -22,6 +23,7 @@ from app.analytics.facts import (
     TransferRow,
     WriteOffRow,
 )
+from app.analytics.params import DEFAULT
 from app.analytics.usage import Usage
 from app.catalog.recipes import Line
 from app.core.db import get_sessionmaker
@@ -108,6 +110,51 @@ def test_m1_rules_network_pattern_outlier_and_materiality() -> None:
     same = [_row(r, cheese, f"0.0{7 + i % 2}") for i, r in enumerate(rs)]
     (net,) = m1.detect(f, same, norms)
     assert net.key == "M1:net:P01" and net.restaurant is None and net.effect_rub_month is None
+
+
+def test_m1_compares_restaurants_counting_on_their_own_days() -> None:
+    """Q15: each restaurant counts stock on its own days; the network is its periods that ended close by."""
+    f, rs, cheese, _ = _facts(restaurants=10)
+
+    def shifted(r: UUID, share: str, days: int) -> m1.M1Row:
+        t = Decimal(500)
+        start, end = D0 + timedelta(days=days), D1 + timedelta(days=days)
+        return m1.M1Row(r, cheese, start, end, t, t * (1 + Decimal(share)), Decimal(0), Decimal(600))
+
+    # Nobody shares R01's dates, yet R01 is measured against the other nine (2 %), not alone.
+    rows = [shifted(r, "0.02", i + 1) for i, r in enumerate(rs[1:])] + [shifted(rs[0], "0.11", 0)]
+    (d,) = m1.detect(f, rows, Norms())
+    assert d.key == "M1:R01:P01" and "2,0% в среднем по сети" in d.headline
+    assert d.evidence["periods"][-1]["network_share"] == "0.0200"
+
+    # A period that ended too far away is not the same time: with the window at 0 days R01 stands alone,
+    # and is judged by the allowance only (no network median in the headline).
+    (alone,) = m1.detect(f, rows, Norms(), replace(DEFAULT, M1_NET_ALIGN_DAYS=0))
+    assert "в среднем по сети" not in alone.headline
+
+
+def test_m1_shows_usage_below_the_recipe_as_a_quality_risk() -> None:
+    """E3: used noticeably less than the recipes say — no money lost, but guests may get less."""
+    f, rs, cheese, _ = _facts(restaurants=10)
+    rows = [_row(r, cheese, "0.02") for r in rs[1:]] + [_row(rs[0], cheese, "-0.12")]
+    (d,) = m1.detect(f, rows, Norms())
+    assert d.key == "M1:R01:P01:under" and d.title == "Расход меньше техкарты: Сыр"
+    assert d.effect_rub_month is None and d.evidence["direction"] == "under"
+    assert "на 12,0% меньше" in d.headline and "Гости могут получать меньше" in d.headline
+    # 12 % × 500 kg × 600 ₽ over 60 days → per 30 days
+    assert d.evidence["shortfall_rub_month"] == "18305.00"
+    view = views.build(d, f)
+    assert view is not None and view["causes"][0] == "На раздаче кладут меньше, чем в техкарте"
+    assert view["composition"]["answer"].endswith("на 60 кг меньше.")
+    assert view["scale"]["answer"].startswith("Да. Расход относительно техкарты: на 14 пунктов ниже")
+
+    # A few percent less is ordinary noise; a tiny product is not worth attention either.
+    assert (
+        m1.detect(f, [_row(r, cheese, "0.02") for r in rs[1:]] + [_row(rs[0], cheese, "-0.03")], Norms())
+        == []
+    )
+    small = [_row(r, cheese, "0.02") for r in rs[1:]] + [_row(rs[0], cheese, "-0.12", theory="5")]
+    assert m1.detect(f, small, Norms()) == []
 
 
 def _receipts(

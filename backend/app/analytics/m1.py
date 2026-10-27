@@ -14,7 +14,7 @@ from uuid import UUID
 
 from app.analytics.costs import CostBook
 from app.analytics.drafts import Draft, dmy, pct, per_month, rub
-from app.analytics.facts import Facts
+from app.analytics.facts import Facts, ProductInfo
 from app.analytics.params import DEFAULT, EngineParams
 from app.analytics.stats import med, robust_z
 from app.analytics.usage import Usage
@@ -24,6 +24,11 @@ ACTIONS_RESTAURANT = [
     "Проверить вес порций на раздаче: контрольное взвешивание 10 блюд",
     "Сверить выход при обработке с техкартой",
     "Проверить, все ли списания оформлены",
+]
+ACTIONS_UNDER = [
+    "Проверить вес порций на раздаче: не кладут ли меньше техкарты",
+    "Сверить приходы и перемещения: весь ли товар проведен накладными",
+    "Проверить, не заменяют ли товар другим (пересорт)",
 ]
 ACTIONS_NETWORK = [
     "Провести контрольную проработку блюда и обновить техкарту",
@@ -61,6 +66,29 @@ class M1Row:
 
 def _network_share(group: list[M1Row]) -> str | None:
     return str(med([r.share for r in group]).quantize(Decimal("0.0001"))) if len(group) >= 2 else None
+
+
+class Peers:
+    """The network to compare a period with. Restaurants count stock on their own days (Q15): each restaurant
+    takes part with its period that ended closest to this one, within `M1_NET_ALIGN_DAYS`. Shares are rates,
+    so periods of slightly different length are comparable."""
+
+    def __init__(self, all_rows: list[M1Row], align_days: int) -> None:
+        self.align = timedelta(days=align_days)
+        self.by_product: dict[UUID, dict[UUID, list[M1Row]]] = defaultdict(lambda: defaultdict(list))
+        for r in all_rows:
+            self.by_product[r.product][r.restaurant].append(r)
+
+    def around(self, product: UUID, end: date) -> list[M1Row]:
+        group = []
+        for periods in self.by_product.get(product, {}).values():
+            near = [r for r in periods if abs(r.end - end) <= self.align]
+            if near:
+                group.append(min(near, key=lambda r: (abs(r.end - end), -r.end.toordinal())))
+        return group
+
+    def latest_end(self, product: UUID) -> date:
+        return max(r.end for periods in self.by_product[product].values() for r in periods)
 
 
 def rows(facts: Facts, usage: Usage, costs: CostBook, cfg: EngineParams = DEFAULT) -> list[M1Row]:
@@ -112,22 +140,16 @@ def rows(facts: Facts, usage: Usage, costs: CostBook, cfg: EngineParams = DEFAUL
 
 
 def detect(facts: Facts, all_rows: list[M1Row], norms: Norms, cfg: EngineParams = DEFAULT) -> list[Draft]:
-    by_period: dict[tuple[UUID, date, date], list[M1Row]] = defaultdict(list)
     history: dict[tuple[UUID, UUID], list[M1Row]] = defaultdict(list)
     for r in all_rows:
-        by_period[(r.product, r.start, r.end)].append(r)
         history[(r.restaurant, r.product)].append(r)
 
     drafts: list[Draft] = []
-    recipe_suspects: dict[
-        UUID, tuple[date, date]
-    ] = {}  # product -> latest period where the recipe looks wrong
-    latest: dict[UUID, tuple[date, date]] = {}
-    for product, start, end in by_period:
-        if product not in latest or end > latest[product][1]:
-            latest[product] = (start, end)
-    for product, (start, end) in latest.items():
-        group = by_period[(product, start, end)]
+    peers = Peers(all_rows, cfg.M1_NET_ALIGN_DAYS)
+    # product -> the network's latest periods, where the recipe looks wrong
+    recipe_suspects: dict[UUID, list[M1Row]] = {}
+    for product in peers.by_product:
+        group = peers.around(product, peers.latest_end(product))
         info = facts.products[product]
         tol = norms.loss_allowance(info.category) / 100
         shares = [r.share for r in group]
@@ -137,10 +159,10 @@ def detect(facts: Facts, all_rows: list[M1Row], norms: Norms, cfg: EngineParams 
             and Decimal(len(over)) / len(group) >= cfg.M1_NET_SHARE
             and med(shares) - tol >= cfg.M1_NET_EXCESS
         ):
-            recipe_suspects[product] = (start, end)
+            recipe_suspects[product] = group
 
-    for product, (start, end) in recipe_suspects.items():
-        group = by_period[(product, start, end)]
+    for product, group in recipe_suspects.items():
+        start, end = min(r.start for r in group), max(r.end for r in group)
         info = facts.products[product]
         tol = norms.loss_allowance(info.category) / 100
         m = med([r.share for r in group])
@@ -181,10 +203,15 @@ def detect(facts: Facts, all_rows: list[M1Row], norms: Norms, cfg: EngineParams 
         last = hist[-1]
         info = facts.products[product]
         tol = norms.loss_allowance(info.category) / 100
-        group = by_period[(product, last.start, last.end)]
+        group = peers.around(product, last.end)
         network_median = med([r.share for r in group])
         use_network = len(group) >= cfg.NETWORK_Z_MIN_RESTAURANTS or product in recipe_suspects
         benchmark = max(tol, network_median) if use_network else tol
+        if last.share < -cfg.M1_UNDER:
+            under = _under(facts, restaurant, info, hist, peers, cfg)
+            if under is not None:
+                drafts.append(under)
+            continue
         if last.share <= benchmark:
             continue
         if len(group) >= cfg.NETWORK_Z_MIN_RESTAURANTS:
@@ -229,23 +256,81 @@ def detect(facts: Facts, all_rows: list[M1Row], norms: Norms, cfg: EngineParams 
                     "allowance": str(tol),
                     "benchmark": str(benchmark.quantize(Decimal("0.0001"))),
                     "z": None if z is None else str(z.quantize(Decimal("0.01"))),
-                    "periods": [
-                        {
-                            "from": r.first_day.isoformat(),
-                            "to": r.end.isoformat(),
-                            "theory": str(r.theory.quantize(Decimal("0.001"))),
-                            "actual": str(r.actual.quantize(Decimal("0.001"))),
-                            "write_off": str(r.write_off.quantize(Decimal("0.001"))),
-                            "share": str(r.share.quantize(Decimal("0.0001"))),
-                            # The network's median for the same period (2+ restaurants counted on these days).
-                            "network_share": _network_share(by_period.get((product, r.start, r.end), [])),
-                            "unit_cost": None
-                            if r.unit_cost is None
-                            else str(r.unit_cost.quantize(Decimal("0.01"))),
-                        }
-                        for r in hist
-                    ],
+                    "periods": _periods(hist, peers),
                 },
             )
         )
     return drafts
+
+
+def _periods(hist: list[M1Row], peers: Peers) -> list[dict[str, str | None]]:
+    return [
+        {
+            "from": r.first_day.isoformat(),
+            "to": r.end.isoformat(),
+            "theory": str(r.theory.quantize(Decimal("0.001"))),
+            "actual": str(r.actual.quantize(Decimal("0.001"))),
+            "write_off": str(r.write_off.quantize(Decimal("0.001"))),
+            "share": str(r.share.quantize(Decimal("0.0001"))),
+            # The network's median around this period (2+ restaurants with a period ending close to it).
+            "network_share": _network_share(peers.around(r.product, r.end)),
+            "unit_cost": None if r.unit_cost is None else str(r.unit_cost.quantize(Decimal("0.01"))),
+        }
+        for r in hist
+    ]
+
+
+def _under(
+    facts: Facts,
+    restaurant: UUID,
+    info: ProductInfo,
+    hist: list[M1Row],
+    peers: Peers,
+    cfg: EngineParams,
+) -> Draft | None:
+    """Used less than the recipes say (E3): guests may get less than the recipe, or receipts are not recorded.
+    Not money lost, so no effect in rubles; the shortfall's value decides whether it is worth attention."""
+    last = hist[-1]
+    group = peers.around(last.product, last.end)
+    network_median = med([r.share for r in group])
+    z = None
+    if len(group) >= cfg.NETWORK_Z_MIN_RESTAURANTS:
+        z = robust_z(last.share, [r.share for r in group], cfg.M1_Z_FLOOR)
+        if z >= -cfg.M1_Z:
+            return None
+    shortfall = None
+    if last.unit_cost is not None:
+        shortfall = per_month(-last.unexplained * last.unit_cost, last.first_day, last.end)
+        if shortfall < cfg.M1_MATERIALITY_RUB_MONTH:
+            return None
+    code, name = info.code, info.name
+    unders = sum(1 for r in hist if r.share < -cfg.M1_UNDER)
+    return Draft(
+        key=f"M1:{facts.restaurants[restaurant]}:{code}:under",
+        module="M1",
+        kind="problem",
+        process="production",
+        restaurant=restaurant,
+        title=f"Расход меньше техкарты: {name}",
+        headline=(
+            f"За {dmy(last.first_day)}–{dmy(last.end)} израсходовано на {pct(-last.share)} меньше, чем по "
+            "техкартам проданных блюд"
+            + (f", в среднем по сети {pct(network_median)}" if len(group) >= 2 else "")
+            + (f". Это товар на ≈ {rub(shortfall)} в месяц" if shortfall is not None else "")
+            + ". Гости могут получать меньше положенного, или часть прихода не проведена"
+        ),
+        effect_rub_month=None,
+        effect_note="денег не теряет, но это риск качества блюд или неучтенный приход",
+        confidence="high" if unders >= 2 else "medium",
+        period_from=last.first_day,
+        period_to=last.end,
+        actions=list(ACTIONS_UNDER),
+        evidence={
+            "product": code,
+            "direction": "under",
+            "under": str(cfg.M1_UNDER),
+            "shortfall_rub_month": None if shortfall is None else str(shortfall.quantize(Decimal("0.01"))),
+            "z": None if z is None else str(z.quantize(Decimal("0.01"))),
+            "periods": _periods(hist, peers),
+        },
+    )

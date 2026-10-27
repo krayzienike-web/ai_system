@@ -1,11 +1,11 @@
-// Demo mode: the network's engine parameters kept in the browser, with the API's defaults and ranges.
+// Demo mode: the network's engine parameters kept in the browser, starting from the API's recorded answer
+// (defaults and ranges as the server gave them).
 import { ApiError } from "./client";
-import defaults from "./demoEngine.json";
+import snapshot from "./demo/snapshot.json";
 import type { EngineParam } from "./types";
 
-const params: EngineParam[] = (defaults as EngineParam[]).map((p) => ({
-  ...p,
-}));
+const recorded = (snapshot.users as unknown as Record<string, { answers: Record<string, unknown> }>)["admin@demo.local"]!;
+const params: EngineParam[] = (recorded.answers["/settings/engine"] as EngineParam[]).map((p) => ({ ...p }));
 
 export function demoEngineParams(
   init: RequestInit,

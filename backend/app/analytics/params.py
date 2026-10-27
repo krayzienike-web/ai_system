@@ -26,6 +26,9 @@ class EngineParams:
     M1_NET_SHARE: Decimal = Decimal("0.75")  # share of restaurants over the allowance → the recipe is wrong
     M1_NET_EXCESS: Decimal = Decimal("0.02")  # … and the median is at least 2 p.p. over the allowance
     M1_MIN_THEORY_DAYS: int = 14  # a period between counts shorter than this is not judged
+    # Restaurants count on their own days: periods of others that ended this close are compared with it
+    M1_NET_ALIGN_DAYS: int = 31
+    M1_UNDER: Decimal = Decimal("0.05")  # 5 %: used less than the recipes say → under-portioning risk
     # M2 — food cost of dishes
     M2_WINDOW_DAYS: int = 28  # current ingredient prices: the network's purchases over the last 4 weeks
     M2_COMPARE_DAYS: int = 91  # «before»: the same window a quarter earlier
@@ -148,6 +151,25 @@ DEFS: tuple[ParamDef, ...] = (
         "короче — слишком мало данных",
         D(7),
         D(90),
+    ),
+    ParamDef(
+        "M1_NET_ALIGN_DAYS",
+        "M1",
+        "С сетью сравниваем периоды, закончившиеся не дальше чем через",
+        "дней",
+        "у ресторанов свои дни инвентаризаций: берем ближайший период каждого",
+        D(0),
+        D(92),
+    ),
+    ParamDef(
+        "M1_UNDER",
+        "M1",
+        "«Расход меньше техкарты»: насколько меньше",
+        "%",
+        "риск, что гость получает меньше положенного, или не учтен приход",
+        D(1),
+        D(50),
+        PCT,
     ),
     ParamDef("M2_WINDOW_DAYS", "M2", "Текущие цены закупки — за последние", "дней", "", D(7), D(90)),
     ParamDef(

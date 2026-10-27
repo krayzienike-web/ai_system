@@ -23,6 +23,11 @@ CAUSES = {
         "Выход при обработке ниже заложенного в техкарте",
         "Часть списаний не оформлена документом",
     ],
+    "M1:under": [
+        "На раздаче кладут меньше, чем в техкарте",
+        "Часть прихода или перемещений не проведена документами",
+        "Товар заменяют другим (пересорт), или техкарта завышена",
+    ],
     "M1:net": [
         "Техкарта не соответствует продукту, который сейчас закупается",
         "Выход при обработке изменился, а техкарту не обновили",
@@ -140,6 +145,8 @@ def _m1(d: Draft, facts: Facts) -> dict[str, Any]:
     unexplained = actual - theory - written
     network = _pp(last.get("network_share"))
     labels = [f"{p['from'][8:10]}.{p['from'][5:7]}–{p['to'][8:10]}.{p['to'][5:7]}" for p in periods]
+    if ev.get("direction") == "under":
+        return _m1_under(d, product.name, unit, periods, labels, theory, actual, written, network)
     composition = {
         "unit": unit,
         "formula": "Израсходовано = остаток на начало + приходы ± перемещения − остаток на конец",
@@ -188,6 +195,74 @@ def _m1(d: Draft, facts: Facts) -> dict[str, Any]:
         "table": {
             "title": f"{product.name}: расход по периодам, {unit}",
             "columns": ["Период", "По техкартам", "Израсходовано", "Списано", "Сверх техкарты, %"],
+            "rows": [
+                [label, _n(p["theory"]), _n(p["actual"]), _n(p["write_off"]), _pp(p["share"])]
+                for label, p in zip(labels, periods, strict=True)
+            ],
+        },
+    }
+
+
+def _m1_under(
+    d: Draft,
+    name: str,
+    unit: str,
+    periods: list[dict[str, Any]],
+    labels: list[str],
+    theory: Decimal,
+    actual: Decimal,
+    written: Decimal,
+    network: float | None,
+) -> dict[str, Any]:
+    short = theory + written - actual
+    me = _pp(periods[-1]["share"])
+    return {
+        "summary": d.headline,
+        "causes": CAUSES["M1:under"],
+        "confidence_note": (
+            f"{len(periods) + 1} инвентаризации, продажи и закупки за {len(periods)} "
+            f"{'период' if len(periods) == 1 else 'периода' if len(periods) < 5 else 'периодов'}"
+        ),
+        "metric": {
+            "label": "Расход меньше техкарты",
+            "value": _ru(abs(me or 0), "%"),
+            "benchmark": f"сеть {_ru(network, '%')}" if network is not None else "сеть —",
+            "norm": f"порог −{_ru(_pp(d.evidence['under']) or 0, '%')}",
+        },
+        "scale": _scale(
+            label="Расход относительно техкарты",
+            unit="%",
+            me=me,
+            network=network,
+            lower_is_better=False,
+        ),
+        "composition": {
+            "unit": unit,
+            "formula": "Израсходовано = остаток на начало + приходы ± перемещения − остаток на конец",
+            "parts": [
+                {"label": "Израсходовано", "value": _n(actual), "tone": "brand"},
+                {"label": "Списано по документам", "value": _n(written), "tone": "neutral"},
+                {"label": "Не хватает до техкарты", "value": _n(short), "tone": "loss"},
+            ],
+            "answer": (
+                f"По техкартам проданных блюд должно было уйти {_ru(_n(theory) or 0, unit)}, "
+                f"а израсходовано и списано {_ru(_n(actual + written) or 0, unit)}: "
+                f"на {_ru(_n(short) or 0, unit)} меньше."
+            ),
+        },
+        "chart": {
+            "title": "Расход относительно техкарты по периодам между инвентаризациями",
+            "conclusion": None,
+            "unit": "%",
+            "labels": labels,
+            "restaurant": [_pp(p["share"]) for p in periods],
+            "network_avg": [_pp(p.get("network_share")) for p in periods],
+            "norm": 0.0,
+            "norm_label": "техкарта",
+        },
+        "table": {
+            "title": f"{name}: расход по периодам, {unit}",
+            "columns": ["Период", "По техкартам", "Израсходовано", "Списано", "Относительно техкарты, %"],
             "rows": [
                 [label, _n(p["theory"]), _n(p["actual"]), _n(p["write_off"]), _pp(p["share"])]
                 for label, p in zip(labels, periods, strict=True)
