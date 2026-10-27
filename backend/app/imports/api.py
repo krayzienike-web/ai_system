@@ -175,7 +175,7 @@ def reprocess(batch_id: UUID, ctx: CanRead, session: SessionDep, today: TodayDep
 
 
 @router.post("/imports/{batch_id}/rollback")
-def rollback(batch_id: UUID, ctx: CanRead, session: SessionDep) -> BatchOut:
-    out = BatchOut.of(service.rollback(session, ctx, batch_id))
+def rollback(batch_id: UUID, ctx: CanRead, session: SessionDep, today: TodayDep) -> BatchOut:
+    out = BatchOut.of(service.rollback(session, ctx, batch_id, today=today))
     session.commit()
     return out

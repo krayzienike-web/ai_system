@@ -1,5 +1,6 @@
 """Import through the API: roles, isolation, report, idempotent publish, rollback, demo network load."""
 
+import threading
 from collections.abc import Iterator
 from datetime import date
 from decimal import Decimal
@@ -12,9 +13,12 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Engine, func, select, text
 from sqlalchemy.orm import Session
 
+from app.core.db import get_sessionmaker
+from app.core.errors import InvalidError
 from app.core.period import get_today
 from app.demo.generator import generate
 from app.demo.loader import load
+from app.imports import service
 from app.main import app
 from app.operations.models import Sale
 from app.tenancy.context import load_access_context
@@ -151,6 +155,86 @@ def test_rollback_removes_exactly_the_batch(
     assert r.json()["status"] == "rolled_back"
     assert _sales_count(owner_engine) == 0
     assert client.post(f"/api/imports/{batch['id']}/rollback", headers=director).status_code == 422
+
+
+def _sales_by_day(owner_engine: Engine) -> dict[str, int]:
+    with owner_engine.connect() as c:
+        rows = c.execute(text("SELECT day, sum(qty) FROM sales GROUP BY day ORDER BY day")).all()
+    return {d.strftime("%d.%m"): int(q) for d, q in rows}
+
+
+def _sales(*days: tuple[str, int]) -> str:
+    return "Дата;Блюдо;Кол-во;Сумма\n" + "".join(f"{d}.10.2026;Маргарита;{q};{q * 580}\n" for d, q in days)
+
+
+def test_overlapping_files_later_replaces_and_rollback_restores(
+    client: TestClient, network: Network, catalog: None, owner_engine: Engine
+) -> None:
+    """TC-IMP-11: a later file replaces the days it covers; rolling it back brings the earlier file's days
+    back instead of leaving a hole; re-processing the earlier file does not overwrite the later one."""
+    hq, a1 = login(client, "admin@a.ru"), network.a.restaurants["A1"]
+    early = upload(client, hq, "sales", _sales(("01", 1), ("02", 1), ("03", 1), ("04", 1)), a1).json()
+    publish(client, hq, early["id"])
+    late = upload(client, hq, "sales", _sales(("03", 5), ("04", 5), ("05", 5), ("06", 5)), a1).json()
+    publish(client, hq, late["id"])
+    after_both = {"01.10": 1, "02.10": 1, "03.10": 5, "04.10": 5, "05.10": 5, "06.10": 5}
+    assert _sales_by_day(owner_engine) == after_both
+
+    # Re-processing the earlier file keeps the later file's days.
+    assert client.post(f"/api/imports/{early['id']}/reprocess", headers=hq).status_code == 200
+    assert _sales_by_day(owner_engine) == after_both
+
+    # Rolling the later file back: the earlier file's 03–04.10 come back, 05–06.10 are gone.
+    assert client.post(f"/api/imports/{late['id']}/rollback", headers=hq).status_code == 200
+    assert _sales_by_day(owner_engine) == {"01.10": 1, "02.10": 1, "03.10": 1, "04.10": 1}
+
+    # Rolling back the earlier one too leaves nothing.
+    assert client.post(f"/api/imports/{early['id']}/rollback", headers=hq).status_code == 200
+    assert _sales_by_day(owner_engine) == {}
+
+
+def test_rolling_back_an_earlier_file_keeps_what_a_later_one_replaced(
+    client: TestClient, network: Network, catalog: None, owner_engine: Engine
+) -> None:
+    hq, a1 = login(client, "admin@a.ru"), network.a.restaurants["A1"]
+    early = upload(client, hq, "sales", _sales(("01", 1), ("02", 1), ("03", 1)), a1).json()
+    publish(client, hq, early["id"])
+    late = upload(client, hq, "sales", _sales(("02", 5), ("03", 5)), a1).json()
+    publish(client, hq, late["id"])
+    assert client.post(f"/api/imports/{early['id']}/rollback", headers=hq).status_code == 200
+    assert _sales_by_day(owner_engine) == {"02.10": 5, "03.10": 5}
+
+
+def test_publishing_twice_at_once_writes_the_rows_once(
+    client: TestClient, network: Network, catalog: None, owner_engine: Engine
+) -> None:
+    """TC-IMP-12: two «Опубликовать» at the same moment: the second waits for the first and is refused."""
+    hq, a1 = login(client, "admin@a.ru"), network.a.restaurants["A1"]
+    batch = upload(client, hq, "sales", SALES, a1).json()
+    admin = network.a.users["admin@a.ru"]
+    results: list[str] = []
+    started = threading.Barrier(2)
+
+    def press() -> None:
+        with get_sessionmaker()() as session:
+            ctx = load_access_context(session, admin, network.a.id)
+            assert ctx is not None
+            started.wait()
+            try:
+                service.publish(session, ctx, UUID(batch["id"]), today=TODAY)
+                session.commit()
+                results.append("published")
+            except InvalidError:
+                session.rollback()
+                results.append("refused")
+
+    threads = [threading.Thread(target=press) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=30)
+    assert sorted(results) == ["published", "refused"]
+    assert _sales_count(owner_engine) == 2
 
 
 def test_templates_are_described_for_the_ui(client: TestClient, network: Network) -> None:

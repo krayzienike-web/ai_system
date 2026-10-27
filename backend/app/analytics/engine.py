@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import date
 from uuid import UUID
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, text
 from sqlalchemy.orm import Session
 
 from app.analytics import kpi, m1, m2, m3, params, views
@@ -102,6 +102,8 @@ def run(session: Session, ctx: AccessContext, today: date, *, as_of: date | None
     """Recomputes the findings. `as_of`: only the data up to that day (recomputing the past: the demo)."""
     if not ctx.can(Permission.ANALYTICS_RUN) or not ctx.role.is_hq:
         raise ForbiddenError("Пересчет находок запускает администратор управляющей компании")
+    # One run per network at a time: a second one waits, then works on the first one's findings.
+    session.execute(text("SELECT pg_advisory_xact_lock(hashtext(:key))"), {"key": f"engine:{ctx.tenant_id}"})
     norms = load_norms(session)
     cfg = params.load(session)
     facts = load_facts(session)

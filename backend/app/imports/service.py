@@ -319,8 +319,18 @@ def _publish_reference(
     session.execute(stmt.on_conflict_do_update(index_elements=["tenant_id", "code"], set_=updates))
 
 
+def _locked(session: Session, batch_id: UUID) -> ImportBatch | None:
+    """The batch, locked until the transaction ends, and the facts it writes to: a second «Опубликовать» or a
+    roll-back of an overlapping file waits for this one and then sees what it did (TC-IMP-12)."""
+    batch = session.get(ImportBatch, batch_id, with_for_update=True, populate_existing=True)
+    if batch is not None:
+        key = f"{batch.tenant_id}:{batch.restaurant_id}:{batch.template}"
+        session.execute(text("SELECT pg_advisory_xact_lock(hashtext(:key))"), {"key": key})
+    return batch
+
+
 def publish(session: Session, ctx: AccessContext, batch_id: UUID, *, today: date) -> ImportBatch:
-    batch = session.get(ImportBatch, batch_id)
+    batch = _locked(session, batch_id)
     if batch is None:
         raise NotFoundError("Загрузка не найдена")
     template = _template(batch.template)
@@ -346,14 +356,18 @@ def publish(session: Session, ctx: AccessContext, batch_id: UUID, *, today: date
 def reprocess(session: Session, ctx: AccessContext, batch_id: UUID, *, today: date) -> ImportBatch:
     """Loads an already published file again with today's reference data and matches —
     after a wrong match was fixed. Its rows are replaced, nothing is duplicated."""
-    batch = session.get(ImportBatch, batch_id)
+    batch = _locked(session, batch_id)
     if batch is None:
         raise NotFoundError("Загрузка не найдена")
     template = _template(batch.template)
     _check_access(session, ctx, template, batch.restaurant_id)
     if batch.status != BatchStatus.PUBLISHED:
         raise InvalidError("Пересчитать можно только загруженный файл")
-    _write(session, batch, template, today)
+    if template.scope is Scope.NETWORK:
+        _write(session, batch, template, today)
+    else:
+        # Later files keep the days they replaced: the period is rebuilt from every file, in publishing order.
+        _replay(session, batch, template, today, include_self=True)
     session.flush()
     audit(
         session,
@@ -402,8 +416,55 @@ def _write(session: Session, batch: ImportBatch, template: Template, today: date
             )
 
 
-def rollback(session: Session, ctx: AccessContext, batch_id: UUID) -> ImportBatch:
-    batch = session.get(ImportBatch, batch_id)
+def _replay(
+    session: Session, batch: ImportBatch, template: Template, today: date, *, include_self: bool
+) -> None:
+    """Rebuilds the restaurant's facts of this type within `batch`'s period from the published files that
+    cover it, earliest published first: on every day the latest published file wins, as at publishing."""
+    if batch.period_from is None or batch.period_to is None:
+        return
+    first, last = batch.period_from, batch.period_to
+    model = FACTS[template.name]
+    others = session.execute(
+        select(ImportBatch)
+        .where(
+            ImportBatch.restaurant_id == batch.restaurant_id,
+            ImportBatch.template == batch.template,
+            ImportBatch.status == BatchStatus.PUBLISHED,
+            ImportBatch.period_from <= last,
+            ImportBatch.period_to >= first,
+        )
+        .order_by(ImportBatch.published_at, ImportBatch.created_at)
+    ).scalars()
+    files = [b for b in others if include_self or b.id != batch.id]
+    session.execute(
+        delete(model).where(model.restaurant_id == batch.restaurant_id, model.day >= first, model.day <= last)
+    )
+    for b in files:
+        result, _, _, _ = _run(session, template, b.raw, b.filename, today, b.restaurant_id)
+        if result is None or result.errors or result.unmatched:
+            raise InvalidError(
+                f"Файл «{b.filename}» больше не проходит проверку — загрузите его заново, "
+                "отчет покажет почему"
+            )
+        assert b.period_from is not None and b.period_to is not None
+        lo, hi = max(first, b.period_from), min(last, b.period_to)
+        session.execute(
+            delete(model).where(model.restaurant_id == b.restaurant_id, model.day >= lo, model.day <= hi)
+        )
+        rows = [r for r in result.records if lo <= r["day"] <= hi]
+        if rows:
+            session.execute(
+                insert(model),
+                [
+                    {**r, "tenant_id": b.tenant_id, "restaurant_id": b.restaurant_id, "import_batch_id": b.id}
+                    for r in rows
+                ],
+            )
+
+
+def rollback(session: Session, ctx: AccessContext, batch_id: UUID, *, today: date) -> ImportBatch:
+    batch = _locked(session, batch_id)
     if batch is None:
         raise NotFoundError("Загрузка не найдена")
     template = _template(batch.template)
@@ -415,6 +476,9 @@ def rollback(session: Session, ctx: AccessContext, batch_id: UUID) -> ImportBatc
     model = FACTS[template.name]
     session.execute(delete(model).where(model.import_batch_id == batch.id))
     batch.status = BatchStatus.ROLLED_BACK
+    session.flush()
+    # The days this file had replaced come back from the earlier files that cover them (no hole in the data).
+    _replay(session, batch, template, today, include_self=False)
     session.flush()
     audit(
         session,
