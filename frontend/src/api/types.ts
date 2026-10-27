@@ -193,13 +193,6 @@ export interface Verification {
 /** When the findings were last recomputed (after an upload or by the button), and whether one waits. */
 export type LatestRun = S.LatestRunOut;
 
-export interface AnalyticsRun {
-  created: number;
-  updated: number;
-  removed: number;
-  drafts: number;
-}
-
 /** An engine threshold as people see it (75 %, 3 000 ₽); decimal strings. */
 export interface EngineParam {
   key: string;

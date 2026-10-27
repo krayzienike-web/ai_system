@@ -1,36 +1,16 @@
 from datetime import datetime
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, BackgroundTasks, Depends, status
 from pydantic import BaseModel
 
-from app.analytics import engine, runs
+from app.analytics import runs
 from app.core.deps import SessionDep, require
 from app.core.period import TodayDep
 from app.tenancy.context import AccessContext
 from app.tenancy.permissions import Permission
 
 router = APIRouter(tags=["analytics"])
-
-
-class RunOut(BaseModel):
-    created: int
-    updated: int
-    removed: int
-    drafts: int
-
-
-@router.post("/analytics/run")
-def run(
-    ctx: Annotated[AccessContext, Depends(require(Permission.ANALYTICS_RUN))],
-    session: SessionDep,
-    today: TodayDep,
-) -> RunOut:
-    """Recompute findings for the whole network from the data loaded so far."""
-    result = engine.run(session, ctx, today)
-    runs.record_manual(session, ctx, result)
-    session.commit()
-    return RunOut(**result.__dict__)
 
 
 class LatestRunOut(BaseModel):
@@ -45,13 +25,7 @@ class LatestRunOut(BaseModel):
     removed: int | None
 
 
-@router.get("/analytics/runs/latest")
-def latest_run(
-    ctx: Annotated[AccessContext, Depends(require(Permission.RESTAURANTS_READ))], session: SessionDep
-) -> LatestRunOut | None:
-    run = runs.latest(session)
-    if run is None:
-        return None
+def _out(run: runs.AnalyticsRun) -> LatestRunOut:
     return LatestRunOut(
         status=run.status,
         trigger=run.trigger,
@@ -61,3 +35,26 @@ def latest_run(
         updated=run.updated,
         removed=run.removed,
     )
+
+
+@router.post("/analytics/run", status_code=status.HTTP_202_ACCEPTED)
+def run(
+    ctx: Annotated[AccessContext, Depends(require(Permission.ANALYTICS_RUN))],
+    session: SessionDep,
+    today: TodayDep,
+    background: BackgroundTasks,
+) -> LatestRunOut:
+    """Recompute the network's findings: queued like a run after an upload, never inside the request
+    (architecture review 27.10.2026, p. 14). The screens follow it through `/analytics/runs/latest`."""
+    queued = runs.request(session, ctx, trigger="manual")
+    session.commit()
+    runs.dispatch(queued, today, background)
+    return _out(queued)
+
+
+@router.get("/analytics/runs/latest")
+def latest_run(
+    ctx: Annotated[AccessContext, Depends(require(Permission.RESTAURANTS_READ))], session: SessionDep
+) -> LatestRunOut | None:
+    run = runs.latest(session)
+    return None if run is None else _out(run)

@@ -3661,34 +3661,6 @@
     "title": "Role",
     "type": "string"
    },
-   "RunOut": {
-    "properties": {
-     "created": {
-      "title": "Created",
-      "type": "integer"
-     },
-     "drafts": {
-      "title": "Drafts",
-      "type": "integer"
-     },
-     "removed": {
-      "title": "Removed",
-      "type": "integer"
-     },
-     "updated": {
-      "title": "Updated",
-      "type": "integer"
-     }
-    },
-    "required": [
-     "created",
-     "updated",
-     "removed",
-     "drafts"
-    ],
-    "title": "RunOut",
-    "type": "object"
-   },
    "ScaleView": {
     "description": "«Me / network / norm» on one scale; `answer` — «Это много?» in words.",
     "properties": {
@@ -4825,14 +4797,14 @@
   },
   "/api/analytics/run": {
    "post": {
-    "description": "Recompute findings for the whole network from the data loaded so far.",
+    "description": "Recompute the network's findings: queued like a run after an upload, never inside the request\n(architecture review 27.10.2026, p. 14). The screens follow it through `/analytics/runs/latest`.",
     "operationId": "run_api_analytics_run_post",
     "responses": {
-     "200": {
+     "202": {
       "content": {
        "application/json": {
         "schema": {
-         "$ref": "#/components/schemas/RunOut"
+         "$ref": "#/components/schemas/LatestRunOut"
         }
        }
       },

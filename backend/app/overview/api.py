@@ -10,11 +10,12 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.deps import SessionDep, require
-from app.core.period import PeriodDep, PeriodError, PeriodPreset, TodayDep, last_count_day, resolve_period
+from app.core.period import PeriodError, PeriodPreset, TodayDep, resolve_period
 from app.insights.api import FindingOut, findings_out
 from app.insights.service import FindingWork
 from app.insights.work import WorkStage
 from app.overview import service
+from app.overview.period import PeriodDep, last_count_day
 from app.tasks.api import TaskOut, tasks_out
 from app.tenancy.context import AccessContext
 from app.tenancy.permissions import Permission

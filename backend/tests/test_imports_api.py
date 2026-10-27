@@ -634,7 +634,7 @@ def test_erp_iiko_sync_collapses_names_and_contract_prices_load(
     # TC-REV-04: invoices at 620 and 630 ₽/kg against the contract's 600 — the check recomputes the overpay
     # from the stored invoices and contract prices, invoice by invoice.
     publish(client, login(client, "director1@a.ru"), r.json()["id"])
-    assert client.post("/api/analytics/run", headers=hq).status_code == 200
+    assert client.post("/api/analytics/run", headers=hq).status_code == 202
     pending = client.get("/api/findings", headers=hq, params={"review": "pending"}).json()
     breach = next(f for f in pending if f["title"] == "Цена выше договорной: Сыр Моцарелла")
     v = client.get(f"/api/findings/{breach['id']}/verification", headers=hq).json()

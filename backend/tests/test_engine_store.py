@@ -132,3 +132,19 @@ def test_two_findings_with_one_key_stop_the_run(
         assert (
             c.execute(text("SELECT count(*) FROM audit_log WHERE action = 'analytics.run'")).scalar_one() == 0
         )
+
+
+def test_the_engine_refuses_to_run_outside_the_networks_context(
+    network: Network, owner_engine: Engine
+) -> None:
+    """Architecture review 27.10.2026, p. 9: under the owner role (no row-level security) or another network's
+    context the engine would read and replace every network's rows — it refuses instead."""
+    with get_sessionmaker()() as session:
+        ctx = load_access_context(session, network.a.users["admin@a.ru"], network.a.id)
+        assert ctx is not None
+    # A script run as the owner: no context at all.
+    with Session(owner_engine) as owner, pytest.raises(RuntimeError, match="row-level security context"):
+        engine.run(owner, ctx, date(2026, 10, 20))
+    with get_sessionmaker()() as session, pytest.raises(RuntimeError, match="row-level security context"):
+        load_access_context(session, network.b.users["admin@b.ru"], network.b.id)  # network B's context
+        engine.run(session, ctx, date(2026, 10, 20))

@@ -119,7 +119,9 @@ export function ReviewPage() {
                 run.mutate(undefined, {
                   onSuccess: (r) =>
                     notify(
-                      `Пересчитано: ${r.created} ${plural(r.created, ["новая", "новые", "новых"])}, ${r.updated} обновлено`,
+                      r.status === "done"
+                        ? `Пересчитано: ${r.created ?? 0} ${plural(r.created ?? 0, ["новая", "новые", "новых"])}, ${r.updated ?? 0} обновлено`
+                        : "Пересчет запущен: находки обновятся, как только он закончится",
                     ),
                 })
               }

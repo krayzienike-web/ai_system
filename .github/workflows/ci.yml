@@ -16,6 +16,8 @@ jobs:
         ports: ["5432:5432"]
         options: >-
           --health-cmd "pg_isready -U postgres" --health-interval 2s --health-retries 30
+    env:
+      FAI_ENV: test  # the settings default to production
     defaults:
       run:
         working-directory: backend

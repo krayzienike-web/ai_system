@@ -28,7 +28,7 @@ def record_week(session: Session, tenant_id: UUID, today: date) -> date:
     week_end = last_full_week_end(today)
     findings = [
         f
-        for f in session.execute(select(Finding)).scalars()
+        for f in session.execute(select(Finding).where(Finding.tenant_id == tenant_id)).scalars()
         if f.checked
         and f.found_on <= week_end
         and (
@@ -48,19 +48,27 @@ def record_week(session: Session, tenant_id: UUID, today: date) -> date:
                 potential[where] += effect
             count[where] += 1
     returned: dict[UUID | None, Decimal] = defaultdict(lambda: ZERO)
-    for e in session.execute(select(Experiment).where(Experiment.verdict == Verdict.CONFIRMED)).scalars():
+    for e in session.execute(
+        select(Experiment).where(Experiment.tenant_id == tenant_id, Experiment.verdict == Verdict.CONFIRMED)
+    ).scalars():
         if e.completed_on and e.completed_on <= week_end:
             returned[None] += e.effect_rub_month or ZERO
             for r in e.test_restaurant_ids:
                 returned[r] += (e.effect_rub_month or ZERO) / len(e.test_restaurant_ids)
     for t in session.execute(
-        select(Task).where(Task.outcome_verdict == OutcomeVerdict.CONFIRMED, Task.experiment_id.is_(None))
+        select(Task).where(
+            Task.tenant_id == tenant_id,
+            Task.outcome_verdict == OutcomeVerdict.CONFIRMED,
+            Task.experiment_id.is_(None),
+        )
     ).scalars():
         if t.outcome_measured_on and t.outcome_measured_on <= week_end:
             returned[None] += t.outcome_effect_rub_month or ZERO
             returned[t.restaurant_id] += t.outcome_effect_rub_month or ZERO
 
-    session.execute(delete(TrendPoint).where(TrendPoint.week_end == week_end))
+    session.execute(
+        delete(TrendPoint).where(TrendPoint.tenant_id == tenant_id, TrendPoint.week_end == week_end)
+    )
     restaurants = {r for r in (set(losses) | set(potential) | set(returned)) if r is not None}
     for where in [None, *sorted(restaurants)]:
         session.add(

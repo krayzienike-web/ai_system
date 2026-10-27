@@ -440,15 +440,15 @@ def test_engine_finds_planted_problems_and_review_gates_directors(
             login(client, "r01@a.ru"),
         )
         assert client.post("/api/analytics/run", headers=analyst).status_code == 403
-        run = client.post("/api/analytics/run", headers=hq).json()
-        assert run["created"] == 18
+        # The button queues a run (202); without a queue it goes right after the response.
+        queued = client.post("/api/analytics/run", headers=hq)
+        assert queued.status_code == 202 and queued.json()["status"] == "queued"
+        latest = client.get("/api/analytics/runs/latest", headers=hq).json()
+        assert (latest["status"], latest["trigger"], latest["created"]) == ("done", "manual", 18)
         # Idempotent: the same data gives the same findings, updated in place.
-        assert client.post("/api/analytics/run", headers=hq).json() | {} == {
-            "created": 0,
-            "updated": 18,
-            "removed": 0,
-            "drafts": 18,
-        }
+        client.post("/api/analytics/run", headers=hq)
+        latest = client.get("/api/analytics/runs/latest", headers=hq).json()
+        assert (latest["created"], latest["updated"], latest["removed"]) == (0, 18, 0)
 
         pending = client.get("/api/findings", headers=hq, params={"review": "pending"}).json()
         by_key = {(f["module"], f["title"]): f for f in pending}

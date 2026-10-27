@@ -36,6 +36,7 @@ class Task(IdMixin, TenantMixin, TimestampMixin, Base):
 
     __tablename__ = "tasks"
     __table_args__ = (
+        Index("ix_tasks_tenant_status_due", "tenant_id", "status", "due_on"),
         CheckConstraint("status IN ('assigned', 'in_progress', 'done')", name="status_valid"),
         CheckConstraint("assigned_by IN ('hq', 'director')", name="assigned_by_valid"),
         CheckConstraint(

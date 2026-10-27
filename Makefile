@@ -1,3 +1,6 @@
+# Local development runs in the dev environment (the settings default to production).
+export FAI_ENV ?= dev
+
 .PHONY: up down migrate seed demo-data load-demo api-types demo-snapshot test e2e lint check dev-backend dev-frontend
 
 up:            ## Start everything in Docker (db, redis, backend, frontend) and seed demo data

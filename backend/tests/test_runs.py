@@ -58,8 +58,8 @@ def test_publishing_a_file_recomputes_the_findings(
         actions = c.execute(text(query)).all()
     assert [(a, u) for a, u in actions] == [("analytics.run", None)]  # background work: no person
 
-    # The button logs its run too.
-    assert client.post("/api/analytics/run", headers=hq).status_code == 200
+    # The button queues its run like an upload does (architecture review 27.10.2026, p. 14).
+    assert client.post("/api/analytics/run", headers=hq).status_code == 202
     assert client.get("/api/analytics/runs/latest", headers=hq).json()["trigger"] == "manual"
 
 

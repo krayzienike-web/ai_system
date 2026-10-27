@@ -574,13 +574,6 @@ export type ReviewStatus = "pending" | "confirmed" | "rejected";
 
 export type Role = "hq_admin" | "hq_analyst" | "restaurant_director";
 
-export interface RunOut {
-  created: number;
-  updated: number;
-  removed: number;
-  drafts: number;
-}
-
 /** «Me / network / norm» on one scale; `answer` — «Это много?» in words. */
 export interface ScaleView {
   label: string;

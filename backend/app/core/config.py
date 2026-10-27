@@ -9,7 +9,9 @@ DEV_JWT_SECRET = "dev-secret-change-me-dev-secret-change-me"  # noqa: S105  (dev
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_prefix="FAI_", extra="ignore")
 
-    env: str = "dev"
+    # Production unless said otherwise: a server started without FAI_ENV refuses the known dev JWT secret
+    # (architecture review 27.10.2026, p. 3). Development sets FAI_ENV=dev (Makefile, docker-compose, .env).
+    env: str = "prod"
 
     # The application connects as a role without BYPASSRLS; migrations run as the schema owner.
     database_url: str = "postgresql+psycopg://franchise_app:app@localhost:5432/franchise"

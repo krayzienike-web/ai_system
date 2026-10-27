@@ -14,7 +14,6 @@ import type {
   NameAlias,
   Restaurant,
   Norms,
-  AnalyticsRun,
   ApiFinding,
   RejectReason,
   ReviewStatus,
@@ -237,11 +236,9 @@ export function useRefreshWhenRunIsDone() {
 export function useRunAnalytics() {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: () => api<AnalyticsRun>("/analytics/run", { method: "POST" }),
-    onSuccess: () => {
-      refreshWork(client);
-      void client.invalidateQueries({ queryKey: ["analytics-run"] });
-    },
+    // The run is queued (202): the shell refreshes the screens when it is done (useRefreshWhenRunIsDone).
+    mutationFn: () => api<LatestRun>("/analytics/run", { method: "POST" }),
+    onSuccess: (queued) => client.setQueryData(["analytics-run"], queued),
   });
 }
 

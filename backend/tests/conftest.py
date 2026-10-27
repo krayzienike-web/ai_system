@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from uuid import UUID
 
 # Must be set before the application reads its settings.
+os.environ.setdefault("FAI_ENV", "test")
 os.environ.setdefault(
     "FAI_DATABASE_URL", "postgresql+psycopg://franchise_app:app@localhost:5432/franchise_test"
 )

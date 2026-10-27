@@ -275,3 +275,14 @@ def test_director_can_neither_change_a_finding_under_review_nor_see_it_through_a
     assert sorted((str(i), s) for i, s in rows) == sorted(
         [(str(pending), "pending"), (str(confirmed), "confirmed")]
     )
+
+
+def test_the_application_can_only_add_to_the_audit_log(app_session: Session) -> None:
+    """Architecture review 27.10.2026, p. 7: nobody erases or rewrites the log through the application."""
+    granted = app_session.execute(
+        text(
+            "SELECT privilege_type FROM information_schema.role_table_grants "
+            "WHERE table_name = 'audit_log' AND grantee = current_user"
+        )
+    ).scalars()
+    assert sorted(granted) == ["INSERT", "SELECT"]

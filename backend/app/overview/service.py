@@ -581,13 +581,19 @@ def restaurants(session: Session, today: date) -> list[RestaurantRow]:
 
 
 def badges(session: Session, today: date, *, hq: bool) -> dict[str, Any]:
-    tasks = list(session.execute(select(Task)).scalars())
+    """Asked on every page: counted in the database, not by reading every task (architecture review, p. 19).
+    The same rule as `_late`: not done and past the due date."""
+
+    def count(*where: Any) -> int:
+        return session.execute(select(func.count()).select_from(Task).where(*where)).scalar_one()
+
     if hq:
         waiting = session.execute(
             select(func.count()).select_from(Experiment).where(Experiment.status == ExperimentStatus.PROPOSED)
         ).scalar_one()
-        return {"inbox": waiting + sum(1 for t in tasks if _late(t, today)), "open_tasks": 0}
-    return {"inbox": 0, "open_tasks": sum(1 for t in tasks if t.status != TaskStatus.DONE)}
+        late = count(Task.status != TaskStatus.DONE, Task.due_on < today)
+        return {"inbox": waiting + late, "open_tasks": 0}
+    return {"inbox": 0, "open_tasks": count(Task.status != TaskStatus.DONE)}
 
 
 # ------------------------------------------------------------------ the findings list

@@ -90,8 +90,10 @@ def _changed_much(f: Finding, d: Draft, cfg: EngineParams) -> bool:
 
 
 def _store_kpis(session: Session, tenant_id: UUID, kpis: list[kpi.Kpi], today: date) -> None:
-    """The snapshot is replaced as a whole: the same data gives the same rows (idempotent)."""
-    session.execute(delete(KpiSnapshot))
+    """The snapshot is replaced as a whole: the same data gives the same rows (idempotent).
+    Every write names the network, not only row-level security: a run under the owner role (a script, a future
+    scheduled job) must not touch other networks (architecture review 27.10.2026, p. 9)."""
+    session.execute(delete(KpiSnapshot).where(KpiSnapshot.tenant_id == tenant_id))
     session.add_all(
         KpiSnapshot(
             tenant_id=tenant_id,
@@ -115,6 +117,11 @@ def run(session: Session, ctx: AccessContext, today: date, *, as_of: date | None
     """Recomputes the findings. `as_of`: only the data up to that day (recomputing the past: the demo)."""
     if not ctx.can(Permission.ANALYTICS_RUN) or not ctx.role.is_hq:
         raise ForbiddenError("Пересчет находок запускает администратор управляющей компании")
+    # The facts and norms are read through row-level security: under a role that bypasses it, or without the
+    # network's context, the engine would mix networks. Refuse rather than compute (architecture review p. 9).
+    current = session.execute(text("SELECT current_setting('app.tenant_id', true)")).scalar()
+    if current != str(ctx.tenant_id):
+        raise RuntimeError("The engine runs only inside the network's row-level security context")
     # One run per network at a time: a second one waits, then works on the first one's findings.
     session.execute(text("SELECT pg_advisory_xact_lock(hashtext(:key))"), {"key": f"engine:{ctx.tenant_id}"})
     norms = load_norms(session)
@@ -128,7 +135,9 @@ def run(session: Session, ctx: AccessContext, today: date, *, as_of: date | None
         )
     existing = {
         f.key: f
-        for f in session.execute(select(Finding).where(Finding.key.is_not(None))).scalars()
+        for f in session.execute(
+            select(Finding).where(Finding.tenant_id == ctx.tenant_id, Finding.key.is_not(None))
+        ).scalars()
         if f.key and f.key.split(":", 1)[0] in MODULES
     }
     created = updated = removed = 0

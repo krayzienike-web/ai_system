@@ -463,8 +463,10 @@ export function demoRequest(path: string, init: RequestInit, token: string | nul
     if (verdict) return review(v, verdict[1]!, body as never);
     if (path === "/analytics/run") {
       forbid(v.admin, "Пересчет запускает администратор");
+      // The recorded data does not change in the prototype: the run is over at once, everything stays as it was.
+      const now = new Date().toISOString();
       const n = pool.findings.size;
-      return { created: 0, updated: n, removed: 0, drafts: n };
+      return { status: "done", trigger: "manual", requested_at: now, finished_at: now, created: 0, updated: n, removed: 0 };
     }
     if (path === "/chat") {
       const q = String(body.question ?? "");

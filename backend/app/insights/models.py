@@ -4,7 +4,7 @@ from enum import StrEnum
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import CheckConstraint, Date, ForeignKey, Numeric, String, Text, text
+from sqlalchemy import CheckConstraint, Date, ForeignKey, Index, Numeric, String, Text, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -38,6 +38,7 @@ class Finding(IdMixin, TenantMixin, TimestampMixin, Base):
 
     __tablename__ = "findings"
     __table_args__ = (
+        Index("ix_findings_tenant_restaurant_status", "tenant_id", "restaurant_id", "status"),
         CheckConstraint("kind IN ('problem', 'opportunity')", name="kind_valid"),
         CheckConstraint(
             "status IN ('new', 'in_work', 'in_experiment', 'resolved', 'dismissed')", name="status_valid"

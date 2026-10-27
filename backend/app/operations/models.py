@@ -25,6 +25,7 @@ class Sale(_Fact, Base):
     __tablename__ = "sales"
     __table_args__ = (
         Index("ix_sales_restaurant_day", "restaurant_id", "day"),
+        Index("ix_sales_tenant_day", "tenant_id", "day"),
         CheckConstraint("qty >= 0", name="qty_nonnegative"),
     )
 
@@ -40,6 +41,7 @@ class Receipt(_Fact, Base):
     __tablename__ = "receipts"
     __table_args__ = (
         Index("ix_receipts_restaurant_day", "restaurant_id", "day"),
+        Index("ix_receipts_tenant_day", "tenant_id", "day"),
         CheckConstraint("qty > 0", name="qty_positive"),
     )
 
@@ -58,6 +60,7 @@ class Transfer(_Fact, Base):
     __tablename__ = "transfers"
     __table_args__ = (
         Index("ix_transfers_restaurant_day", "restaurant_id", "day"),
+        Index("ix_transfers_tenant_day", "tenant_id", "day"),
         Index("ix_transfers_to_day", "to_restaurant_id", "day"),
         CheckConstraint("qty > 0", name="qty_positive"),
         CheckConstraint("to_restaurant_id <> restaurant_id", name="not_to_itself"),
@@ -72,6 +75,7 @@ class WriteOff(_Fact, Base):
     __tablename__ = "write_offs"
     __table_args__ = (
         Index("ix_write_offs_restaurant_day", "restaurant_id", "day"),
+        Index("ix_write_offs_tenant_day", "tenant_id", "day"),
         CheckConstraint("qty > 0", name="qty_positive"),
     )
 
@@ -87,6 +91,7 @@ class InventoryCount(_Fact, Base):
     __tablename__ = "inventory_counts"
     __table_args__ = (
         Index("ix_inventory_counts_restaurant_day", "restaurant_id", "day"),
+        Index("ix_inventory_counts_tenant_day", "tenant_id", "day"),
         CheckConstraint("actual_qty >= 0", name="actual_nonnegative"),
     )
 

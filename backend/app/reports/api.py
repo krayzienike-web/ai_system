@@ -9,11 +9,12 @@ from sqlalchemy import select
 
 from app.core import words
 from app.core.deps import SessionDep, require
-from app.core.period import PeriodDep, TodayDep
+from app.core.period import TodayDep
 from app.experiments.api import CheckOut, checks_out
 from app.experiments.models import Experiment
 from app.overview import service as overview
 from app.overview.api import TrendOut
+from app.overview.period import PeriodDep
 from app.reports.service import head_report
 from app.tasks.api import TaskOut, tasks_out
 from app.tenancy.context import AccessContext

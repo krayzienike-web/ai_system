@@ -13,11 +13,7 @@ from datetime import date, timedelta
 from enum import StrEnum
 from typing import Annotated
 
-from fastapi import Depends, HTTPException, Query, status
-from sqlalchemy import func, select
-from sqlalchemy.orm import Session
-
-from app.core.deps import AccessDep, SessionDep
+from fastapi import Depends
 
 MAX_DAYS = 366
 
@@ -123,42 +119,3 @@ def get_today() -> date:
 
 
 TodayDep = Annotated[date, Depends(get_today)]
-
-
-def last_count_day(session: Session, today: date) -> date | None:
-    """The day «с последней инвентаризации» starts after: each restaurant's last count at least two days ago,
-    the earliest of them (row-level security limits the restaurants to what the caller sees)."""
-    from app.operations.models import InventoryCount  # core stays importable without the domain models
-
-    per_restaurant = (
-        select(func.max(InventoryCount.day).label("day"))
-        .where(InventoryCount.day <= today - timedelta(days=2))
-        .group_by(InventoryCount.restaurant_id)
-        .subquery()
-    )
-    return session.execute(select(func.min(per_restaurant.c.day))).scalar_one_or_none()
-
-
-def get_last_count(
-    session: SessionDep,
-    ctx: AccessDep,  # the access context first: the count days are read under row-level security
-    today: TodayDep,
-    preset: Annotated[PeriodPreset | None, Query()] = None,
-) -> date | None:
-    return last_count_day(session, today) if preset is PeriodPreset.SINCE_COUNT else None
-
-
-def get_period(
-    today: TodayDep,
-    last_count: Annotated[date | None, Depends(get_last_count)],
-    preset: Annotated[PeriodPreset | None, Query()] = None,
-    date_from: Annotated[date | None, Query()] = None,
-    date_to: Annotated[date | None, Query()] = None,
-) -> Period:
-    try:
-        return resolve_period(today, preset, date_from, date_to, last_count)
-    except PeriodError as e:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e)) from e
-
-
-PeriodDep = Annotated[Period, Depends(get_period)]

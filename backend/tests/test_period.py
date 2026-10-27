@@ -5,7 +5,8 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.core.period import Period, PeriodDep, PeriodError, PeriodPreset, get_last_count, resolve_period
+from app.core.period import Period, PeriodError, PeriodPreset, resolve_period
+from app.overview.period import PeriodDep, get_last_count
 
 FRIDAY = date(2026, 10, 23)
 

@@ -52,7 +52,7 @@ class AnalyticsRun(IdMixin, TenantMixin, Base):
     error: Mapped[str | None] = mapped_column(Text)
 
 
-def request(session: Session, ctx: AccessContext) -> AnalyticsRun:
+def request(session: Session, ctx: AccessContext, trigger: str = "upload") -> AnalyticsRun:
     """The network's waiting run, created if there is none (an upload joins the one already waiting).
 
     Joining updates the waiting row, so it stays locked until this upload commits: the worker, which takes the
@@ -61,7 +61,7 @@ def request(session: Session, ctx: AccessContext) -> AnalyticsRun:
     now = datetime.now(UTC)
     stmt = insert(AnalyticsRun).values(
         tenant_id=ctx.tenant_id,
-        trigger="upload",
+        trigger=trigger,
         status=RunStatus.QUEUED,
         requested_by=ctx.user_id,
         requested_at=now,
@@ -76,25 +76,6 @@ def request(session: Session, ctx: AccessContext) -> AnalyticsRun:
     run = session.get(AnalyticsRun, run_id, populate_existing=True)
     assert run is not None
     return run
-
-
-def record_manual(session: Session, ctx: AccessContext, result: engine.RunResult) -> None:
-    """A run started by the button: done within the request, logged so the screens know when."""
-    now = datetime.now(UTC)
-    session.add(
-        AnalyticsRun(
-            tenant_id=ctx.tenant_id,
-            trigger="manual",
-            status=RunStatus.DONE,
-            requested_by=ctx.user_id,
-            requested_at=now,
-            started_at=now,
-            finished_at=now,
-            created=result.created,
-            updated=result.updated,
-            removed=result.removed,
-        )
-    )
 
 
 def execute(run_id: UUID, tenant_id: UUID, today: date) -> None:
