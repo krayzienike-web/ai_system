@@ -212,7 +212,8 @@ def work(session: Session, ctx: AccessContext, today: date, analyst: UUID) -> No
 def confirm_pending(session: Session, analyst: UUID, today: date) -> None:
     """What an analyst confirmed during the demo's history. The salmon price growth and the dish it makes
     expensive are confirmed too: the prototype's totals are recorded, so a finding confirmed while showing it
-    would not reach «Сеть». Today's findings (the pasta shortage, a missing upload) wait in «Проверка находок»."""
+    would not reach «Сеть». Today's findings (the pasta shortage, a missing upload) wait in
+    «Проверка находок»."""
     for f in session.execute(select(Finding).where(Finding.review_status == ReviewStatus.PENDING)).scalars():
         f.review_status, f.reviewed_by, f.reviewed_on = ReviewStatus.CONFIRMED, analyst, today
     session.flush()
