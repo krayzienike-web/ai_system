@@ -15,7 +15,9 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.analytics import params
+from app.analytics.costs import CostBook
 from app.analytics.drafts import pct, rub
+from app.analytics.facts import ReceiptRow
 from app.analytics.stats import med
 from app.catalog.models import ContractPrice, MenuItem, Product, RecipeLine, Supplier
 from app.catalog.recipes import Line, explode, lines_on
@@ -46,6 +48,10 @@ def verify(session: Session, finding: Finding) -> dict[str, Any]:
         return _m3_growth(session, finding)
     if finding.module == "M3" and (finding.evidence or {}).get("kind") == "contract":
         return _m3_contract(session, finding)
+    if finding.module == "M4" and finding.restaurant_id is not None:
+        return _m4(session, finding)
+    if finding.module == "M5" and finding.restaurant_id is not None:
+        return _m5(session, finding)
     if finding.module == "M7" and (finding.evidence or {}).get("kind") in ("no_recipe", "gap"):
         return _m7(session, finding)
     return {
@@ -1274,5 +1280,395 @@ def _m7(session: Session, f: Finding) -> dict[str, Any]:
             "Пока данных нет, модули не видят цены, приходы или продажи этих дней: находки по ресторану "
             "неполные.",
             "Если ресторан закрывался — отклоните находку с причиной «Не проблема».",
+        ],
+    }
+
+
+def _costs(session: Session) -> CostBook:
+    """Purchase prices from the stored invoices (the same rule as the engine's: own, own history, network)."""
+    return CostBook(
+        [
+            ReceiptRow(*row)
+            for row in session.execute(
+                select(
+                    Receipt.restaurant_id,
+                    Receipt.day,
+                    Receipt.product_id,
+                    Receipt.supplier_id,
+                    Receipt.qty,
+                    Receipt.amount,
+                )
+            ).all()
+        ]
+    )
+
+
+def _m4(session: Session, f: Finding) -> dict[str, Any]:
+    ev = f.evidence or {}
+    cfg = params.load(session)
+    restaurant = session.get(Restaurant, f.restaurant_id)
+    if restaurant is None:
+        return {"module": "M4", "supported": False, "note": "Ресторана больше нет"}
+    if ev.get("kind") == "pre_count":
+        counts = sorted(
+            set(
+                session.execute(
+                    select(InventoryCount.day).where(InventoryCount.restaurant_id == restaurant.id)
+                ).scalars()
+            )
+        )
+        since, last = counts[0], counts[-1]
+        costs = _costs(session)
+        names = dict(session.execute(select(Product.id, Product.name)).all())
+        rows = []
+        total = before = Decimal(0)
+        for w in session.execute(
+            select(WriteOff)
+            .where(WriteOff.restaurant_id == restaurant.id, WriteOff.day > since, WriteOff.day <= last)
+            .order_by(WriteOff.day)
+        ).scalars():
+            cost = costs.cost(restaurant.id, w.product_id, since + timedelta(days=1), last)
+            if cost is None:
+                continue
+            value = w.qty * cost.rub_per_unit
+            near = any(1 <= (c - w.day).days <= ev["days_before"] for c in counts[1:])
+            total += value
+            before += value if near else Decimal(0)
+            rows.append(
+                {
+                    "day": w.day.isoformat(),
+                    "product": names.get(w.product_id),
+                    "qty": _q(w.qty),
+                    "amount": _q(value, Decimal("0.01")),
+                    "over": near,
+                }
+            )
+        share = before / total if total else Decimal(0)
+        expected = Decimal(ev["days_before"] * (len(counts) - 1)) / (last - since).days
+        return {
+            "module": "M4",
+            "supported": True,
+            "object": "Списания перед инвентаризациями",
+            "restaurant": restaurant.name,
+            "period": [(since + timedelta(days=1)).isoformat(), last.isoformat()],
+            "formula": f"Доля = списания (₽) за {ev['days_before']} дня до пересчетов / все списания (₽)",
+            "steps": [
+                {
+                    "id": "write_offs",
+                    "label": "Акты списания; отмечены оформленные перед пересчетом",
+                    "value": rub(total),
+                    "unit": "",
+                    "rows": rows,
+                }
+            ],
+            "result": [
+                {"label": "Перед пересчетом", "value": pct(share), "unit": ""},
+                {"label": "Ровно по дням было бы", "value": pct(expected), "unit": ""},
+            ],
+            "rules": [
+                {
+                    "rule": "Доля списаний перед пересчетом",
+                    "value": pct(share),
+                    "threshold": pct(cfg.M4_PRE_SHARE, 0),
+                    "passed": share >= cfg.M4_PRE_SHARE,
+                },
+                {
+                    "rule": "Во сколько раз больше, чем при списаниях в день порчи",
+                    "value": str((share / expected).quantize(Decimal("0.1"))) if expected else "—",
+                    "threshold": str(cfg.M4_PRE_TIMES),
+                    "passed": share >= cfg.M4_PRE_TIMES * expected,
+                },
+            ],
+            "checks": [
+                {
+                    "check": "Пересчет из исходных строк совпадает с тем, что посчитал движок",
+                    "ok": abs(Decimal(ev["share"]) - share) < Decimal("0.0005"),
+                    "note": f"движок: {pct(Decimal(ev['share']))}, пересчет: {pct(share)}",
+                }
+            ],
+            "interpretation": [
+                "Если списания оформляют в день порчи, перед пересчетом их не больше, чем в другие дни.",
+                "Прежде чем подтверждать: проверьте, не было ли перед пересчетом плановой чистки склада.",
+            ],
+        }
+    codes = list(ev["products"])
+    products = {p.code: p for p in session.execute(select(Product).where(Product.code.in_(codes))).scalars()}
+    day = date.fromisoformat(ev["day"])
+    history = session.execute(
+        select(InventoryCount)
+        .where(
+            InventoryCount.restaurant_id == restaurant.id,
+            InventoryCount.product_id.in_([p.id for p in products.values()]),
+            InventoryCount.day <= day,
+        )
+        .order_by(InventoryCount.day)
+    ).scalars()
+    by_product: dict[str, list[InventoryCount]] = defaultdict(list)
+    code_of = {p.id: c for c, p in products.items()}
+    for c in history:
+        by_product[code_of[c.product_id]].append(c)
+    offs: dict[str, Decimal] = {}
+    rows = []
+    for code, series in by_product.items():
+        between = [c for c in series[1:-1] if c.book_qty]
+        usual = (
+            med([(c.actual_qty - (c.book_qty or 0)) / (c.book_qty or 1) for c in between])
+            if between
+            else Decimal(0)
+        )
+        final = series[-1]
+        book = final.book_qty or Decimal(0)
+        offs[code] = (final.actual_qty - book) - usual * book
+        for c in series:
+            rows.append(
+                {
+                    "day": c.day.isoformat(),
+                    "product": products[code].name,
+                    "book": None if c.book_qty is None else _q(c.book_qty),
+                    "actual": _q(c.actual_qty),
+                }
+            )
+    plus, minus = sorted(offs, key=lambda k: -offs[k]) if len(offs) == 2 else (codes[0], codes[-1])
+    size = offs.get(plus, Decimal(0))
+    return {
+        "module": "M4",
+        "supported": True,
+        "object": " и ".join(products[c].name for c in codes if c in products),
+        "restaurant": restaurant.name,
+        "period": [day.isoformat(), day.isoformat()],
+        "formula": "Сверх обычного = (факт − учет) − обычная доля расхождения × учет",
+        "steps": [
+            {"id": "counts", "label": "Пересчеты обоих товаров", "value": None, "unit": "", "rows": rows}
+        ],
+        "result": [
+            {"label": f"{products[c].name}: сверх обычного", "value": _q(offs[c]), "unit": ""}
+            for c in (plus, minus)
+            if c in offs
+        ],
+        "rules": [
+            {
+                "rule": "Излишек одного товара к учету",
+                "value": _q(size),
+                "threshold": pct(cfg.M4_SORT_SHARE, 0),
+                "passed": size > 0,
+            },
+            {
+                "rule": "Недостача другого почти равна излишку",
+                "value": _q(offs.get(minus, Decimal(0))),
+                "threshold": f"±{pct(cfg.M4_SORT_MATCH, 0)}",
+                "passed": size > 0 and abs(-offs.get(minus, Decimal(0)) - size) <= cfg.M4_SORT_MATCH * size,
+            },
+        ],
+        "checks": [
+            {
+                "check": "Пересчет из исходных строк совпадает с тем, что посчитал движок",
+                "ok": all(
+                    abs(Decimal(ev["products"][c]["off_usual"]) - offs[c]) < Decimal("0.001") for c in offs
+                ),
+                "note": None,
+            }
+        ],
+        "interpretation": [
+            "Излишек одного и такая же недостача похожего товара — почти всегда пересорт при пересчете.",
+            "Прежде чем подтверждать: пересчитайте оба товара заново.",
+        ],
+    }
+
+
+def _m5(session: Session, f: Finding) -> dict[str, Any]:
+    ev = f.evidence or {}
+    cfg = params.load(session)
+    restaurant = session.get(Restaurant, f.restaurant_id)
+    product = session.execute(select(Product).where(Product.code == ev["product"])).scalar_one_or_none()
+    if restaurant is None or product is None or not f.period_from or not f.period_to:
+        return {"module": "M5", "supported": False, "note": "Ресторана или товара больше нет"}
+    start, end = f.period_from, f.period_to
+    costs = _costs(session)
+    write_offs = list(
+        session.execute(
+            select(WriteOff)
+            .where(
+                WriteOff.restaurant_id == restaurant.id,
+                WriteOff.product_id == product.id,
+                WriteOff.day >= start,
+                WriteOff.day <= end,
+                WriteOff.qty > 0,
+            )
+            .order_by(WriteOff.day)
+        ).scalars()
+    )
+    cost = costs.cost(restaurant.id, product.id, start, end)
+    unit_cost = cost.rub_per_unit if cost else Decimal(0)
+    written_rub = sum((w.qty * unit_cost for w in write_offs), Decimal(0))
+    files = _files(session, {w.import_batch_id for w in write_offs})
+    steps: list[dict[str, Any]] = [
+        {
+            "id": "write_offs",
+            "label": "Акты списания",
+            "value": rub(written_rub),
+            "unit": "",
+            "rows": [
+                {
+                    "day": w.day.isoformat(),
+                    "qty": _q(w.qty),
+                    "amount": _q(w.qty * unit_cost, Decimal("0.01")),
+                    "reason": w.reason,
+                    "file": files.get(w.import_batch_id),
+                }
+                for w in write_offs
+            ],
+        }
+    ]
+    common = {
+        "module": "M5",
+        "supported": True,
+        "object": product.name,
+        "restaurant": restaurant.name,
+        "period": [start.isoformat(), end.isoformat()],
+    }
+    if ev.get("kind") == "weekdays":
+        by_weekday = [Decimal(0)] * 7
+        for w in write_offs:
+            by_weekday[w.day.weekday()] += w.qty * unit_cost
+        first = ev["first_weekday"]
+        share = (by_weekday[first] + by_weekday[(first + 1) % 7]) / written_rub if written_rub else Decimal(0)
+        effect = (written_rub * (share - Decimal(2) / 7) * 30 / ((end - start).days + 1)).quantize(
+            Decimal(1), rounding=ROUND_HALF_UP
+        )
+        return common | {
+            "formula": "Доля = списания (₽) в два соседних дня недели / все списания (₽)",
+            "steps": steps,
+            "result": [
+                {
+                    "label": f"Списания в {ev['weekdays'][0]} и {ev['weekdays'][1]}",
+                    "value": pct(share),
+                    "unit": "",
+                },
+                {"label": "Сверх ровного распределения, в месяц", "value": rub(effect), "unit": ""},
+            ],
+            "rules": [
+                {
+                    "rule": "Два соседних дня держат списания",
+                    "value": pct(share),
+                    "threshold": pct(cfg.M5_WEEKDAY_SHARE, 0),
+                    "passed": share >= cfg.M5_WEEKDAY_SHARE,
+                },
+                {
+                    "rule": "Повторяется по неделям",
+                    "value": f"{ev['weeks_held']} из {ev['weeks']}",
+                    "threshold": str(cfg.M5_WEEKDAY_WEEKS),
+                    "passed": ev["weeks_held"] >= cfg.M5_WEEKDAY_WEEKS,
+                },
+                {
+                    "rule": "Потери существенны, ₽ в месяц",
+                    "value": rub(effect),
+                    "threshold": rub(cfg.M5_WEEKDAY_MATERIALITY_RUB_MONTH),
+                    "passed": effect >= cfg.M5_WEEKDAY_MATERIALITY_RUB_MONTH,
+                },
+            ],
+            "checks": [
+                {
+                    "check": "Пересчет из исходных строк совпадает с тем, что посчитал движок",
+                    "ok": abs(Decimal(ev["share"]) - share) < Decimal("0.0005")
+                    and f.effect_rub_month is not None
+                    and abs(f.effect_rub_month - effect) <= Decimal(1),
+                    "note": f"движок: {pct(Decimal(ev['share']))}, пересчет: {pct(share)}",
+                }
+            ],
+            "interpretation": [
+                "Списания в одни и те же дни недели — заказ не следует за продажами.",
+                "Прежде чем подтверждать: проверьте, не было ли в эти дни плановой ревизии или чистки.",
+            ],
+        }
+    rates: dict[UUID, Decimal] = {}
+    bought = dict(
+        session.execute(
+            select(Receipt.restaurant_id, func.sum(Receipt.qty))
+            .where(
+                Receipt.product_id == product.id, Receipt.day >= start, Receipt.day <= end, Receipt.qty > 0
+            )
+            .group_by(Receipt.restaurant_id)
+        ).all()
+    )
+    written = dict(
+        session.execute(
+            select(WriteOff.restaurant_id, func.sum(WriteOff.qty))
+            .where(
+                WriteOff.product_id == product.id,
+                WriteOff.day >= start,
+                WriteOff.day <= end,
+                WriteOff.qty > 0,
+            )
+            .group_by(WriteOff.restaurant_id)
+        ).all()
+    )
+    for rid, qty in bought.items():
+        if qty:
+            rates[rid] = (written.get(rid) or Decimal(0)) / qty
+    rate = rates.get(restaurant.id, Decimal(0))
+    others = [v for rid, v in rates.items() if rid != restaurant.id]
+    typical = med(others) if others else Decimal(0)
+    effect = (
+        (written_rub * (1 - typical / rate) * 30 / ((end - start).days + 1)).quantize(
+            Decimal(1), rounding=ROUND_HALF_UP
+        )
+        if rate
+        else Decimal(0)
+    )
+    codes = dict(session.execute(select(Restaurant.id, Restaurant.code)).all())
+    steps.append(
+        {
+            "id": "network",
+            "label": "Списано от закупленного по ресторанам",
+            "value": None,
+            "unit": "",
+            "rows": [
+                {"restaurant": codes.get(rid, "—"), "share": pct(v)}
+                for rid, v in sorted(rates.items(), key=lambda x: codes.get(x[0], ""))
+            ],
+        }
+    )
+    return common | {
+        "formula": "Доля = списано / закуплено за окно; "
+        "потери = списания (₽) × (1 − медиана сети / доля ресторана)",
+        "steps": steps,
+        "result": [
+            {"label": "Списано от закупленного", "value": pct(rate), "unit": ""},
+            {"label": "Медиана других ресторанов", "value": pct(typical), "unit": ""},
+            {"label": "Потери сверх сети в месяц", "value": rub(effect), "unit": ""},
+        ],
+        "rules": [
+            {
+                "rule": "Во сколько раз больше медианы сети",
+                "value": str((rate / typical).quantize(Decimal("0.1"))) if typical else "—",
+                "threshold": str(cfg.M5_TIMES),
+                "passed": rate >= cfg.M5_TIMES * typical,
+            },
+            {
+                "rule": "Больше медианы сети на",
+                "value": pct(rate - typical),
+                "threshold": pct(cfg.M5_EXCESS),
+                "passed": rate - typical >= cfg.M5_EXCESS,
+            },
+            {
+                "rule": "Потери существенны, ₽ в месяц",
+                "value": rub(effect),
+                "threshold": rub(cfg.M5_MATERIALITY_RUB_MONTH),
+                "passed": effect >= cfg.M5_MATERIALITY_RUB_MONTH,
+            },
+        ],
+        "checks": [
+            {
+                "check": "Пересчет из исходных строк совпадает с тем, что посчитал движок",
+                "ok": abs(Decimal(ev["rate"]) - rate) < Decimal("0.0005")
+                and f.effect_rub_month is not None
+                and abs(f.effect_rub_month - effect) <= Decimal(1),
+                "note": f"движок: {pct(Decimal(ev['rate']))}, пересчет: {pct(rate)}",
+            }
+        ],
+        "interpretation": [
+            "Списывают больше других — партии больше, чем кухня успевает использовать, или нарушено "
+            "хранение.",
+            "Прежде чем подтверждать: проверьте, все ли закупки загружены (иначе доля завышена).",
         ],
     }

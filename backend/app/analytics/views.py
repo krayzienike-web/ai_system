@@ -42,6 +42,13 @@ CAUSES = {
         "Поставщик возит в этот ресторан другую позицию того же товара (например, другой жирности или "
         "калибра), а в справочнике они сведены в одну: проверьте синхронизацию номенклатуры",
     ],
+    "M4:pre_count": ["Недостача закрывается актом списания", "Списания не оформляются в момент порчи"],
+    "M4:mixed_up": ["Похожие товары хранятся вместе без подписей", "При пересчете перепутали названия"],
+    "M5:rate": [
+        "Партии больше, чем кухня успевает использовать до конца срока годности",
+        "Нарушены условия хранения или правило «первым пришел — первым ушел»",
+    ],
+    "M5:weekdays": ["Заказ одинаковый на все дни, а продажи в эти дни ниже"],
     "M7:no_recipe": ["Блюдо ввели в меню, а техкарту в iiko не завели или не загрузили"],
     "M7:gap": [
         "Выгрузку забыли сделать или загрузить",
@@ -391,6 +398,86 @@ def _m3(d: Draft, facts: Facts) -> dict[str, Any]:
     }
 
 
+def _m4(d: Draft, facts: Facts) -> dict[str, Any]:
+    ev = d.evidence
+    if ev["kind"] == "pre_count":
+        me, expected = _pp(ev["share"]), _pp(ev["expected"])
+        return {
+            "summary": d.headline,
+            "causes": CAUSES["M4:pre_count"],
+            "confidence_note": f"Даты актов списания и {len(ev['counts'])} инвентаризаций",
+            "metric": {
+                "label": f"Списано за {ev['days_before']} дня до пересчета",
+                "value": _ru(me or 0, "%"),
+                "benchmark": f"ровно по дням ≈ {_ru(expected or 0, '%')}",
+            },
+            "scale": _scale(
+                label=f"Доля списаний за {ev['days_before']} дня до пересчета",
+                unit="%",
+                me=me,
+                norm=expected,
+                norm_label="ровно по дням",
+                lower_is_better=True,
+            ),
+            "table": {
+                "title": "Инвентаризации",
+                "columns": ["Дата"],
+                "rows": [[f"{c[8:10]}.{c[5:7]}"] for c in ev["counts"]],
+            },
+        }
+    names = {p.code: p.name for p in facts.products.values()}
+    return {
+        "summary": d.headline,
+        "causes": CAUSES["M4:mixed_up"],
+        "confidence_note": "Учет и факт на последнем пересчете, обычное расхождение — по прошлым",
+        "table": {
+            "title": "Последний пересчет",
+            "columns": ["Товар", "По учету", "Факт", "Сверх обычного"],
+            "rows": [
+                [names.get(code, code), _n(v["book"], 2), _n(v["actual"], 2), _n(v["off_usual"], 2)]
+                for code, v in ev["products"].items()
+            ],
+        },
+    }
+
+
+WEEKDAY_SHORT = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"]
+
+
+def _m5(d: Draft, facts: Facts) -> dict[str, Any]:
+    ev = d.evidence
+    if ev["kind"] == "weekdays":
+        return {
+            "summary": d.headline,
+            "causes": CAUSES["M5:weekdays"],
+            "confidence_note": f"Акты списания за {ev['weeks']} недели и продажи по дням недели",
+            "metric": {
+                "label": f"Списания в {ev['weekdays'][0]} и {ev['weekdays'][1]}",
+                "value": _ru(_pp(ev["share"]) or 0, "%"),
+                "benchmark": "ровно по дням ≈ 29% (2 дня из 7)",
+            },
+            "table": {
+                "title": "Списано по дням недели, ₽",
+                "columns": ["День", "Списано, ₽"],
+                "rows": [[WEEKDAY_SHORT[i], _n(v, 0)] for i, v in enumerate(ev["by_weekday"])],
+            },
+        }
+    me, network = _pp(ev["rate"]), _pp(ev["network_rate"])
+    return {
+        "summary": d.headline,
+        "causes": CAUSES["M5:rate"],
+        "confidence_note": f"Акты списания и {ev['receipts']} закупок за 4 недели по всем ресторанам",
+        "metric": {
+            "label": "Списано от закупленного",
+            "value": _ru(me or 0, "%"),
+            "benchmark": f"сеть {_ru(network or 0, '%')}",
+        },
+        "scale": _scale(
+            label="Списано от закупленного", unit="%", me=me, network=network, lower_is_better=True
+        ),
+    }
+
+
 def _m7(d: Draft, facts: Facts) -> dict[str, Any]:
     ev = d.evidence
     if ev["kind"] == "no_recipe":
@@ -431,5 +518,5 @@ def _m7(d: Draft, facts: Facts) -> dict[str, Any]:
 
 
 def build(d: Draft, facts: Facts) -> dict[str, Any] | None:
-    builder = {"M1": _m1, "M2": _m2, "M3": _m3, "M7": _m7}.get(d.module)
+    builder = {"M1": _m1, "M2": _m2, "M3": _m3, "M4": _m4, "M5": _m5, "M7": _m7}.get(d.module)
     return builder(d, facts) if builder else None

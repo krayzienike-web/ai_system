@@ -46,6 +46,21 @@ class EngineParams:
     M3_NET_WINDOW_DAYS: int = 28  # network-wide growth: the last 4 weeks …
     M3_NET_COMPARE_DAYS: int = 91  # … against the same 4 weeks a quarter earlier
     M3_NET_GROWTH: Decimal = Decimal("0.10")  # 10 % more for the whole network
+    # M4 — stock counts
+    M4_PRE_DAYS: int = 2  # write-offs dated this many days before a count …
+    M4_PRE_SHARE: Decimal = Decimal("0.5")  # … holding at least half of them …
+    M4_PRE_TIMES: Decimal = Decimal(3)  # … and 3 times what evenly spread write-offs would give
+    M4_SORT_SHARE: Decimal = Decimal("0.05")  # a surplus of at least 5 % of the books at the last count …
+    M4_SORT_MATCH: Decimal = Decimal("0.3")  # … and a shortage of a same-category product within 30 % of it
+    # M5 — write-offs
+    M5_WINDOW_DAYS: int = 28
+    M5_TIMES: Decimal = Decimal(2)  # written off / bought at least twice the network's median …
+    M5_EXCESS: Decimal = Decimal("0.03")  # … and at least 3 p.p. more
+    M5_WEEKDAY_SHARE: Decimal = Decimal("0.5")  # two neighbouring weekdays hold half of the write-offs …
+    M5_WEEKDAY_WEEKS: int = 3  # … in at least 3 weeks of the window
+    M5_MATERIALITY_RUB_MONTH: Decimal = Decimal(3000)
+    # A weekday pattern is a sure and cheap fix (order by day), so smaller sums are worth showing
+    M5_WEEKDAY_MATERIALITY_RUB_MONTH: Decimal = Decimal(1000)
     # M7 — data quality
     M7_WINDOW_DAYS: int = 28  # a dish sold without a recipe within the last 4 weeks
     M7_GAP_DAYS: int = 5  # an export missing for this many days, while other restaurants have them …
@@ -243,6 +258,73 @@ DEFS: tuple[ParamDef, ...] = (
     ),
     ParamDef("M3_NET_WINDOW_DAYS", "M3", "Окно для роста цены по сети", "дней", "", D(7), D(90)),
     ParamDef("M3_NET_COMPARE_DAYS", "M3", "Сравниваем с периодом", "дней назад", "", D(28), D(365)),
+    ParamDef(
+        "M4_PRE_DAYS", "M4", "Списания «перед инвентаризацией» — за", "дней до пересчета", "", D(1), D(7)
+    ),
+    ParamDef(
+        "M4_PRE_SHARE",
+        "M4",
+        "Находка, если в эти дни оформлено не меньше",
+        "% списаний",
+        "в рублях, с первой инвентаризации",
+        D(20),
+        D(100),
+        PCT,
+    ),
+    ParamDef(
+        "M4_PRE_TIMES",
+        "M4",
+        "…и во столько раз больше, чем при списаниях в день порчи",
+        "раза",
+        "",
+        D(1),
+        D(20),
+    ),
+    ParamDef(
+        "M4_SORT_SHARE",
+        "M4",
+        "Пересорт: излишек товара к учету не меньше",
+        "%",
+        "на последней инвентаризации",
+        D(1),
+        D(100),
+        PCT,
+    ),
+    ParamDef(
+        "M4_SORT_MATCH",
+        "M4",
+        "Пересорт: недостача другого товара той же категории отличается от излишка не больше чем на",
+        "%",
+        "",
+        D(5),
+        D(100),
+        PCT,
+    ),
+    ParamDef("M5_WINDOW_DAYS", "M5", "Списания и закупки сравниваем за последние", "дней", "", D(14), D(90)),
+    ParamDef(
+        "M5_TIMES",
+        "M5",
+        "Списания выше сети: во сколько раз больше медианы сети",
+        "раза",
+        "списано / закуплено",
+        D("1.2"),
+        D(10),
+    ),
+    ParamDef("M5_EXCESS", "M5", "…и больше хотя бы на", "п.п.", "", D("0.5"), D(50), PCT),
+    ParamDef(
+        "M5_WEEKDAY_SHARE",
+        "M5",
+        "По дням недели: два соседних дня держат не меньше",
+        "% списаний",
+        "ровно по дням было бы 29%",
+        D(30),
+        D(100),
+        PCT,
+    ),
+    ParamDef("M5_WEEKDAY_WEEKS", "M5", "…и так повторяется недель", "из окна", "", D(1), D(12)),
+    ParamDef(
+        "M5_MATERIALITY_RUB_MONTH", "M5", "Ниже каких потерь не показываем", "₽ в месяц", "", D(0), D(100000)
+    ),
     ParamDef(
         "M7_WINDOW_DAYS", "M7", "Блюда без техкарты ищем в продажах за последние", "дней", "", D(7), D(90)
     ),

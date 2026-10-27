@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
-from app.analytics import engine, m1, m2, m3, m7, views
+from app.analytics import engine, m1, m2, m3, m4, m5, m7, views
 from app.analytics.costs import CostBook
 from app.analytics.facts import (
     ContractRow,
@@ -193,6 +193,82 @@ def test_m7_dish_without_a_recipe_and_missing_exports() -> None:
     assert m7.detect(f) == []
 
 
+def test_m5_write_offs_above_the_network_and_on_the_same_weekdays() -> None:
+    f, rs, cheese, pizza = _facts(restaurants=4)
+    greens = uuid4()
+    f.products[greens] = ProductInfo("P10", "Руккола", "Зелень", "kg", 3, False)
+    end = date(2026, 10, 18)  # a Sunday: the window is four whole weeks, Monday to Sunday
+    days = [end - timedelta(days=i) for i in range(28)]
+    f.sales = [SaleRow(r, d, pizza, Decimal(10), Decimal(5800)) for r in rs for d in days]
+    f.receipts = [
+        ReceiptRow(r, d, p, None, Decimal(10), Decimal(9000))
+        for r in rs
+        for d in days[::2]
+        for p in (greens, cheese)
+    ]
+    # Everyone writes off 5 % of the rocket evenly; R01 writes off 25 %.
+    for r in rs:
+        for d in days[::2]:
+            f.write_offs.append(
+                WriteOffRow(r, d, greens, Decimal("2.5") if r == rs[0] else Decimal("0.5"), "spoilage")
+            )
+    # R02 throws away cheese on Mondays and Tuesdays only, every week; R03 — once, before a count.
+    for d in days:
+        if d.weekday() in (0, 1):
+            f.write_offs.append(WriteOffRow(rs[1], d, cheese, Decimal(1), "spoilage"))
+    f.write_offs.append(WriteOffRow(rs[2], days[3], cheese, Decimal(4), "spoilage"))
+    drafts = {d.key: d for d in m5.detect(f, Usage(f), CostBook(f.receipts))}
+    assert set(drafts) == {"M5:R01:P10", "M5:R02:P01"}
+    rate = drafts["M5:R01:P10"]
+    assert rate.title == "Списания выше сети: Руккола" and rate.evidence["network_rate"] == "0.0500"
+    # 35 kg × 900 ₽ written off; above the network: 1 − 5 % / 25 % = 80 % of it, over 28 days → per 30 days
+    assert rate.effect_rub_month == Decimal(27000)
+    weekdays = drafts["M5:R02:P01"]
+    assert weekdays.title == "Списания в понедельник и вторник: Сыр"
+    assert weekdays.evidence["weeks_held"] == 4 and weekdays.evidence["share"] == "1.0000"
+    view = views.build(weekdays, f)
+    assert view is not None and view["table"]["rows"][0][0] == "пн"
+
+
+def test_m4_write_offs_before_counts_and_mixed_up_products() -> None:
+    f, rs, cheese, _ = _facts(restaurants=2)
+    grana = uuid4()
+    f.products[grana] = ProductInfo("P03", "Грана", "Сыры", "kg", 30, False)
+    counts = [date(2026, 6, 1), date(2026, 7, 1), date(2026, 8, 1), date(2026, 9, 1)]
+    f.receipts = [
+        ReceiptRow(r, date(2026, 6, 15), p, None, Decimal(100), Decimal(60000))
+        for r in rs
+        for p in (cheese, grana)
+    ]
+    for r in rs:
+        day = counts[0] + timedelta(days=1)
+        while day <= counts[-1]:
+            # R01 keeps the write-offs for the two days before each count; R02 writes off every day.
+            if r == rs[1] or any(1 <= (c - day).days <= 2 for c in counts[1:]):
+                f.write_offs.append(
+                    WriteOffRow(r, day, cheese, Decimal("0.5") if r == rs[1] else Decimal(5), "spoilage")
+                )
+            day += timedelta(days=1)
+    for r in rs:
+        for i, c in enumerate(counts):
+            # Both lose about 2 % against the books; at R02's last count the cheeses are mixed up by 1 kg.
+            swap = Decimal(1) if (r == rs[1] and i == len(counts) - 1) else Decimal(0)
+            f.counts.append(CountRow(r, c, cheese, Decimal(20), Decimal("19.6") + swap if i else Decimal(20)))
+            f.counts.append(CountRow(r, c, grana, Decimal(20), Decimal("19.6") - swap if i else Decimal(20)))
+    drafts = {d.key: d for d in m4.detect(f, CostBook(f.receipts))}
+    assert set(drafts) == {"M4:R01:pre-count", "M4:R02:P01-P03"}
+    pre = drafts["M4:R01:pre-count"]
+    assert (
+        pre.evidence["share"] == "1.0000"
+        and pre.title == "100% списаний оформлено за 2 дня до инвентаризации"
+    )
+    mixed = drafts["M4:R02:P01-P03"]
+    assert (
+        mixed.title == "Пересорт: сыр и грана" and mixed.evidence["products"]["P01"]["off_usual"] == "1.000"
+    )
+    assert views.build(mixed, f) is not None and views.build(pre, f) is not None
+
+
 def _receipts(
     f: Facts, r: UUID, product: UUID, supplier: UUID, price: str, qty: str = "10", n: int = 6
 ) -> None:
@@ -298,18 +374,18 @@ def test_engine_finds_planted_problems_and_review_gates_directors(
         )
         assert client.post("/api/analytics/run", headers=analyst).status_code == 403
         run = client.post("/api/analytics/run", headers=hq).json()
-        assert run["created"] == 9
+        assert run["created"] == 13
         # Idempotent: the same data gives the same findings, updated in place.
         assert client.post("/api/analytics/run", headers=hq).json() | {} == {
             "created": 0,
-            "updated": 9,
+            "updated": 13,
             "removed": 0,
-            "drafts": 9,
+            "drafts": 13,
         }
 
         pending = client.get("/api/findings", headers=hq, params={"review": "pending"}).json()
         by_key = {(f["module"], f["title"]): f for f in pending}
-        assert len(pending) == 9 and all(f["review_status"] == "pending" for f in pending)
+        assert len(pending) == 13 and all(f["review_status"] == "pending" for f in pending)
         assert {t for _, t in by_key} == {
             "Перерасход по техкарте: Сыр Моцарелла",
             "Перерасход по техкарте: Лосось охлажденный",
@@ -320,7 +396,22 @@ def test_engine_finds_planted_problems_and_review_gates_directors(
             "Цена выросла по всей сети: Лосось охлажденный",
             "«Тыквенный суп» продается без техкарты",
             "Закупки из 1С:ERP загружены только по 11.10",
+            "59% списаний оформлено за 2 дня до инвентаризации",
+            "Пересорт: сыр пармезан и сыр грана падано",
+            "Списания выше сети: Руккола",
+            "Списания в понедельник и вторник: Хлеб чиабатта",
         }
+        # M4 and M5: the planted habits, each recomputed from the rows by the check.
+        for module, title in (
+            ("M4", "59% списаний оформлено за 2 дня до инвентаризации"),
+            ("M4", "Пересорт: сыр пармезан и сыр грана падано"),
+            ("M5", "Списания выше сети: Руккола"),
+            ("M5", "Списания в понедельник и вторник: Хлеб чиабатта"),
+        ):
+            found = by_key[(module, title)]
+            check = client.get(f"/api/findings/{found['id']}/verification", headers=analyst).json()
+            assert check["supported"] and all(c["ok"] for c in check["checks"]), check
+            assert all(r["passed"] for r in check["rules"]), check
         # M7: both planted data problems, each recomputed from the rows by the check.
         for title in (
             "«Тыквенный суп» продается без техкарты",
@@ -430,9 +521,11 @@ def test_review_can_be_switched_off(client: TestClient, network: Network, demo: 
     client.put("/api/settings/norms", headers=hq, json={**body, "review_findings": False})
     client.post("/api/analytics/run", headers=hq)
     director = login(client, "r01@a.ru")
-    assert [f["title"] for f in client.get("/api/findings", headers=director).json()] == [
-        "Перерасход по техкарте: Сыр Моцарелла"
-    ]
+    assert {f["title"] for f in client.get("/api/findings", headers=director).json()} == {
+        "Перерасход по техкарте: Сыр Моцарелла",
+        "Списания выше сети: Руккола",
+        "59% списаний оформлено за 2 дня до инвентаризации",
+    }
 
 
 def test_engine_run_is_hq_admin_only(network: Network) -> None:
