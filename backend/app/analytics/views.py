@@ -42,6 +42,11 @@ CAUSES = {
         "Поставщик возит в этот ресторан другую позицию того же товара (например, другой жирности или "
         "калибра), а в справочнике они сведены в одну: проверьте синхронизацию номенклатуры",
     ],
+    "M7:no_recipe": ["Блюдо ввели в меню, а техкарту в iiko не завели или не загрузили"],
+    "M7:gap": [
+        "Выгрузку забыли сделать или загрузить",
+        "Выгрузка из учетной системы упала с ошибкой",
+    ],
     "M3:contract": ["Поставщик выставляет цену выше договорной"],
     "M3:growth": ["Поставщик поднял цену для всей сети"],
 }
@@ -386,6 +391,45 @@ def _m3(d: Draft, facts: Facts) -> dict[str, Any]:
     }
 
 
+def _m7(d: Draft, facts: Facts) -> dict[str, Any]:
+    ev = d.evidence
+    if ev["kind"] == "no_recipe":
+        return {
+            "summary": d.headline,
+            "causes": CAUSES["M7:no_recipe"],
+            "confidence_note": "Продажи r_keeper и загруженные техкарты",
+            "metric": {
+                "label": "Доля выручки сети без техкарты",
+                "value": _ru(_pp(ev["revenue_share"]) or 0, "%"),
+                "benchmark": f"продается в {len(ev['restaurants'])} ресторанах",
+            },
+            "table": {
+                "title": "Где продается",
+                "columns": ["Ресторан"],
+                "rows": [[facts.restaurant_names.get(code, code)] for code in ev["restaurants"]],
+            },
+        }
+    last, network_last = ev["last"], ev["network_last"]
+    return {
+        "summary": d.headline,
+        "causes": CAUSES["M7:gap"],
+        "confidence_note": "Даты загруженных файлов этого ресторана и сети",
+        "metric": {
+            "label": "Нет данных",
+            "value": f"{ev['gap_days']} дн.",
+            "benchmark": f"обычно перерыв {_ru(float(ev['usual_pause_days']), 'дн.')}",
+        },
+        "table": {
+            "title": "Последний загруженный день",
+            "columns": ["", "Дата"],
+            "rows": [
+                ["Этот ресторан", f"{last[8:10]}.{last[5:7]}"],
+                ["Другие рестораны", f"{network_last[8:10]}.{network_last[5:7]}"],
+            ],
+        },
+    }
+
+
 def build(d: Draft, facts: Facts) -> dict[str, Any] | None:
-    builder = {"M1": _m1, "M2": _m2, "M3": _m3}.get(d.module)
+    builder = {"M1": _m1, "M2": _m2, "M3": _m3, "M7": _m7}.get(d.module)
     return builder(d, facts) if builder else None

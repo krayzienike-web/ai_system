@@ -15,10 +15,12 @@ import { MODULE_TITLE } from "../../lib/format";
 import { useViewer } from "../../lib/useViewer";
 import { useUi } from "../../state/ui";
 
-const MODULES: { code: string; title: string }[] = [
-  { code: "ALL", title: "Общие для всех модулей" },
-  ...["M1", "M2", "M3"].map((code) => ({ code, title: `${code} · ${MODULE_TITLE[code]}` })),
-];
+/** The blocks follow the parameters the server has: a new module's thresholds appear without a UI change. */
+const modulesOf = (params: EngineParam[]) =>
+  [...new Set(params.map((p) => p.module))].map((code) => ({
+    code,
+    title: code === "ALL" ? "Общие для всех модулей" : `${code} · ${MODULE_TITLE[code] ?? ""}`,
+  }));
 
 const show = (v: string) => v.replace(".", ",");
 const same = (a: string, b: string) =>
@@ -72,7 +74,7 @@ function EngineParamsForm({ params }: { params: EngineParam[] }) {
         answer="Когда находка считается находкой: суммы, проценты, окна сравнения. Значения по умолчанию описаны в документе по движку; здесь их можно поменять для своей сети. Новые значения применятся при следующем пересчете находок."
       >
         <div className="space-y-3">
-          {MODULES.map((m) => {
+          {modulesOf(params).map((m) => {
             const items = params.filter((p) => p.module === m.code);
             if (!items.length) return null;
             const own = items.filter((p) => !same(p.value, p.default)).length;

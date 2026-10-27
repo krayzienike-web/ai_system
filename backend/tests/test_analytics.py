@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
-from app.analytics import engine, m1, m2, m3, views
+from app.analytics import engine, m1, m2, m3, m7, views
 from app.analytics.costs import CostBook
 from app.analytics.facts import (
     ContractRow,
@@ -157,6 +157,42 @@ def test_m1_shows_usage_below_the_recipe_as_a_quality_risk() -> None:
     assert m1.detect(f, small, Norms()) == []
 
 
+def test_m7_dish_without_a_recipe_and_missing_exports() -> None:
+    f, rs, cheese, pizza = _facts(restaurants=3)
+    soup = uuid4()
+    f.menu[soup] = MenuInfo("M12", "Суп", "Супы", Decimal(420))
+    end = date(2026, 10, 18)
+    days = [end - timedelta(days=i) for i in range(40)]
+    f.sales = [SaleRow(r, d, pizza, Decimal(10), Decimal(5800)) for r in rs for d in days]
+    f.sales += [SaleRow(rs[0], d, soup, Decimal(2), Decimal(840)) for d in days[:20]]
+    # Receipts every other day; R03's stop 8 days before the others' — far longer than its usual pause.
+    f.receipts = [
+        ReceiptRow(r, d, cheese, None, Decimal(5), Decimal(3000))
+        for r in rs
+        for d in days[::2]
+        if not (r == rs[2] and d > end - timedelta(days=8))
+    ]
+    drafts = {d.key: d for d in m7.detect(f)}
+    assert set(drafts) == {"M7:net:M12", "M7:R03:receipts"}
+    no_recipe = drafts["M7:net:M12"]
+    assert no_recipe.title == "«Суп» продается без техкарты" and no_recipe.restaurant is None
+    # 20 days × 840 ₽ out of the last 28 days' revenue of the network
+    assert no_recipe.evidence["revenue_share"] == str(
+        (Decimal(20 * 840) / (Decimal(28 * 3 * 5800) + Decimal(20 * 840))).quantize(Decimal("0.0001"))
+    )
+    gap = drafts["M7:R03:receipts"]
+    assert (
+        gap.restaurant == rs[2] and gap.evidence["gap_days"] == 8 and gap.evidence["usual_pause_days"] == "2"
+    )
+
+    # Once the recipe is loaded, the dish is fine; a pause like the usual one is not a missing export.
+    f.recipe_lines.append(Line(soup, cheese, Decimal("0.05"), date(2026, 9, 1)))
+    f.receipts = [x for x in f.receipts if x.restaurant != rs[2]] + [
+        ReceiptRow(rs[2], d, cheese, None, Decimal(5), Decimal(3000)) for d in days[2::2]
+    ]
+    assert m7.detect(f) == []
+
+
 def _receipts(
     f: Facts, r: UUID, product: UUID, supplier: UUID, price: str, qty: str = "10", n: int = 6
 ) -> None:
@@ -262,18 +298,18 @@ def test_engine_finds_planted_problems_and_review_gates_directors(
         )
         assert client.post("/api/analytics/run", headers=analyst).status_code == 403
         run = client.post("/api/analytics/run", headers=hq).json()
-        assert run["created"] == 7
+        assert run["created"] == 9
         # Idempotent: the same data gives the same findings, updated in place.
         assert client.post("/api/analytics/run", headers=hq).json() | {} == {
             "created": 0,
-            "updated": 7,
+            "updated": 9,
             "removed": 0,
-            "drafts": 7,
+            "drafts": 9,
         }
 
         pending = client.get("/api/findings", headers=hq, params={"review": "pending"}).json()
         by_key = {(f["module"], f["title"]): f for f in pending}
-        assert len(pending) == 7 and all(f["review_status"] == "pending" for f in pending)
+        assert len(pending) == 9 and all(f["review_status"] == "pending" for f in pending)
         assert {t for _, t in by_key} == {
             "Перерасход по техкарте: Сыр Моцарелла",
             "Перерасход по техкарте: Лосось охлажденный",
@@ -282,7 +318,22 @@ def test_engine_finds_planted_problems_and_review_gates_directors(
             "Поставщик продает дороже, чем другим: Сливки 33%",
             "Фудкост выше целевого: Лосось на гриле",
             "Цена выросла по всей сети: Лосось охлажденный",
+            "«Тыквенный суп» продается без техкарты",
+            "Закупки из 1С:ERP загружены только по 11.10",
         }
+        # M7: both planted data problems, each recomputed from the rows by the check.
+        for title in (
+            "«Тыквенный суп» продается без техкарты",
+            "Закупки из 1С:ERP загружены только по 11.10",
+        ):
+            m7 = by_key[("M7", title)]
+            v7 = client.get(f"/api/findings/{m7['id']}/verification", headers=analyst).json()
+            assert v7["supported"] and all(c["ok"] for c in v7["checks"]), v7
+            assert all(r["passed"] for r in v7["rules"]), v7
+        soup = by_key[("M7", "«Тыквенный суп» продается без техкарты")]
+        assert soup["restaurant_id"] is None and soup["headline"].startswith(
+            "С 01.09 блюдо продается без техкарты"
+        )
         salmon_dish = by_key[("M2", "Фудкост выше целевого: Лосось на гриле")]
         assert salmon_dish["restaurant_id"] is None and "+40% к цене закупки" in salmon_dish["headline"]
         vs = client.get(f"/api/findings/{salmon_dish['id']}/verification", headers=analyst).json()

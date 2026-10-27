@@ -11,7 +11,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.analytics import params
@@ -46,6 +46,8 @@ def verify(session: Session, finding: Finding) -> dict[str, Any]:
         return _m3_growth(session, finding)
     if finding.module == "M3" and (finding.evidence or {}).get("kind") == "contract":
         return _m3_contract(session, finding)
+    if finding.module == "M7" and (finding.evidence or {}).get("kind") in ("no_recipe", "gap"):
+        return _m7(session, finding)
     return {
         "module": finding.module,
         "supported": False,
@@ -1125,5 +1127,152 @@ def _m3_contract(session: Session, f: Finding) -> dict[str, Any]:
         "interpretation": [
             "Проверьте, не менялся ли договор: новую цену загрузите файлом «Договорные цены».",
             "Переплату по накладным можно предъявить поставщику: номера документов — в таблице.",
+        ],
+    }
+
+
+def _m7(session: Session, f: Finding) -> dict[str, Any]:
+    """Data quality: the same facts recomputed from the stored rows."""
+    ev = f.evidence or {}
+    cfg = params.load(session)
+    codes = dict(session.execute(select(Restaurant.id, Restaurant.code)).all())
+    if ev.get("kind") == "no_recipe":
+        item = session.execute(select(MenuItem).where(MenuItem.code == ev["menu_item"])).scalar_one_or_none()
+        if item is None:
+            return {"module": "M7", "supported": False, "note": "Блюда больше нет в справочнике"}
+        first, end = (date.fromisoformat(d) for d in ev["window"])
+        recipe_from = session.execute(
+            select(func.min(RecipeLine.valid_from)).where(RecipeLine.menu_item_id == item.id)
+        ).scalar_one_or_none()
+        sales = session.execute(
+            select(Sale.restaurant_id, func.sum(Sale.qty), func.sum(Sale.revenue))
+            .where(Sale.menu_item_id == item.id, Sale.day >= first, Sale.day <= end)
+            .group_by(Sale.restaurant_id)
+        ).all()
+        total = session.execute(
+            select(func.sum(Sale.revenue)).where(Sale.day >= first, Sale.day <= end)
+        ).scalar_one() or Decimal(0)
+        revenue = sum((r for _, _, r in sales), Decimal(0))
+        share = revenue / total if total else Decimal(0)
+        without = recipe_from is None or recipe_from > end
+        return {
+            "module": "M7",
+            "supported": True,
+            "object": item.name,
+            "restaurant": "Вся сеть",
+            "period": ev["window"],
+            "formula": "Доля = выручка блюда / выручка сети за окно; техкарта — строки ТТК блюда, "
+            "действующие в окне",
+            "steps": [
+                {
+                    "id": "sales",
+                    "label": f"Продажи блюда за {first:%d.%m}–{end:%d.%m} по ресторанам",
+                    "value": rub(revenue),
+                    "unit": "",
+                    "rows": [
+                        {
+                            "restaurant": codes.get(rid, "—"),
+                            "portions": _q(q, Decimal(1)),
+                            "amount": _q(r, Decimal("0.01")),
+                        }
+                        for rid, q, r in sorted(sales, key=lambda x: codes.get(x[0], ""))
+                    ],
+                }
+            ],
+            "result": [
+                {"label": "Доля выручки сети", "value": pct(share), "unit": ""},
+                {
+                    "label": "Техкарта действует с",
+                    "value": None if recipe_from is None else recipe_from.isoformat(),
+                    "unit": "",
+                },
+            ],
+            "rules": [
+                {
+                    "rule": "Блюдо продавалось в окне",
+                    "value": str(len(sales)),
+                    "threshold": "1",
+                    "passed": bool(sales),
+                },
+                {
+                    "rule": "Действующей техкарты нет",
+                    "value": "нет" if without else "есть",
+                    "threshold": "нет",
+                    "passed": without,
+                },
+            ],
+            "checks": [
+                {
+                    "check": "Пересчет из исходных строк совпадает с тем, что посчитал движок",
+                    "ok": abs(Decimal(ev["revenue_share"]) - share) < Decimal("0.0005"),
+                    "note": f"движок: {pct(Decimal(ev['revenue_share']))}, пересчет: {pct(share)}",
+                }
+            ],
+            "interpretation": [
+                "Продукты блюда без техкарты списываются в расход, но ни одна техкарта их не объясняет — "
+                "в M1 они выглядят как потери.",
+                "Прежде чем подтверждать: проверьте, нет ли техкарты под другим названием блюда.",
+            ],
+        }
+    model: type[Sale] | type[Receipt] = Sale if ev["source"] == "sales" else Receipt
+    restaurant = session.get(Restaurant, f.restaurant_id)
+    if restaurant is None:
+        return {"module": "M7", "supported": False, "note": "Ресторана больше нет"}
+    last = session.execute(
+        select(func.max(model.day)).where(model.restaurant_id == restaurant.id)
+    ).scalar_one_or_none()
+    by_restaurant = session.execute(
+        select(model.restaurant_id, func.max(model.day)).group_by(model.restaurant_id)
+    ).all()
+    network_last = max((d for _, d in by_restaurant), default=None)
+    gap = (network_last - last).days if last and network_last else 0
+    return {
+        "module": "M7",
+        "supported": True,
+        "object": "Продажи" if ev["source"] == "sales" else "Закупки",
+        "restaurant": restaurant.name,
+        "period": [
+            f.period_from.isoformat() if f.period_from else None,
+            f.period_to.isoformat() if f.period_to else None,
+        ],
+        "formula": "Пауза = последний день с данными в сети − последний день с данными ресторана",
+        "steps": [
+            {
+                "id": "last_days",
+                "label": "Последний загруженный день по ресторанам",
+                "value": None,
+                "unit": "",
+                "rows": [
+                    {"restaurant": codes.get(rid, "—"), "day": d.isoformat()}
+                    for rid, d in sorted(by_restaurant, key=lambda x: codes.get(x[0], ""))
+                ],
+            }
+        ],
+        "result": [{"label": "Дней без данных", "value": str(gap), "unit": ""}],
+        "rules": [
+            {
+                "rule": "Данных нет дольше порога",
+                "value": str(gap),
+                "threshold": str(cfg.M7_GAP_DAYS),
+                "passed": gap >= cfg.M7_GAP_DAYS,
+            },
+            {
+                "rule": "Пауза длиннее обычной для ресторана",
+                "value": f"{gap} дн.",
+                "threshold": f"{cfg.M7_GAP_TIMES} × {ev['usual_pause_days']} дн.",
+                "passed": gap > cfg.M7_GAP_TIMES * Decimal(ev["usual_pause_days"]),
+            },
+        ],
+        "checks": [
+            {
+                "check": "Пересчет из исходных строк совпадает с тем, что посчитал движок",
+                "ok": gap == ev["gap_days"],
+                "note": f"движок: {ev['gap_days']} дн., пересчет: {gap} дн.",
+            }
+        ],
+        "interpretation": [
+            "Пока данных нет, модули не видят цены, приходы или продажи этих дней: находки по ресторану "
+            "неполные.",
+            "Если ресторан закрывался — отклоните находку с причиной «Не проблема».",
         ],
     }

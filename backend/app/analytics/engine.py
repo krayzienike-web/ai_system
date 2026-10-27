@@ -12,7 +12,7 @@ from uuid import UUID
 from sqlalchemy import delete, select, text
 from sqlalchemy.orm import Session
 
-from app.analytics import kpi, m1, m2, m3, params, views
+from app.analytics import kpi, m1, m2, m3, m7, params, views
 from app.analytics.costs import CostBook
 from app.analytics.drafts import Draft
 from app.analytics.facts import Facts, load_facts
@@ -29,8 +29,8 @@ from app.tenancy.audit import audit
 from app.tenancy.context import AccessContext
 from app.tenancy.permissions import Permission
 
-ALGORITHM_VERSION = "engine-2"  # M1: peers by nearest periods, usage below the recipe
-MODULES = ("M1", "M2", "M3")  # modules this version runs; findings of other modules are left alone
+ALGORITHM_VERSION = "engine-3"  # M7: dishes without a recipe, missing exports
+MODULES = ("M1", "M2", "M3", "M7")  # modules this version runs; findings of other modules are left alone
 
 
 @dataclass(frozen=True)
@@ -52,6 +52,7 @@ def analyse(facts: Facts, norms: Norms, cfg: EngineParams = DEFAULT) -> tuple[li
         + m3.detect(facts, cfg)
         + m3.detect_contracts(facts, cfg)
         + m3.detect_network_growth(facts, cfg)
+        + m7.detect(facts, cfg)
     )
     for d in drafts:
         d.view = views.build(d, facts)

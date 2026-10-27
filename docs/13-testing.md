@@ -111,11 +111,12 @@
 | TC-ENG-07 | Параметры: перевод единиц (75 % ↔ 0,75), значения сети поверх умолчаний, умолчания в допустимых границах | `test_analytics_units.py::test_params_*`, `test_every_default_lies_within_its_editable_range` | ✅ |
 | TC-ENG-08 | Параметры задаются для своей сети и меняют находки; меняет только администратор | `test_engine_params_are_set_per_network_and_change_the_findings` | ✅ |
 | TC-ENG-09 | Пересчет запускает только администратор УК | `test_engine_run_is_hq_admin_only` | ✅ |
-| TC-ENG-10 | На демо-сети находится 7 заложенных проблем; повторный пересчет идемпотентен | `test_engine_finds_planted_problems_and_review_gates_directors` | ✅ |
+| TC-ENG-10 | На демо-сети находится 9 заложенных проблем; повторный пересчет идемпотентен | `test_engine_finds_planted_problems_and_review_gates_directors` | ✅ |
 | TC-ENG-11 | Движок не выдает две находки с одним ключом | проверка в `engine.run` | 🟡 (нет отдельного теста) |
 | TC-ENG-12 | Удаление устаревших находок не трогает находки с задачами и проверками | — | ⬜ |
 | TC-ENG-13 | Пересчет на 100+ ресторанах укладывается во время | — | ⬜ (архитектурное ревью) |
 | TC-ENG-14 | M1 сравнивает ресторан с сетью, когда у ресторанов свои дни инвентаризаций (Q15); слишком далекие периоды не сравниваются | `test_m1_compares_restaurants_counting_on_their_own_days` | ✅ |
+| TC-ENG-16 | M7 находит блюдо без техкарты и пропуск выгрузки ресторана; обычная пауза в закупках и загруженная техкарта — не находка; на демо-сети — обе заложенные аномалии, сверка проходит | `test_m7_dish_without_a_recipe_and_missing_exports`, `test_engine_finds_planted_problems_and_review_gates_directors` | ✅ |
 | TC-ENG-15 | M1 показывает «Расход меньше техкарты» как риск качества без рублей; мелкое отклонение и малый товар — нет (E3) | `test_m1_shows_usage_below_the_recipe_as_a_quality_risk` | 🟡 (нет теста сверки по шагам) |
 
 ### Проверка находок (REV)

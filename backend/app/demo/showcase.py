@@ -1,6 +1,6 @@
 """The demo network's work history: what the prototype shows besides the engine's findings (ADR 0007).
 
-- Findings an analyst entered by hand for the planted anomalies of modules that do not exist yet (M4, M5, M7).
+- Findings an analyst entered by hand for the planted anomalies of modules that do not exist yet (M4, M5).
   Their figures are computed here from the loaded data, and their keys are the ones the engine will give
   the same problems: when a module arrives, its run takes them over.
 - Work on findings: tasks (open, overdue, done with a report), checks (proposed, running, completed with
@@ -238,33 +238,6 @@ def hand_made_findings(session: Session, tenant_id: UUID, facts: Facts, today: d
         },
     )
 
-    # M7: purchases of R09 not uploaded for the last days.
-    last_receipt = max(r.day for r in facts.receipts if r.restaurant == rid["R09"])
-    gap = (data.end - last_receipt).days
-    out["gap"] = _finding(
-        session,
-        tenant_id,
-        key="M7:R09:receipts",
-        module="M7",
-        restaurant_id=rid["R09"],
-        kind="problem",
-        process="accounting",
-        title=f"Закупки из 1С:ERP загружены только по {last_receipt:%d.%m}",
-        headline=f"Закупок нет за последние {gap} дней — цены и приходы за это время не проверены",
-        effect_rub_month=None,
-        effect_note="цены за неделю не проверены",
-        confidence="high",
-        period_from=last_receipt + timedelta(days=1),
-        period_to=data.end,
-        found_on=today - timedelta(days=2),
-        actions=["Загрузить закупки за пропущенные дни"],
-        view={
-            "summary": "Без закупок система не видит цены и приходы этих дней.",
-            "causes": [],
-            "confidence_note": "Даты загруженных файлов; заведено аналитиком",
-        },
-    )
-
     # M4: parmesan and grana mixed up at R11's last count.
     last = max(c.day for c in facts.counts if c.restaurant == rid["R11"])
     diff = {
@@ -306,38 +279,6 @@ def hand_made_findings(session: Session, tenant_id: UUID, facts: Facts, today: d
         },
     )
 
-    # M7: the pumpkin soup sells without a recipe.
-    soup = next(m for m, info in facts.menu.items() if info.code == "M12")
-    revenue = sum(
-        (s.revenue for s in facts.sales if s.menu_item == soup and data.start <= s.day <= data.end), D(0)
-    )
-    all_revenue = sum((s.revenue for s in facts.sales if data.start <= s.day <= data.end), D(0))
-    out["no_recipe"] = _finding(
-        session,
-        tenant_id,
-        key="M7:net:M12",
-        module="M7",
-        restaurant_id=None,
-        kind="problem",
-        process="accounting",
-        title="«Тыквенный суп» продается без техкарты",
-        headline=(
-            f"С 01.09 суп продается без техкарты: {_r(revenue / all_revenue * 100)}% выручки сети, расход "
-            "продуктов на него система не видит"
-        ).replace(".", ",", 1),
-        effect_rub_month=None,
-        effect_note="фудкост сети считается неточно",
-        confidence="high",
-        period_from=date(2026, 9, 1),
-        period_to=data.end,
-        found_on=today - timedelta(days=30),
-        actions=["Завести техкарту «Тыквенного супа» в iiko"],
-        view={
-            "summary": "Блюдо без техкарты: его продукты уходят «в никуда» и попадают в потери.",
-            "causes": ["Сезонное блюдо ввели без техкарты"],
-            "confidence_note": "Продажи r_keeper и справочник техкарт; заведено аналитиком",
-        },
-    )
     return out
 
 

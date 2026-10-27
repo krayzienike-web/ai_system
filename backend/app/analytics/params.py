@@ -46,6 +46,11 @@ class EngineParams:
     M3_NET_WINDOW_DAYS: int = 28  # network-wide growth: the last 4 weeks …
     M3_NET_COMPARE_DAYS: int = 91  # … against the same 4 weeks a quarter earlier
     M3_NET_GROWTH: Decimal = Decimal("0.10")  # 10 % more for the whole network
+    # M7 — data quality
+    M7_WINDOW_DAYS: int = 28  # a dish sold without a recipe within the last 4 weeks
+    M7_GAP_DAYS: int = 5  # an export missing for this many days, while other restaurants have them …
+    M7_GAP_TIMES: Decimal = Decimal(2)  # … and longer than twice the restaurant's usual pause between days
+    M7_HISTORY_DAYS: int = 56  # the usual pause: over the last 8 weeks of the restaurant's data
 
 
 DEFAULT = EngineParams()
@@ -238,6 +243,27 @@ DEFS: tuple[ParamDef, ...] = (
     ),
     ParamDef("M3_NET_WINDOW_DAYS", "M3", "Окно для роста цены по сети", "дней", "", D(7), D(90)),
     ParamDef("M3_NET_COMPARE_DAYS", "M3", "Сравниваем с периодом", "дней назад", "", D(28), D(365)),
+    ParamDef(
+        "M7_WINDOW_DAYS", "M7", "Блюда без техкарты ищем в продажах за последние", "дней", "", D(7), D(90)
+    ),
+    ParamDef(
+        "M7_GAP_DAYS",
+        "M7",
+        "Выгрузка не загружена, если данных нет хотя бы",
+        "дней",
+        "при том что другие рестораны уже загрузили эти дни",
+        D(2),
+        D(60),
+    ),
+    ParamDef(
+        "M7_GAP_TIMES",
+        "M7",
+        "…и пауза длиннее обычной для ресторана в",
+        "раза",
+        "закупки бывают не каждый день: сравниваем с обычной паузой за 8 недель",
+        D(1),
+        D(10),
+    ),
 )
 BY_KEY = {d.key: d for d in DEFS}
 assert set(BY_KEY) <= {f.name for f in fields(EngineParams)}
