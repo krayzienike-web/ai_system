@@ -2,7 +2,6 @@ import { ApiError } from "./client";
 // Data import in the standalone demo (no backend). A small copy of the server's rules
 // (backend/app/imports): the header is found by column names, totals are skipped, the file type is
 // recognised by its header. The server stays the source of truth; this only lets the prototype be clicked.
-import { FRESHNESS, RESTAURANTS } from "../mock/data";
 import type {
   AffectedFiles,
   CatalogOption,
@@ -522,45 +521,17 @@ export const demoBatches = (restaurantId: string | null) =>
     .filter((b) => !restaurantId || b.restaurant_id === restaurantId)
     .map((b) => ({ ...b }));
 
-const SOURCE_OF: Record<string, "r_keeper" | "iiko" | "erp"> = {
-  sales: "r_keeper",
-  receipts: "erp",
-  write_offs: "iiko",
-  inventory_counts: "iiko",
-};
-
-export function demoFreshness(restaurantId: string | null): Freshness[] {
-  return RESTAURANTS.filter(
-    (r) => !restaurantId || r.code === restaurantId,
-  ).flatMap((r) =>
-    Object.entries(SOURCE_OF).map(([template, source]) => {
-      const mock = FRESHNESS.find(
-        (f) => f.restaurantId === r.code && f.source === source,
-      )!;
-      const published = batches.find(
-        (b) =>
-          b.restaurant_id === r.code &&
-          b.template === template &&
-          b.status === "published" &&
-          b.period_to,
-      );
-      const last =
-        template === "inventory_counts"
-          ? "2026-10-01"
-          : `2026-${mock.lastDate.slice(3, 5)}-${mock.lastDate.slice(0, 2)}`;
-      const date =
-        published?.period_to && published.period_to > last
-          ? published.period_to
-          : last;
-      return {
-        restaurant_id: r.code,
-        template,
-        last_date: date,
-        status:
-          template === "inventory_counts" || date >= "2026-10-12"
-            ? "good"
-            : "stale",
-      };
-    }),
-  );
+/** The server's freshness as recorded, moved forward by files published in this prototype session. */
+export function demoFreshness(recorded: Freshness[]): Freshness[] {
+  return recorded.map((f) => {
+    const published = batches.find(
+      (b) =>
+        b.restaurant_id === f.restaurant_id &&
+        b.template === f.template &&
+        b.status === "published" &&
+        b.period_to &&
+        (!f.last_date || b.period_to > f.last_date),
+    );
+    return published ? { ...f, last_date: published.period_to, status: "good" } : f;
+  });
 }

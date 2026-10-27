@@ -18,7 +18,21 @@ import type {
   ReviewStatus,
   Verification,
   EngineParam,
+  ApiTask,
+  AppContext,
+  Badges,
+  ChatAnswer,
+  Check,
+  CheckDetail,
+  CheckDraft,
+  FindingDetail,
+  FindingBoard,
+  HeadReport,
+  NetworkOverview,
+  RestaurantRow,
+  RestaurantWeek,
 } from "./types";
+import type { PeriodChoice } from "../state/ui";
 
 export const useMe = () =>
   useQuery({ queryKey: ["me"], queryFn: () => api<Me>("/auth/me") });
@@ -167,10 +181,6 @@ export const useVerification = (id: string) =>
     queryFn: () => api<Verification>(`/findings/${id}/verification`),
   });
 
-/** The working list of findings from the API: checked engine findings (and ones made by hand). */
-export const useCheckedFindings = () =>
-  useQuery({ queryKey: ["checked-findings"], queryFn: () => api<ApiFinding[]>("/findings") });
-
 export function useReviewFinding() {
   const client = useQueryClient();
   return useMutation({
@@ -187,10 +197,7 @@ export function useReviewFinding() {
         method: "POST",
         body: JSON.stringify(body),
       }),
-    onSuccess: () => {
-      void client.invalidateQueries({ queryKey: ["review"] });
-      void client.invalidateQueries({ queryKey: ["checked-findings"] });
-    },
+    onSuccess: () => refreshWork(client),
   });
 }
 
@@ -198,10 +205,7 @@ export function useRunAnalytics() {
   const client = useQueryClient();
   return useMutation({
     mutationFn: () => api<AnalyticsRun>("/analytics/run", { method: "POST" }),
-    onSuccess: () => {
-      void client.invalidateQueries({ queryKey: ["review"] });
-      void client.invalidateQueries({ queryKey: ["checked-findings"] });
-    },
+    onSuccess: () => refreshWork(client),
   });
 }
 
@@ -224,3 +228,143 @@ export function useSaveEngineParams() {
     onSuccess: (saved) => client.setQueryData(["engine-params"], saved),
   });
 }
+
+// ------------------------------------------------------------------ screens (ADR 0007: the API computes, screens draw)
+
+/** After an action, everything that is computed from the work on findings is stale. */
+const STATIC = new Set(["me", "restaurants", "import-templates", "catalog", "norms", "engine-params", "context"]);
+function refreshWork(client: ReturnType<typeof useQueryClient>) {
+  return client.invalidateQueries({ predicate: (q) => !STATIC.has(String(q.queryKey[0])) });
+}
+
+/** `?preset=week` or `?date_from=…&date_to=…` for the period chosen in the header. */
+export function periodQuery(period: PeriodChoice): string {
+  return "preset" in period
+    ? `preset=${period.preset}`
+    : `date_from=${period.from}&date_to=${period.to}`;
+}
+
+export const useAppContext = () =>
+  useQuery({ queryKey: ["context"], queryFn: () => api<AppContext>("/overview/context"), staleTime: 60_000 });
+
+export const useBadges = () =>
+  useQuery({ queryKey: ["badges"], queryFn: () => api<Badges>("/overview/badges") });
+
+export const useNetworkOverview = (period: PeriodChoice) =>
+  useQuery({
+    queryKey: ["overview", "network", period],
+    queryFn: () => api<NetworkOverview>(`/overview/network?${periodQuery(period)}`),
+  });
+
+export const useRestaurantWeek = (code: string) =>
+  useQuery({
+    queryKey: ["overview", "restaurant", code],
+    queryFn: () => api<RestaurantWeek>(`/overview/restaurants/${code}`),
+  });
+
+export const useRestaurantRows = () =>
+  useQuery({ queryKey: ["overview", "restaurants"], queryFn: () => api<RestaurantRow[]>("/overview/restaurants") });
+
+export interface BoardFilters {
+  kind?: "problem" | "opportunity";
+  process?: string;
+  restaurant?: string; // restaurant id or "net"
+  stage?: string;
+  late?: boolean;
+}
+
+export const useFindingBoard = (filters: BoardFilters) =>
+  useQuery({
+    queryKey: ["board", filters],
+    queryFn: () => {
+      const q = new URLSearchParams();
+      for (const [k, v] of Object.entries(filters)) if (v !== undefined && v !== false) q.set(k, String(v));
+      return api<FindingBoard>(`/overview/findings?${q}`);
+    },
+    placeholderData: (previous) => previous,
+  });
+
+export const useFindings = () =>
+  useQuery({ queryKey: ["findings"], queryFn: () => api<ApiFinding[]>("/findings") });
+
+export const useFinding = (id: string) =>
+  useQuery({ queryKey: ["finding", id], queryFn: () => api<FindingDetail>(`/findings/${id}`) });
+
+export const useTasks = (late = false) =>
+  useQuery({
+    queryKey: ["tasks", late],
+    queryFn: () => api<ApiTask[]>(late ? "/tasks?late=true" : "/tasks"),
+  });
+
+export interface NewTask {
+  title: string;
+  due_on: string;
+  finding_id?: string;
+  restaurant_ids?: string[];
+  checklist?: string[];
+}
+
+export function useCreateTasks() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (task: NewTask) => api<ApiTask[]>("/tasks", { method: "POST", body: JSON.stringify(task) }),
+    onSuccess: () => refreshWork(client),
+  });
+}
+
+export function useTaskAction() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, action, body }: { id: string; action: "start" | "complete" | "checklist" | "remind"; body?: unknown }) =>
+      api<ApiTask>(`/tasks/${id}/${action}`, { method: "POST", body: body ? JSON.stringify(body) : undefined }),
+    onSuccess: () => refreshWork(client),
+  });
+}
+
+export const useChecks = (status?: Check["status"]) =>
+  useQuery({
+    queryKey: ["checks", status ?? "all"],
+    queryFn: () => api<Check[]>(status ? `/checks?status=${status}` : "/checks"),
+  });
+
+export const useCheck = (id: string) =>
+  useQuery({ queryKey: ["check", id], queryFn: () => api<CheckDetail>(`/checks/${id}`) });
+
+export const useCheckDraft = (findingId: string) =>
+  useQuery({
+    queryKey: ["check-draft", findingId],
+    queryFn: () => api<CheckDraft>(`/checks/draft?finding_id=${findingId}`),
+  });
+
+export function useCheckAction() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, action }: { id: string; action: "launch" | "reject" | "rollout" }) =>
+      api<unknown>(`/checks/${id}/${action}`, { method: "POST" }),
+    onSuccess: () => refreshWork(client),
+  });
+}
+
+export function useProposeCheck() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { finding_id: string; action: string; control_ids: string[]; weeks: number }) =>
+      api<Check>("/checks", { method: "POST", body: JSON.stringify(body) }),
+    onSuccess: () => refreshWork(client),
+  });
+}
+
+export const useHeadReport = (period: PeriodChoice) =>
+  useQuery({
+    queryKey: ["report", period],
+    queryFn: () => api<HeadReport>(`/reports/head?${periodQuery(period)}`),
+  });
+
+export const useChatSuggestions = () =>
+  useQuery({ queryKey: ["chat-suggestions"], queryFn: () => api<string[]>("/chat/suggestions") });
+
+export const useAsk = () =>
+  useMutation({
+    mutationFn: (body: { question: string; finding_id?: string }) =>
+      api<ChatAnswer>("/chat", { method: "POST", body: JSON.stringify(body) }),
+  });

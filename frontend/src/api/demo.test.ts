@@ -1,13 +1,16 @@
-// The standalone prototype must follow the server's access rules (CLAUDE.md, principle 2).
+// The standalone prototype replays the server's answers and must follow the server's access rules
+// (ADR 0007; CLAUDE.md, principle 2).
 import { describe, expect, it } from "vitest";
 
 import { ApiError } from "./client";
 import { demoRequest } from "./demo";
-import type { ApiFinding, EngineParam, ImportBatch, Restaurant } from "./types";
+import snapshot from "./demo/snapshot.json";
+import type { ApiFinding, ApiTask, Check, EngineParam, ImportBatch, Restaurant } from "./types";
 
 const ADMIN = "admin@demo.local";
 const ANALYST = "analyst@demo.local";
 const DIRECTOR = "director1@demo.local"; // R01
+const users = snapshot.users as unknown as Record<string, { answers: Record<string, unknown> }>;
 
 const get = <T>(path: string, token: string) => demoRequest(path, {}, token) as T;
 const send = <T>(path: string, token: string, method: string, body?: unknown) =>
@@ -20,41 +23,75 @@ const status = (fn: () => unknown) => {
   }
   return 200;
 };
+/** Decimal strings compared as numbers: "12.50" and "12.5" are the same money. */
+const numbers = (value: unknown) =>
+  JSON.parse(JSON.stringify(value), (_, v: unknown) => (typeof v === "string" && /^-?\d+(\.\d+)?$/.test(v) ? Number(v) : v)) as unknown;
+const r01 = () => get<Restaurant[]>("/restaurants", DIRECTOR)[0]!;
+
+describe("demo replays the server", () => {
+  // Runs first: the actions below change the session's state.
+  it("filters the findings list exactly as the server did", () => {
+    for (const [email, { answers }] of Object.entries(users)) {
+      const variants = Object.keys(answers).filter((p) => p.startsWith("/overview/findings"));
+      expect(variants.length).toBeGreaterThan(1);
+      for (const path of variants) expect(numbers(get(path, email)), `${email} ${path}`).toEqual(numbers(answers[path]));
+    }
+  });
+
+  it("returns the recorded answers as copies", () => {
+    const first = get<ApiFinding[]>("/findings", ADMIN);
+    first[0]!.title = "changed";
+    expect(get<ApiFinding[]>("/findings", ADMIN)[0]!.title).not.toBe("changed");
+  });
+
+  it("answers the chat from the recorded answers", () => {
+    const [f] = get<ApiFinding[]>("/findings", DIRECTOR);
+    const answer = send<{ text: string }>("/chat", DIRECTOR, "POST", { question: "Почему так получилось?", finding_id: f!.id });
+    expect(answer.text).toBeTruthy();
+    expect(send<{ text: string }>("/chat", DIRECTOR, "POST", { question: "что-то совсем другое" }).text).toBeTruthy();
+  });
+});
 
 describe("demo isolation", () => {
   it("shows a director only their restaurant", () => {
     expect(get<Restaurant[]>("/restaurants", DIRECTOR).map((r) => r.code)).toEqual(["R01"]);
     expect(get<Restaurant[]>("/restaurants", ADMIN).length).toBeGreaterThan(1);
+    expect(get<ApiFinding[]>("/findings", DIRECTOR).every((f) => f.restaurant_id === r01().id)).toBe(true);
+    expect(status(() => get("/overview/restaurants/R02", DIRECTOR))).toBe(404);
+    for (const path of ["/overview/restaurants", "/overview/network?preset=week", "/reports/head?preset=week", "/checks"])
+      expect(status(() => get(path, DIRECTOR)), path).toBe(403);
   });
 
   it("keeps the review to HQ and hides unchecked findings from directors", () => {
     expect(status(() => get("/findings?review=pending", DIRECTOR))).toBe(403);
     const pending = get<ApiFinding[]>("/findings?review=pending", ANALYST);
     expect(pending.length).toBeGreaterThan(0);
-    const own = pending.find((f) => f.restaurant_id === "R01")!;
-    expect(status(() => get(`/findings/${own.id}/verification`, DIRECTOR))).toBe(403);
+    expect(status(() => get(`/findings/${pending[0]!.id}/verification`, DIRECTOR))).toBe(403);
+    expect(status(() => send(`/findings/${pending[0]!.id}/review`, DIRECTOR, "POST", { verdict: "confirm" }))).toBe(403);
+    expect(status(() => send("/tasks", ADMIN, "POST", { title: "x", due_on: "2026-10-27", finding_id: pending[0]!.id }))).toBe(422);
+
+    // A finding of R01 sent back to review disappears for its director, and comes back once confirmed.
+    const own = get<ApiFinding[]>("/findings", DIRECTOR).find((f) => f.review_status === "confirmed")!;
+    send(`/findings/${own.id}/review`, ANALYST, "POST", { verdict: "reopen" });
     expect(get<ApiFinding[]>("/findings", DIRECTOR).map((f) => f.id)).not.toContain(own.id);
+    expect(status(() => get(`/findings/${own.id}`, DIRECTOR))).toBe(404);
+    expect(get<ApiFinding[]>("/findings?review=pending", ANALYST).map((f) => f.id)).toContain(own.id);
 
     const confirmed = send<ApiFinding>(`/findings/${own.id}/review`, ANALYST, "POST", { verdict: "confirm" });
     expect(confirmed.reviewed_by_name).toBe("Аналитик УК");
     const seen = get<ApiFinding[]>("/findings", DIRECTOR).find((f) => f.id === own.id)!;
-    expect(seen.review_status).toBe("confirmed");
     expect(seen.reviewed_by_name).toBeNull(); // the reviewer's name is HQ's
-    expect(get<ApiFinding[]>("/findings", DIRECTOR).every((f) => f.restaurant_id === "R01")).toBe(true);
-
-    send(`/findings/${own.id}/review`, ANALYST, "POST", { verdict: "reopen" });
-    expect(get<ApiFinding[]>("/findings", DIRECTOR).map((f) => f.id)).not.toContain(own.id);
+    expect(get<{ id: string }>(`/findings/${own.id}`, DIRECTOR).id).toBe(own.id);
   });
 
   it("asks why a finding is rejected", () => {
     const [f] = get<ApiFinding[]>("/findings?review=pending", ADMIN);
     expect(status(() => send(`/findings/${f!.id}/review`, ADMIN, "POST", { verdict: "reject" }))).toBe(422);
-    expect(
-      status(() => send(`/findings/${f!.id}/review`, ADMIN, "POST", { verdict: "reject", reason: "logic" })),
-    ).toBe(422);
+    expect(status(() => send(`/findings/${f!.id}/review`, ADMIN, "POST", { verdict: "reject", reason: "logic" }))).toBe(422);
   });
 
-  it("does not let a director touch another restaurant's files or network data", async () => {
+  it("does not let a director touch another restaurant's files", async () => {
+    const other = get<Restaurant[]>("/restaurants", ADMIN).find((r) => r.code === "R02")!.id;
     const upload = (restaurant: string | null, token: string) => {
       const form = new FormData();
       form.set("file", new File(["Дата;Блюдо;Кол-во;Сумма\n"], "sales.csv"));
@@ -62,12 +99,47 @@ describe("demo isolation", () => {
       if (restaurant) form.set("restaurant_id", restaurant);
       return send<Promise<ImportBatch>>("/imports", token, "POST", form);
     };
-    expect(status(() => upload("R02", DIRECTOR))).toBe(403);
+    expect(status(() => upload(other, DIRECTOR))).toBe(403);
     expect(status(() => upload(null, DIRECTOR))).toBe(403);
-    const other = await upload("R02", ADMIN);
-    expect(status(() => send(`/imports/${other.id}/publish`, DIRECTOR, "POST"))).toBe(404);
-    expect(status(() => send(`/imports/${other.id}/rollback`, DIRECTOR, "POST"))).toBe(404);
-    expect(get<ImportBatch[]>("/imports", DIRECTOR).map((b) => b.id)).not.toContain(other.id);
+    const batch = await upload(other, ADMIN);
+    expect(status(() => send(`/imports/${batch.id}/publish`, DIRECTOR, "POST"))).toBe(404);
+    expect(get<ImportBatch[]>("/imports", DIRECTOR).map((b) => b.id)).not.toContain(batch.id);
+  });
+});
+
+describe("demo actions", () => {
+  it("takes a finding into work and lets only the director do the task", () => {
+    const f = get<ApiFinding[]>("/findings", DIRECTOR).find((x) => x.work.stage === "new")!;
+    const [task] = send<ApiTask[]>("/tasks", DIRECTOR, "POST", { title: f.actions[0] ?? f.title, due_on: "2026-10-27", finding_id: f.id, checklist: ["a", "b"] });
+    expect(get<ApiFinding[]>("/findings", DIRECTOR).find((x) => x.id === f.id)!.work.stage).toBe("doing");
+    expect(get<ApiTask[]>("/tasks", DIRECTOR).map((t) => t.id)).toContain(task!.id);
+    expect(get<ApiTask[]>("/tasks", "director2@demo.local").map((t) => t.id)).not.toContain(task!.id);
+    expect(status(() => send(`/tasks/${task!.id}/start`, "director2@demo.local", "POST"))).toBe(404);
+    expect(status(() => send(`/tasks/${task!.id}/start`, ADMIN, "POST"))).toBe(403);
+
+    send(`/tasks/${task!.id}/checklist`, DIRECTOR, "POST", { index: 1, done: true });
+    const done = send<ApiTask>(`/tasks/${task!.id}/complete`, DIRECTOR, "POST", { report: "сделано" });
+    expect(done.checklist_done).toEqual([false, true]);
+    expect(done.status).toBe("done");
+    expect(status(() => send(`/tasks/${task!.id}/start`, DIRECTOR, "POST"))).toBe(422);
+  });
+
+  it("reminds about overdue tasks from HQ only", () => {
+    const late = get<ApiTask[]>("/tasks?late=true", ADMIN);
+    expect(late.length).toBeGreaterThan(0);
+    expect(status(() => send(`/tasks/${late[0]!.id}/remind`, ANALYST, "POST"))).toBe(403);
+    expect(send<ApiTask>(`/tasks/${late[0]!.id}/remind`, ADMIN, "POST").reminded_on).toBe(snapshot.recorded_for);
+    expect(get<ApiTask[]>("/tasks?late=true", ADMIN)[0]!.reminded_on).toBe(snapshot.recorded_for);
+  });
+
+  it("launches a proposed check only by the HQ admin", () => {
+    const [proposed] = get<Check[]>("/checks?status=proposed", ADMIN);
+    expect(status(() => send(`/checks/${proposed!.id}/launch`, ANALYST, "POST"))).toBe(403);
+    expect(status(() => send(`/checks/${proposed!.id}/launch`, DIRECTOR, "POST"))).toBe(403);
+    const tasks = send<ApiTask[]>(`/checks/${proposed!.id}/launch`, ADMIN, "POST");
+    expect(tasks.length).toBe((proposed!.test ?? []).length);
+    expect(get<Check[]>("/checks?status=proposed", ADMIN).map((c) => c.id)).not.toContain(proposed!.id);
+    expect(get<{ tasks: ApiTask[] }>(`/checks/${proposed!.id}`, ADMIN).tasks.length).toBeGreaterThanOrEqual(tasks.length);
   });
 });
 
@@ -87,12 +159,5 @@ describe("demo engine parameters", () => {
     expect(overpay(DIRECTOR).value).toBe("7");
     send("/settings/engine", ADMIN, "PUT", { values: { M3_OVERPAY: null } });
     expect(overpay(ADMIN).value).toBe(overpay(ADMIN).default);
-  });
-
-  it("are returned as copies, so a cached list is never changed behind React Query's back", () => {
-    const first = params(ADMIN);
-    send("/settings/engine", ADMIN, "PUT", { values: { M3_OVERPAY: "8" } });
-    expect(first.find((p) => p.key === "M3_OVERPAY")!.value).not.toBe("8");
-    send("/settings/engine", ADMIN, "PUT", { values: { M3_OVERPAY: null } });
   });
 });

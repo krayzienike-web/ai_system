@@ -1,3 +1,5 @@
+import type * as S from "./schema";
+
 export type Role = "hq_admin" | "hq_analyst" | "restaurant_director";
 
 export const ROLE_LABELS: Record<Role, string> = {
@@ -136,29 +138,24 @@ export interface Norms {
 export type ReviewStatus = "pending" | "confirmed" | "rejected";
 export type RejectReason = "data" | "logic" | "false_alarm" | "other";
 
-/** A finding as the API returns it (engine findings carry module, period and review state). */
-export interface ApiFinding {
-  id: string;
-  restaurant_id: string | null; // null: network-wide
-  kind: "problem" | "opportunity";
-  process: string;
-  module: string | null;
-  confidence: "high" | "medium" | "low" | null;
-  period_from: string | null;
-  period_to: string | null;
-  review_status: ReviewStatus | null;
-  review_reason: RejectReason | null;
-  review_note: string | null;
-  reviewed_on: string | null;
-  reviewed_by_name?: string | null;
-  title: string;
-  headline: string | null;
-  effect_rub_month: string | null;
-  effect_note: string | null;
-  actions: string[];
-  status: string;
-  found_on: string;
-}
+/** Shapes generated from the API's OpenAPI schema (backend `python -m app.openapi`): the screens use them as is. */
+export type ApiFinding = S.FindingOut;
+export type FindingDetail = S.FindingDetailOut;
+export type FindingView = S.FindingView;
+export type ProcessKey = S.FindingOut["process"];
+export type ApiTask = S.TaskOut;
+export type TaskOutcome = S.OutcomeOut;
+export type Check = S.CheckOut;
+export type CheckDetail = S.CheckDetailOut;
+export type CheckDraft = S.DraftOut;
+export type AppContext = S.ContextOut;
+export type NetworkOverview = S.NetworkOut;
+export type RestaurantWeek = S.WeekOut;
+export type RestaurantRow = S.RestaurantRowOut;
+export type Badges = S.BadgesOut;
+export type ChatAnswer = S.AnswerOut;
+export type HeadReport = S.HeadReportOut;
+export type FindingBoard = S.BoardOut;
 
 export interface VerificationStep {
   id: string;

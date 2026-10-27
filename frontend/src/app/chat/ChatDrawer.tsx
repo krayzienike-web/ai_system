@@ -4,12 +4,11 @@ import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
 import { LogoMark } from "../../brand/Logo";
+import { useAppContext, useAsk, useChatSuggestions, useCreateTasks, useFinding } from "../../api/hooks";
+import type { ChatAnswer } from "../../api/types";
 import { Button, cx, EASE } from "../../ds/primitives";
-import { dateIn, todayLabel } from "../../lib/dates";
-import { answer, type ChatAnswer, suggestionsFor } from "../../lib/chatScript";
 import { useViewer } from "../../lib/useViewer";
-import { findingById } from "../../mock/selectors";
-import { type ChatContextRef, usePrototype } from "../../state/prototype";
+import { type ChatContextRef, useUi } from "../../state/ui";
 
 interface Message {
   role: "user" | "assistant";
@@ -41,16 +40,9 @@ function Typed({ text, onDone }: { text: string; onDone: () => void }) {
 }
 
 function AssistantMessage({ m, last }: { m: Message; last: boolean }) {
-  const navigate = useNavigate();
-  const viewer = useViewer();
-  const { createTasks, closeChat, findingStatus } = usePrototype();
   const [done, setDone] = useState(!last);
   const finish = useCallback(() => setDone(true), []);
   const a = m.answer;
-  const finding = a?.sourceFindingId ? findingById(a.sourceFindingId) : undefined;
-  const canTake =
-    finding && !viewer?.isHq && (findingStatus[finding.id] ?? finding.status) === "new" && finding.restaurantId === viewer?.restaurantCode;
-
   return (
     <div className="flex gap-2.5">
       <span className="mt-0.5 shrink-0">
@@ -58,7 +50,7 @@ function AssistantMessage({ m, last }: { m: Message; last: boolean }) {
       </span>
       <div className="min-w-0 flex-1 rounded-[14px] rounded-tl-sm bg-paper px-3.5 py-2.5 text-sm leading-relaxed text-ink">
         {last ? <Typed text={m.text} onDone={finish} /> : <span className="whitespace-pre-line">{m.text}</span>}
-        {done && a?.table && (
+        {done && a && a.rows.length > 0 && (
           <motion.div
             initial={{ opacity: 0, y: 4 }}
             animate={{ opacity: 1, y: 0 }}
@@ -68,7 +60,7 @@ function AssistantMessage({ m, last }: { m: Message; last: boolean }) {
             <table className="w-full text-[13px]">
               <thead className="bg-paper/60 text-left text-ink-3">
                 <tr>
-                  {a.table.columns.map((c) => (
+                  {a.columns.map((c) => (
                     <th key={c} className="px-2.5 py-1.5 font-medium">
                       {c}
                     </th>
@@ -76,7 +68,7 @@ function AssistantMessage({ m, last }: { m: Message; last: boolean }) {
                 </tr>
               </thead>
               <tbody className="num">
-                {a.table.rows.map((row, r) => (
+                {a.rows.map((row, r) => (
                   <tr key={r} className="border-t border-line">
                     {row.map((cell, c) => (
                       <td key={c} className="px-2.5 py-1.5">
@@ -89,48 +81,14 @@ function AssistantMessage({ m, last }: { m: Message; last: boolean }) {
             </table>
           </motion.div>
         )}
-        {done && (a?.source || finding) && (
+        {done && a && (a.source || a.source_finding_id) && (
           <div className="mt-2.5 flex flex-wrap items-center gap-2 text-xs text-ink-3">
-            {a?.source && (
+            {a.source && (
               <span className="inline-flex items-center gap-1">
                 <Calculator size={12} aria-hidden /> {a.source}
               </span>
             )}
-            {finding && (
-              <button
-                type="button"
-                className="inline-flex items-center gap-1 font-medium text-brand-strong hover:underline"
-                onClick={() => {
-                  closeChat();
-                  void navigate({ to: "/findings/$findingId", params: { findingId: finding.id } });
-                }}
-              >
-                Открыть находку <ExternalLink size={11} />
-              </button>
-            )}
-            {canTake && (
-              <Button
-                size="sm"
-                variant="primary"
-                onClick={() =>
-                  createTasks([
-                    {
-                      id: `x-${finding.id}`,
-                      restaurantId: finding.restaurantId!,
-                      title: finding.actions[0] ?? finding.title,
-                      source: "Из разговора с су-шефом",
-                      findingId: finding.id,
-                      assignedBy: "director",
-                      createdAt: todayLabel(),
-                      due: dateIn(7),
-                      status: "assigned",
-                    },
-                  ])
-                }
-              >
-                Взять в работу
-              </Button>
-            )}
+            {a.source_finding_id && <FindingLinks id={a.source_finding_id} />}
           </div>
         )}
       </div>
@@ -138,8 +96,52 @@ function AssistantMessage({ m, last }: { m: Message; last: boolean }) {
   );
 }
 
+/** «Открыть находку» and, for a director whose finding nobody took yet, «Взять в работу». */
+function FindingLinks({ id }: { id: string }) {
+  const navigate = useNavigate();
+  const viewer = useViewer();
+  const { closeChat, notify } = useUi();
+  const finding = useFinding(id);
+  const create = useCreateTasks();
+  const context = useAppContext();
+  const f = finding.data;
+  const week = context.data?.due_options.find((o) => o.days === 7);
+  const canTake = f && !viewer?.isHq && f.work.stage === "new" && f.restaurant_id;
+  return (
+    <>
+      <button
+        type="button"
+        className="inline-flex items-center gap-1 font-medium text-brand-strong hover:underline"
+        onClick={() => {
+          closeChat();
+          void navigate({ to: "/findings/$findingId", params: { findingId: id } });
+        }}
+      >
+        Открыть находку <ExternalLink size={11} />
+      </button>
+      {canTake && week && (
+        <Button
+          size="sm"
+          variant="primary"
+          disabled={create.isPending}
+          onClick={() =>
+            create.mutate(
+              { title: f.actions[0] ?? f.title, finding_id: f.id, due_on: week.due_on },
+              { onSuccess: () => notify("Задача в «Моих задачах»") },
+            )
+          }
+        >
+          Взять в работу
+        </Button>
+      )}
+    </>
+  );
+}
+
 export function ChatPanel({ context, className }: { context: ChatContextRef | null; className?: string }) {
   const viewer = useViewer();
+  const asking = useAsk();
+  const suggestions = useChatSuggestions();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [thinking, setThinking] = useState(false);
@@ -156,11 +158,14 @@ export function ChatPanel({ context, className }: { context: ChatContextRef | nu
     setMessages((m) => [...m, { role: "user", text }]);
     setInput("");
     setThinking(true);
-    window.setTimeout(() => {
-      const a = answer(text, viewer, context?.findingId);
-      setMessages((m) => [...m, { role: "assistant", text: a.text, answer: a }]);
-      setThinking(false);
-    }, 650);
+    asking.mutate(
+      { question: text, finding_id: context?.findingId },
+      {
+        onSuccess: (a) => setMessages((m) => [...m, { role: "assistant", text: a.text, answer: a }]),
+        onError: () => setMessages((m) => [...m, { role: "assistant", text: "Не получилось ответить. Попробуйте еще раз." }]),
+        onSettled: () => setThinking(false),
+      },
+    );
   }
 
   const onSubmit = (e: FormEvent) => {
@@ -170,7 +175,7 @@ export function ChatPanel({ context, className }: { context: ChatContextRef | nu
 
   const starters = context?.findingId
     ? ["Почему так получилось?", "Что мне сделать?", "Сколько это в рублях за год?"]
-    : suggestionsFor(viewer);
+    : (suggestions.data ?? []);
 
   return (
     <div className={cx("flex min-h-0 flex-col", className)}>
@@ -244,7 +249,7 @@ export function ChatPanel({ context, className }: { context: ChatContextRef | nu
 }
 
 export function ChatDrawer() {
-  const { chat, closeChat } = usePrototype();
+  const { chat, closeChat } = useUi();
   return (
     <AnimatePresence>
       {chat.open && (

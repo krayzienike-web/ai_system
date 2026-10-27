@@ -2,20 +2,27 @@ import { CalendarDays, ChevronDown } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 
+import { useAppContext } from "../api/hooks";
 import { Button, cx, EASE } from "../ds/primitives";
-import { TODAY } from "../lib/dates";
-import { customRangeError, iso, PRESETS, resolvePeriod } from "../lib/period";
-import { usePrototype } from "../state/prototype";
+import { dayMonth } from "../lib/format";
+import { useUi } from "../state/ui";
 
 /** Date filter for every screen: presets by full weeks or a custom range (same rules as the API). */
 export function PeriodPicker() {
-  const { period, setPeriod } = usePrototype();
+  const { period, setPeriod } = useUi();
+  const context = useAppContext();
   const [open, setOpen] = useState(false);
-  const current = resolvePeriod(period);
-  const [from, setFrom] = useState(iso(current.from));
-  const [to, setTo] = useState(iso(current.to));
+  const presets = context.data?.periods ?? [];
+  const today = context.data?.today ?? "";
+  // The presets and their dates come from the API (the same rules as every report).
+  const preset = "preset" in period ? presets.find((p) => p.preset === period.preset) : undefined;
+  const range = preset ? [preset.date_from, preset.date_to] : "from" in period ? [period.from, period.to] : ["", ""];
+  const label = `${preset?.title ?? "Период"} · ${dayMonth(range[0])} – ${dayMonth(range[1])}`;
+  const [from, setFrom] = useState(range[0] ?? "");
+  const [to, setTo] = useState(range[1] ?? "");
   const box = useRef<HTMLDivElement>(null);
-  const error = customRangeError(from, to);
+  // Only what the form needs to be sendable; the API checks the range itself.
+  const error = !from || !to ? "Укажите обе даты" : from > to ? "Начало позже конца" : null;
 
   useEffect(() => {
     if (!open) return;
@@ -34,8 +41,8 @@ export function PeriodPicker() {
         className="inline-flex h-9 items-center gap-2 rounded-full border border-line-strong bg-surface px-3 text-sm font-medium text-ink transition hover:border-brand"
       >
         <CalendarDays size={15} className="text-ink-3" />
-        <span className="sm:hidden">{current.label.split(" · ")[1]}</span>
-        <span className="hidden sm:inline">{current.label}</span>
+        <span className="sm:hidden">{label.split(" · ")[1]}</span>
+        <span className="hidden sm:inline">{label}</span>
         <ChevronDown size={14} className={cx("text-ink-3 transition", open && "rotate-180")} />
       </button>
       <AnimatePresence>
@@ -50,8 +57,7 @@ export function PeriodPicker() {
             className="absolute top-11 left-0 z-30 w-[300px] rounded-[16px] border border-line bg-surface p-3 shadow-lg"
           >
             <div className="grid gap-1">
-              {PRESETS.map((p) => {
-                const r = resolvePeriod({ preset: p.preset });
+              {presets.map((p) => {
                 const active = "preset" in period && period.preset === p.preset;
                 return (
                   <button
@@ -68,7 +74,9 @@ export function PeriodPicker() {
                     )}
                   >
                     {p.title}
-                    <span className="text-xs text-ink-3">{r.label.split(" · ")[1]}</span>
+                    <span className="text-xs text-ink-3">
+                      {dayMonth(p.date_from)} – {dayMonth(p.date_to)}
+                    </span>
                   </button>
                 );
               })}
@@ -76,9 +84,9 @@ export function PeriodPicker() {
             <div className="mt-3 border-t border-line pt-3">
               <div className="mb-2 text-xs font-medium text-ink-3">Свой период</div>
               <div className="flex items-center gap-2">
-                <input type="date" value={from} max={iso(TODAY)} onChange={(e) => setFrom(e.target.value)} aria-label="С" className="h-9 min-w-0 flex-1 rounded-[8px] border border-line-strong px-2 text-sm outline-none focus:border-brand" />
+                <input type="date" value={from} max={today} onChange={(e) => setFrom(e.target.value)} aria-label="С" className="h-9 min-w-0 flex-1 rounded-[8px] border border-line-strong px-2 text-sm outline-none focus:border-brand" />
                 <span className="text-ink-3">—</span>
-                <input type="date" value={to} max={iso(TODAY)} onChange={(e) => setTo(e.target.value)} aria-label="По" className="h-9 min-w-0 flex-1 rounded-[8px] border border-line-strong px-2 text-sm outline-none focus:border-brand" />
+                <input type="date" value={to} max={today} onChange={(e) => setTo(e.target.value)} aria-label="По" className="h-9 min-w-0 flex-1 rounded-[8px] border border-line-strong px-2 text-sm outline-none focus:border-brand" />
               </div>
               {error && from && to && <div className="mt-1.5 text-xs text-loss">{error}</div>}
               <Button
@@ -95,8 +103,8 @@ export function PeriodPicker() {
               </Button>
             </div>
             <p className="mt-3 text-[11px] leading-snug text-ink-3">
-              Потери по техкартам считаются между инвентаризациями — экран покажет, за какие даты. В прототипе суммы находок
-              рассчитаны по данным на 18.10; меняются графики динамики.
+              Период меняет динамику и отчет. Суммы находок — на последние данные; потери по техкартам считаются между
+              инвентаризациями, экран покажет, за какие даты.
             </p>
           </motion.div>
         )}

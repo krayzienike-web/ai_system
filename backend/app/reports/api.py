@@ -48,6 +48,7 @@ class HeadReportOut(BaseModel):
     done_tasks: list[TaskOut]
     failures: list[FailureOut]
     network_name: str
+    confirmed_by_tasks_rub_month: Decimal  # measured results of the done tasks of the period
     trend: TrendOut
     checks: list[CheckOut]
 
@@ -76,6 +77,14 @@ def get_head_report(
             FailureOut(**f.__dict__, where=", ".join(names.get(UUID(i), i) for i in f.restaurant_ids))
             for f in r.failures
         ],
+        confirmed_by_tasks_rub_month=sum(
+            (
+                t.outcome_effect_rub_month or Decimal(0)
+                for t in r.done_tasks
+                if t.outcome_verdict == "confirmed"
+            ),
+            Decimal(0),
+        ),
         network_name=session.execute(select(Tenant.name)).scalar_one_or_none() or "",
         trend=TrendOut(**overview.trend_of(session, None, period).__dict__),
         checks=checks_out(

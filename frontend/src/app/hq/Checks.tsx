@@ -3,28 +3,21 @@ import { ArrowLeft, CheckCircle2, CircleHelp, Sparkles, XCircle } from "lucide-r
 import { AnimatePresence, motion } from "motion/react";
 import { useState } from "react";
 
+import { useCheck, useCheckAction, useCheckDraft, useProposeCheck } from "../../api/hooks";
+import type { Check } from "../../api/types";
 import { AiBadge, VerifiedNote } from "../../ds/ai";
-import { Button, Card, cx, EASE, EmptyState, PageTitle, Pill, QuestionBlock, Reveal } from "../../ds/primitives";
-import { perMonth, rub } from "../../lib/format";
-import { EXPERIMENTS, RESTAURANTS } from "../../mock/data";
-import { findingById, restaurantByCode } from "../../mock/selectors";
-import type { Experiment } from "../../mock/types";
-import { usePrototype } from "../../state/prototype";
-import { useTasks } from "../counts";
+import { Button, Card, cx, EASE, EmptyState, PageTitle, Pill, QuestionBlock, Reveal, Skeleton } from "../../ds/primitives";
+import { ddmm, money, perMonth, plural, rub } from "../../lib/format";
+import { useUi } from "../../state/ui";
 import { TaskTrace } from "../tasks/trace";
 
-const names = (codes: string[]) => codes.map((c) => restaurantByCode(c)?.name ?? c);
-
-function RestaurantChips({ codes, tone }: { codes: string[]; tone: "test" | "control" }) {
+function RestaurantChips({ places, tone }: { places: { id: string; name: string }[]; tone: "test" | "control" }) {
   return (
     <div className="flex flex-wrap gap-1.5">
-      {codes.length ? (
-        names(codes).map((n) => (
-          <span
-            key={n}
-            className={cx("rounded-full px-2.5 py-1 text-xs font-medium", tone === "test" ? "bg-brand text-white" : "bg-ink/10 text-ink")}
-          >
-            {n}
+      {places.length ? (
+        places.map((p) => (
+          <span key={p.id} className={cx("rounded-full px-2.5 py-1 text-xs font-medium", tone === "test" ? "bg-brand text-white" : "bg-ink/10 text-ink")}>
+            {p.name}
           </span>
         ))
       ) : (
@@ -34,91 +27,90 @@ function RestaurantChips({ codes, tone }: { codes: string[]; tone: "test" | "con
   );
 }
 
-function useStage(e: Experiment) {
-  const { experimentStatus } = usePrototype();
-  const d = experimentStatus[e.id];
-  if (d === "rejected") return "rejected" as const;
-  if (d === "approved") return "running" as const;
-  return e.status;
-}
-
 const VERDICT = {
   confirmed: { title: "Сработало", Icon: CheckCircle2, cls: "bg-gain-soft text-gain" },
   inconclusive: { title: "Пока непонятно", Icon: CircleHelp, cls: "bg-warn-soft text-warn" },
   rejected: { title: "Не сработало", Icon: XCircle, cls: "bg-loss-soft text-loss" },
 } as const;
 
+const STATUS: Record<Check["status"], [string, "gain" | "info" | "neutral" | "warn"]> = {
+  proposed: ["Ждет решения", "warn"],
+  running: ["Идет", "info"],
+  completed: ["Есть результат", "gain"],
+  rejected: ["Отклонена", "neutral"],
+};
+
 export function CheckPage() {
   const { checkId } = useParams({ from: "/app/checks/$checkId" });
-  const e = EXPERIMENTS.find((x) => x.id === checkId);
-  const { decideExperiment, proposeRollout, rollouts } = usePrototype();
-  const stage = useStage(e ?? EXPERIMENTS[0]!);
-  const tasks = useTasks();
-  if (!e) return <EmptyState title="Проверка не найдена" />;
-  const finding = e.findingId ? findingById(e.findingId) : undefined;
-  const checkTasks = tasks.filter((t) => t.experimentId === e.id);
+  const check = useCheck(checkId);
+  const action = useCheckAction();
+  const { notify } = useUi();
+  if (check.isError) return <EmptyState title="Проверка не найдена" />;
+  const e = check.data;
+  if (!e) return <Skeleton className="mx-auto h-96 max-w-[960px]" />;
+  const effect = money(e.effect_rub_month) ?? 0;
+  const expected = money(e.expected_rub_month) ?? 0;
+  const rollout = money(e.rollout_rub_month);
+  const weeks = Math.round((new Date(e.ends_on).getTime() - new Date(e.starts_on).getTime()) / (7 * 86_400_000));
+  const run = (a: "launch" | "reject" | "rollout", text: string) => action.mutate({ id: e.id, action: a }, { onSuccess: () => notify(text) });
 
   return (
     <div className="mx-auto max-w-[960px] space-y-6">
-      {e.findingId ? (
-        <Link to="/findings/$findingId" params={{ findingId: e.findingId }} className="inline-flex items-center gap-1 text-sm text-ink-3 hover:text-ink">
-          <ArrowLeft size={14} /> К находке
-        </Link>
-      ) : (
-        <Link to="/findings" className="inline-flex items-center gap-1 text-sm text-ink-3 hover:text-ink">
-          <ArrowLeft size={14} /> Находки
-        </Link>
-      )}
+      <Link
+        to={e.finding_id ? "/findings/$findingId" : "/findings"}
+        params={e.finding_id ? { findingId: e.finding_id } : undefined}
+        className="inline-flex items-center gap-1 text-sm text-ink-3 hover:text-ink"
+      >
+        <ArrowLeft size={14} /> {e.finding_id ? "К находке" : "Находки"}
+      </Link>
       <Reveal>
         <section className="rounded-[24px] border border-line bg-surface p-6 sm:p-8">
-          <Pill tone={stage === "completed" ? "gain" : stage === "running" ? "info" : stage === "rejected" ? "neutral" : "warn"}>
-            {{ proposed: "Ждет решения", running: "Идет", completed: "Есть результат", rejected: "Отклонена" }[stage]}
-          </Pill>
+          <Pill tone={STATUS[e.status][1]}>{STATUS[e.status][0]}</Pill>
           <h1 className="mt-3 font-display text-[28px] leading-tight font-semibold">{e.title}</h1>
           <p className="mt-2 max-w-[70ch] text-[17px] text-ink-2">{e.hypothesis}</p>
-          {finding && (
-            <Link to="/findings/$findingId" params={{ findingId: finding.id }} className="mt-3 inline-block text-sm text-brand-strong hover:underline">
-              Основание: {finding.title} →
+          {e.finding_id && e.finding_title && (
+            <Link to="/findings/$findingId" params={{ findingId: e.finding_id }} className="mt-3 inline-block text-sm text-brand-strong hover:underline">
+              Основание: {e.finding_title} →
             </Link>
           )}
         </section>
       </Reveal>
 
-      {e.result && (
+      {e.verdict && (
         <Reveal index={1}>
-          <section className={cx("rounded-[24px] p-6 sm:p-8", VERDICT[e.result.verdict].cls)}>
+          <section className={cx("rounded-[24px] p-6 sm:p-8", VERDICT[e.verdict].cls)}>
             <div className="flex items-center gap-3">
               {(() => {
-                const Icon = VERDICT[e.result.verdict].Icon;
+                const Icon = VERDICT[e.verdict].Icon;
                 return <Icon size={32} />;
               })()}
-              <span className="font-display text-3xl font-semibold">{VERDICT[e.result.verdict].title}</span>
+              <span className="font-display text-3xl font-semibold">{VERDICT[e.verdict].title}</span>
             </div>
-            {e.result.verdict === "confirmed" ? (
+            {e.verdict === "confirmed" ? (
               <>
                 <div className="mt-4 text-ink">
-                  <span className="font-display text-4xl font-semibold">+{rub(e.result.effectRubMonth)}</span>
+                  <span className="font-display text-4xl font-semibold">+{rub(effect)}</span>
                   <span className="ml-2 text-lg">в месяц</span>
                 </div>
                 <p className="mt-2 text-ink-2">
-                  Скорее всего — от {rub(e.result.ciLow)} до {rub(e.result.ciHigh)} в месяц. Ждали {rub(e.expectedRubMonth)}.
+                  Скорее всего — от {rub(money(e.ci_low_rub_month) ?? 0)} до {rub(money(e.ci_high_rub_month) ?? 0)} в месяц. Ждали {rub(expected)}.
                 </p>
-                <EffectRange low={e.result.ciLow} high={e.result.ciHigh} value={e.result.effectRubMonth} expected={e.expectedRubMonth} />
+                <EffectRange low={money(e.ci_low_rub_month) ?? 0} high={money(e.ci_high_rub_month) ?? 0} value={effect} expected={expected} />
               </>
             ) : (
-              <p className="mt-4 text-ink">Эффекта не видно: ждали +{perMonth(e.expectedRubMonth)}, разница с ресторанами без изменений — в пределах случайных колебаний.</p>
+              <p className="mt-4 text-ink">Эффекта не видно: ждали +{perMonth(expected)}, разница с ресторанами без изменений — в пределах случайных колебаний.</p>
             )}
-            <p className="mt-4 text-sm text-ink-2">{e.result.text.replace(" (разница разниц)", "")}</p>
-            {e.result.rolloutRubMonth && (
+            {e.result_text && <p className="mt-4 text-sm text-ink-2">{e.result_text.replace(" (разница разниц)", "")}</p>}
+            {rollout !== null && (
               <div className="mt-5 flex flex-wrap items-center gap-3 rounded-[16px] bg-surface p-4">
                 <span className="text-sm">
-                  Если ввести во всех ресторанах: еще <span className="font-semibold text-gain">+{perMonth(e.result.rolloutRubMonth)}</span>
+                  Если ввести во всех ресторанах: еще <span className="font-semibold text-gain">+{perMonth(rollout)}</span>
                 </span>
-                {rollouts.includes(e.id) ? (
-                  <span className="text-sm font-medium text-gain">Отправлено на запуск</span>
+                {e.rollout_on ? (
+                  <span className="text-sm font-medium text-gain">Отправлено во все рестораны {ddmm(e.rollout_on)}</span>
                 ) : (
-                  <Button variant="primary" onClick={() => proposeRollout(e.id)}>
-                    Предложить всем ресторанам
+                  <Button variant="primary" disabled={action.isPending} onClick={() => run("rollout", "Задачи отправлены директорам всех ресторанов")}>
+                    Ввести во всех ресторанах
                   </Button>
                 )}
               </div>
@@ -132,13 +124,12 @@ export function CheckPage() {
           <div className="grid items-stretch gap-3 sm:grid-cols-[1fr_auto_1fr]">
             <div className="rounded-[16px] bg-brand-soft p-4">
               <div className="mb-2 text-sm font-medium text-brand-strong">Где пробуем</div>
-              <RestaurantChips codes={e.test} tone="test" />
+              <RestaurantChips places={e.test ?? []} tone="test" />
             </div>
             <div className="grid place-items-center text-sm text-ink-3">сравниваем с</div>
             <div className="rounded-[16px] bg-paper p-4">
               <div className="mb-2 text-sm font-medium">С чем сравниваем</div>
-              <RestaurantChips codes={e.control} tone="control" />
-              {!e.control.length && <div className="mt-1 text-xs text-ink-3">{e.design.split(":")[1]?.trim()}</div>}
+              <RestaurantChips places={e.control ?? []} tone="control" />
             </div>
           </div>
           <dl className="mt-5 grid gap-4 text-sm sm:grid-cols-3">
@@ -148,28 +139,30 @@ export function CheckPage() {
             </div>
             <div>
               <dt className="text-ink-3">С каким периодом сравниваем</dt>
-              <dd className="mt-0.5 font-medium">{e.baseline}</dd>
+              <dd className="mt-0.5 font-medium">{e.baseline ?? "—"}</dd>
             </div>
             <div>
               <dt className="text-ink-3">Сколько ждем</dt>
-              <dd className="mt-0.5 font-medium">{e.period}</dd>
+              <dd className="mt-0.5 font-medium">
+                {plural(weeks, ["неделя", "недели", "недель"])} · {ddmm(e.starts_on)}–{ddmm(e.ends_on)}
+              </dd>
             </div>
           </dl>
-          {e.progress && stage === "running" && <div className="mt-5 rounded-[12px] bg-info-soft p-3 text-sm text-info">{e.progress}</div>}
+          {e.progress_text && e.status === "running" && <div className="mt-5 rounded-[12px] bg-info-soft p-3 text-sm text-info">{e.progress_text}</div>}
         </QuestionBlock>
       </Reveal>
 
-      {checkTasks.length > 0 && (
+      {e.tasks.length > 0 && (
         <Reveal index={3}>
           <QuestionBlock
             question="Что сделали в ресторанах?"
-            answer={`Задач по проверке — ${checkTasks.length}, выполнено ${checkTasks.filter((t) => t.status === "done").length}. Отчеты директоров и результат — по каждой задаче.`}
+            answer={`Задач по проверке — ${e.tasks.length}, выполнено ${e.tasks.filter((t) => t.status === "done").length}. Отчеты директоров и результат — по каждой задаче.`}
             source={<VerifiedNote>результат считает система по данным, а не со слов исполнителя</VerifiedNote>}
           >
             <div className="grid gap-4 md:grid-cols-2">
-              {checkTasks.map((t) => (
+              {e.tasks.map((t) => (
                 <div key={t.id} className="rounded-[16px] border border-line p-4">
-                  <div className="mb-3 font-medium">{restaurantByCode(t.restaurantId)?.name}</div>
+                  <div className="mb-3 font-medium">{t.restaurant_name}</div>
                   <TaskTrace task={t} />
                 </div>
               ))}
@@ -178,20 +171,21 @@ export function CheckPage() {
         </Reveal>
       )}
 
-      {stage === "proposed" && (
+      {e.status === "proposed" && (
         <Reveal index={3}>
           <QuestionBlock
             question="Что будет после запуска?"
-            answer={`Директорам ${names(e.test).join(", ")} придут задачи со сроком и чек-листом. Замер начнется автоматически.`}
+            answer={`Директорам ${(e.test ?? []).map((p) => p.name).join(", ")} придут задачи со сроком и чек-листом. Замер начнется автоматически.`}
           >
             <div className="flex flex-wrap gap-2">
-              <Button variant="primary" size="lg" onClick={() => decideExperiment(e.id, "approved")}>
+              <Button variant="primary" size="lg" disabled={action.isPending} onClick={() => run("launch", "Проверка запущена, задачи отправлены директорам")}>
                 Запустить и поставить задачи
               </Button>
-              <Button size="lg" onClick={() => decideExperiment(e.id, "rejected")}>
+              <Button size="lg" disabled={action.isPending} onClick={() => run("reject", "Проверка отклонена")}>
                 Отклонить
               </Button>
             </div>
+            {action.isError && <p className="mt-2 text-sm text-loss">{(action.error as Error).message}</p>}
           </QuestionBlock>
         </Reveal>
       )}
@@ -227,29 +221,29 @@ function EffectRange({ low, high, value, expected }: { low: number; high: number
 
 // ------------------------------------------------------------------ wizard
 
-const DURATIONS = [
-  { weeks: 2, note: "быстро, но вывод будет менее надежным" },
-  { weeks: 4, note: "оптимально для 3 ресторанов" },
-  { weeks: 6, note: "надежнее, если продажи сильно скачут" },
-];
-
+/** The check the system drafted for a finding: HQ adjusts it and sends it to the admin to launch. */
 export function NewCheckPage() {
   const { findingId } = useParams({ from: "/app/checks/new/$findingId" });
-  const f = findingById(findingId);
+  const draft = useCheckDraft(findingId);
+  const propose = useProposeCheck();
   const navigate = useNavigate();
-  const { sendDraft } = usePrototype();
+  const { notify } = useUi();
   const [step, setStep] = useState(0);
   const [action, setAction] = useState(0);
-  const [control, setControl] = useState<string[]>(() => RESTAURANTS.map((r) => r.code).filter((c) => c !== f?.restaurantId));
-  const [weeks, setWeeks] = useState(1);
-  if (!f || !f.restaurantId) return <EmptyState title="Находка не найдена" />;
-  const expected = Math.round(((f.effectRubMonth ?? 0) * 0.6) / 100) * 100;
+  const [control, setControl] = useState<string[] | null>(null);
+  const [weeks, setWeeks] = useState<number | null>(null);
+  if (draft.isError) return <EmptyState title="Для этой находки проверку не поставить">{(draft.error as Error).message}</EmptyState>;
+  const d = draft.data;
+  if (!d) return <Skeleton className="mx-auto h-96 max-w-[760px]" />;
+  const chosen = control ?? d.candidates.filter((c) => c.suggested).map((c) => c.restaurant_id);
+  const duration = weeks ?? d.default_weeks;
   const steps = ["Что меняем", "Где пробуем", "Сколько ждем"];
+  const controlNames = d.candidates.filter((c) => chosen.includes(c.restaurant_id)).map((c) => c.name);
 
   return (
     <div className="mx-auto max-w-[760px]">
-      <Link to="/findings/$findingId" params={{ findingId: f.id }} className="mb-4 inline-flex items-center gap-1 text-sm text-ink-3 hover:text-ink">
-        <ArrowLeft size={14} /> {f.title}
+      <Link to="/findings/$findingId" params={{ findingId: d.finding_id }} className="mb-4 inline-flex items-center gap-1 text-sm text-ink-3 hover:text-ink">
+        <ArrowLeft size={14} /> {d.finding_title}
       </Link>
       <PageTitle title="Новая проверка" subtitle="Су-шеф подготовил черновик — проверьте и поправьте" />
       <ol className="mb-6 grid grid-cols-3 gap-2">
@@ -268,19 +262,13 @@ export function NewCheckPage() {
       </ol>
       <Card className="overflow-hidden p-6">
         <AnimatePresence mode="wait">
-          <motion.div
-            key={step}
-            initial={{ opacity: 0, x: 24 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -24 }}
-            transition={{ duration: 0.25, ease: EASE }}
-          >
+          <motion.div key={step} initial={{ opacity: 0, x: 24 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -24 }} transition={{ duration: 0.25, ease: EASE }}>
             {step === 0 && (
               <div className="space-y-3">
                 <div className="flex items-center gap-2 font-medium">
-                  Что меняем в ресторане <AiBadge basis="Варианты мер — из находки и библиотеки типовых мер сети." />
+                  Что меняем в ресторане <AiBadge basis="Варианты мер — из находки." />
                 </div>
-                {f.actions.map((a, i) => (
+                {d.actions.map((a, i) => (
                   <label key={a} className={cx("flex cursor-pointer items-start gap-3 rounded-[12px] border p-4", action === i ? "border-brand bg-brand-soft" : "border-line")}>
                     <input type="radio" checked={action === i} onChange={() => setAction(i)} className="mt-1 h-4 w-4 accent-[#0a8f84]" />
                     {a}
@@ -293,7 +281,7 @@ export function NewCheckPage() {
                 <div>
                   <div className="font-medium">Где пробуем</div>
                   <div className="mt-2">
-                    <RestaurantChips codes={[f.restaurantId]} tone="test" />
+                    <RestaurantChips places={[d.test]} tone="test" />
                   </div>
                   <p className="mt-2 text-sm text-ink-3">Там, где нашли проблему.</p>
                 </div>
@@ -301,18 +289,20 @@ export function NewCheckPage() {
                   <div className="flex items-center gap-2 font-medium">
                     С чем сравниваем <Sparkles size={14} className="text-brand" />
                   </div>
-                  <p className="mt-1 text-sm text-ink-3">Су-шеф выбрал похожие рестораны, где ничего не будем менять. Снимите галочку, если ресторан не подходит.</p>
-                  <div className="mt-3 space-y-2">
-                    {RESTAURANTS.filter((r) => r.code !== f.restaurantId).map((r) => (
-                      <label key={r.code} className="flex items-center gap-3 rounded-[12px] border border-line p-3">
+                  <p className="mt-1 text-sm text-ink-3">Су-шеф выбрал рестораны с похожей выручкой, где ничего не будем менять. Снимите галочку, если ресторан не подходит.</p>
+                  <div className="mt-3 max-h-[320px] space-y-2 overflow-y-auto">
+                    {d.candidates.map((c) => (
+                      <label key={c.restaurant_id} className="flex items-center gap-3 rounded-[12px] border border-line p-3">
                         <input
                           type="checkbox"
-                          checked={control.includes(r.code)}
-                          onChange={() => setControl((c) => (c.includes(r.code) ? c.filter((x) => x !== r.code) : [...c, r.code]))}
+                          checked={chosen.includes(c.restaurant_id)}
+                          onChange={() =>
+                            setControl(chosen.includes(c.restaurant_id) ? chosen.filter((x) => x !== c.restaurant_id) : [...chosen, c.restaurant_id])
+                          }
                           className="h-4 w-4 accent-[#0a8f84]"
                         />
-                        <span className="font-medium">{r.name}</span>
-                        <span className="ml-auto text-xs text-ink-3">похожая выручка и меню</span>
+                        <span className="font-medium">{c.name}</span>
+                        <span className="ml-auto text-xs text-ink-3">{c.reason}</span>
                       </label>
                     ))}
                   </div>
@@ -324,25 +314,22 @@ export function NewCheckPage() {
                 <div>
                   <div className="font-medium">Сколько ждем</div>
                   <div className="mt-2 grid gap-2 sm:grid-cols-3">
-                    {DURATIONS.map((d, i) => (
+                    {d.durations.map((o) => (
                       <button
-                        key={d.weeks}
+                        key={o.weeks}
                         type="button"
-                        onClick={() => setWeeks(i)}
-                        className={cx("rounded-[12px] border p-3 text-left", weeks === i ? "border-brand bg-brand-soft" : "border-line")}
+                        onClick={() => setWeeks(o.weeks)}
+                        className={cx("rounded-[12px] border p-3 text-left", duration === o.weeks ? "border-brand bg-brand-soft" : "border-line")}
                       >
-                        <div className="font-semibold">{d.weeks} недели</div>
-                        <div className="text-xs text-ink-3">{d.note}</div>
+                        <div className="font-semibold">{plural(o.weeks, ["неделя", "недели", "недель"])}</div>
+                        <div className="text-xs text-ink-3">{o.note}</div>
                       </button>
                     ))}
                   </div>
                 </div>
                 <div className="rounded-[14px] bg-paper p-4 text-sm">
                   <div className="font-medium">Что считаем успехом</div>
-                  <div className="mt-1 text-ink-2">
-                    «{f.scale?.label ?? f.metric.label}» приблизится к {f.scale?.network !== undefined ? "уровню сети" : "норме"}. Ожидаем +{perMonth(expected)} — это
-                    60% от найденного, оценка с запасом.
-                  </div>
+                  <div className="mt-1 text-ink-2">{d.success}</div>
                 </div>
               </div>
             )}
@@ -353,13 +340,14 @@ export function NewCheckPage() {
       <Card className="mt-4 p-5 text-sm">
         <div className="mb-1 font-medium">Итог</div>
         <div className="text-ink-2">
-          {f.actions[action]} — в ресторане «{restaurantByCode(f.restaurantId)?.name}», сравниваем с {control.length ? names(control).join(", ") : "показателями внутри ресторана"},{" "}
-          {DURATIONS[weeks]!.weeks} недели. Директор получит задачу после запуска.
+          {d.actions[action]} — в ресторане «{d.test.name}», сравниваем с {controlNames.length ? controlNames.join(", ") : "показателями внутри ресторана"},{" "}
+          {plural(duration, ["неделя", "недели", "недель"])}. Директор получит задачу после запуска.
         </div>
         <div className="mt-1">
-          <VerifiedNote>ожидаемый эффект по данным находки</VerifiedNote>
+          <VerifiedNote>ожидаемый эффект +{perMonth(money(d.expected_rub_month) ?? 0)} — по данным находки</VerifiedNote>
         </div>
       </Card>
+      {propose.isError && <p className="mt-2 text-sm text-loss">{(propose.error as Error).message}</p>}
 
       <div className="mt-4 flex justify-between gap-2">
         <Button variant="ghost" disabled={step === 0} onClick={() => setStep((s) => s - 1)}>
@@ -372,10 +360,18 @@ export function NewCheckPage() {
         ) : (
           <Button
             variant="primary"
-            onClick={() => {
-              sendDraft(f.id);
-              void navigate({ to: "/decisions" });
-            }}
+            disabled={propose.isPending}
+            onClick={() =>
+              propose.mutate(
+                { finding_id: d.finding_id, action: d.actions[action]!, control_ids: chosen, weeks: duration },
+                {
+                  onSuccess: () => {
+                    notify("Проверка передана на запуск");
+                    void navigate({ to: "/decisions" });
+                  },
+                },
+              )
+            }
           >
             Передать на запуск
           </Button>

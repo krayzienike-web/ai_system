@@ -1,5 +1,4 @@
 // Generated from the API's OpenAPI schema by `python -m app.openapi` (backend). Do not edit.
-/* eslint-disable */
 
 export interface AliasChangeIn {
   target_id: string;
@@ -362,6 +361,7 @@ export interface HeadReportOut {
   done_tasks: TaskOut[];
   failures: FailureOut[];
   network_name: string;
+  confirmed_by_tasks_rub_month: string;
   trend: TrendOut;
   checks: CheckOut[];
 }

@@ -35,8 +35,8 @@ import {
 } from "../../ds/primitives";
 import { MODULE_TITLE, perMonth, plural } from "../../lib/format";
 import { useViewer } from "../../lib/useViewer";
-import { usePrototype } from "../../state/prototype";
-import { ReviewTrace } from "../findings/EngineFindings";
+import { useUi } from "../../state/ui";
+import { ReviewTrace } from "../findings/ReviewTrace";
 
 const TABS: { status: ReviewStatus; title: string }[] = [
   { status: "pending", title: "На проверке" },
@@ -103,7 +103,7 @@ export function ReviewPage() {
   const [tab, setTab] = useState<ReviewStatus>("pending");
   const list = useReviewFindings(tab);
   const run = useRunAnalytics();
-  const { notify } = usePrototype();
+  const { notify } = useUi();
   const name = useRestaurantName();
 
   return (
@@ -286,7 +286,7 @@ function SourceRows({ step }: { step: VerificationStep }) {
 function VerdictForm({ f }: { f: ApiFinding }) {
   const viewer = useViewer();
   const review = useReviewFinding();
-  const { notify } = usePrototype();
+  const { notify } = useUi();
   const [rejecting, setRejecting] = useState(false);
   const [reason, setReason] = useState<RejectReason | null>(null);
   const [note, setNote] = useState("");

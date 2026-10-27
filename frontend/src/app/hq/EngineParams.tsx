@@ -13,7 +13,7 @@ import {
 } from "../../ds/primitives";
 import { MODULE_TITLE } from "../../lib/format";
 import { useViewer } from "../../lib/useViewer";
-import { usePrototype } from "../../state/prototype";
+import { useUi } from "../../state/ui";
 
 const MODULES: { code: string; title: string }[] = [
   { code: "ALL", title: "Общие для всех модулей" },
@@ -46,7 +46,7 @@ export function EngineParamsSection() {
 function EngineParamsForm({ params }: { params: EngineParam[] }) {
   const viewer = useViewer();
   const save = useSaveEngineParams();
-  const { notify } = usePrototype();
+  const { notify } = useUi();
   const [draft, setDraft] = useState<Record<string, string>>({});
   const readOnly = !viewer?.isAdmin;
   const byKey = new Map(params.map((p) => [p.key, p]));

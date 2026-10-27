@@ -309,6 +309,11 @@ def test_head_report_and_chat(client: TestClient, network: Network, demo: dict[s
     hq, director = login(client, "admin@a.ru"), login(client, "r01@a.ru")
     report = client.get("/api/reports/head", headers=hq, params={"preset": "13w"}).json()
     assert report["network_name"] == "Сеть А" and len(report["checks"]) == 4
+    assert D(report["confirmed_by_tasks_rub_month"]) == sum(
+        D(t["outcome"]["effect_rub_month"] or 0)
+        for t in report["done_tasks"]
+        if t["outcome"] and t["outcome"]["verdict"] == "confirmed"
+    )
     assert len(report["trend"]["labels"]) >= 2
     assert {f["where"] for f in report["failures"]} >= {"Ресторан на Баумана"}
 

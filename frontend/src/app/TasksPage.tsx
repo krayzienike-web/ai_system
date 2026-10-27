@@ -3,37 +3,34 @@ import { Camera, Check } from "lucide-react";
 import { motion } from "motion/react";
 import { useState } from "react";
 
-import { Button, Card, cx, EmptyState, PageTitle, Reveal } from "../ds/primitives";
-import { daysUntil } from "../lib/dates";
-import { plural, rub } from "../lib/format";
+import { useTaskAction, useTasks } from "../api/hooks";
+import type { ApiTask } from "../api/types";
+import { Button, Card, cx, EmptyState, PageTitle, Reveal, Skeleton } from "../ds/primitives";
+import { ddmm, money, plural, rub } from "../lib/format";
 import { useViewer } from "../lib/useViewer";
-import { findingById } from "../mock/selectors";
-import type { Task } from "../mock/types";
-import { usePrototype } from "../state/prototype";
-import { useTasks } from "./counts";
+import { useUi } from "../state/ui";
 import { OutcomePill, QuickTaskForm, TaskTrace } from "./tasks/trace";
 
 /** "просрочено на 3 дня" / "сегодня" / "через 8 дней" — when, in words. */
-function dueWords(t: Task) {
+function dueWords(t: ApiTask) {
   if (t.status === "done") return "сделано";
-  const days = daysUntil(t.due);
+  const days = t.days_left;
   if (days < 0) return `просрочено на ${plural(-days, ["день", "дня", "дней"])}`;
   if (days === 0) return "срок сегодня";
-  return `до ${t.due} · ${plural(days, ["день", "дня", "дней"])}`;
+  return `до ${ddmm(t.due_on)} · ${plural(days, ["день", "дня", "дней"])}`;
 }
 
-const isLate = (t: Task) => t.status !== "done" && (t.status === "overdue" || daysUntil(t.due) < 0);
-
-function TaskCard({ task }: { task: Task }) {
-  const { setTaskStatus, toggleCheck, taskChecks } = usePrototype();
+function TaskCard({ task }: { task: ApiTask }) {
+  const action = useTaskAction();
+  const { notify } = useUi();
   const [reporting, setReporting] = useState(false);
   const [report, setReport] = useState("");
   const [photo, setPhoto] = useState<string | null>(null);
-  const finding = task.findingId ? findingById(task.findingId) : undefined;
-  const checks = taskChecks[task.id] ?? [];
-  const steps = task.checklist ?? [];
-  const late = isLate(task);
+  const checks = task.checklist_done;
+  const steps = task.checklist;
+  const late = task.late;
   const done = task.status === "done";
+  const effect = money(task.finding_effect_rub_month);
 
   return (
     <motion.div layout initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
@@ -47,9 +44,9 @@ function TaskCard({ task }: { task: Task }) {
           </div>
           {done ? (
             <OutcomePill outcome={task.outcome} />
-          ) : finding?.effectRubMonth != null && (
+          ) : effect !== null && (
             <div className="text-right">
-              <div className="num font-display text-xl font-semibold text-ink">{rub(finding.effectRubMonth)}</div>
+              <div className="num font-display text-xl font-semibold text-ink">{rub(effect)}</div>
               <div className="text-xs text-ink-3">в месяц, если сработает</div>
             </div>
           )}
@@ -62,7 +59,7 @@ function TaskCard({ task }: { task: Task }) {
                 <button
                   type="button"
                   disabled={done}
-                  onClick={() => toggleCheck(task.id, i, steps.length)}
+                  onClick={() => action.mutate({ id: task.id, action: "checklist", body: { index: i, done: !checks[i] } })}
                   className="flex w-full items-center gap-3 rounded-[10px] px-2 py-2 text-left text-[15px] hover:bg-paper disabled:hover:bg-transparent"
                 >
                   <span className={cx("grid h-5 w-5 shrink-0 place-items-center rounded-md border", checks[i] ? "border-brand bg-brand text-white" : "border-line-strong")}>
@@ -82,14 +79,14 @@ function TaskCard({ task }: { task: Task }) {
         )}
 
         <div className="flex flex-wrap items-center gap-2 border-t border-line bg-paper/50 px-5 py-3">
-          {finding && (
-            <Link to="/findings/$findingId" params={{ findingId: finding.id }} className="mr-auto text-sm text-ink-3 hover:text-ink">
-              Зачем: {finding.title} →
+          {task.finding_id && task.finding_title && (
+            <Link to="/findings/$findingId" params={{ findingId: task.finding_id }} className="mr-auto text-sm text-ink-3 hover:text-ink">
+              Зачем: {task.finding_title} →
             </Link>
           )}
           {!done && !reporting && (
             <>
-              {task.status === "assigned" && <Button onClick={() => setTaskStatus(task.id, "in_progress")}>Начать</Button>}
+              {task.status === "assigned" && <Button onClick={() => action.mutate({ id: task.id, action: "start" })}>Начать</Button>}
               <Button variant="primary" onClick={() => setReporting(true)}>
                 Готово
               </Button>
@@ -115,7 +112,16 @@ function TaskCard({ task }: { task: Task }) {
                 <Button variant="ghost" onClick={() => setReporting(false)}>
                   Отмена
                 </Button>
-                <Button variant="primary" disabled={!report.trim()} onClick={() => setTaskStatus(task.id, "done", report)}>
+                <Button
+                  variant="primary"
+                  disabled={!report.trim() || action.isPending}
+                  onClick={() =>
+                    action.mutate(
+                      { id: task.id, action: "complete", body: { report: report.trim() } },
+                      { onSuccess: () => notify("Отчет отправлен. Результат в рублях посчитаем после инвентаризации и покажем у задачи") },
+                    )
+                  }
+                >
                   Отметить сделанной
                 </Button>
               </span>
@@ -129,13 +135,15 @@ function TaskCard({ task }: { task: Task }) {
 
 export function TasksPage() {
   const viewer = useViewer();
-  const tasks = useTasks();
+  const query = useTasks();
   if (!viewer) return null;
   // The management company follows work inside each finding; the restaurant lives in its task list.
   if (viewer.isHq) return <Navigate to="/findings" />;
-  const open = tasks.filter((t) => t.status !== "done").sort((a, b) => daysUntil(a.due) - daysUntil(b.due));
+  if (!query.data) return <Skeleton className="mx-auto h-96 max-w-[960px]" />;
+  const tasks = query.data;
+  const open = tasks.filter((t) => t.status !== "done").sort((a, b) => a.days_left - b.days_left);
   const done = tasks.filter((t) => t.status === "done");
-  const late = open.filter(isLate);
+  const late = open.filter((t) => t.late);
 
   return (
     <div className="mx-auto max-w-[960px]">

@@ -15,7 +15,9 @@ import {
 import { animate, motion, useReducedMotion } from "motion/react";
 import { type ReactNode, useEffect, useState } from "react";
 
-import type { ProcessKey, Status } from "../mock/types";
+import type { ProcessKey } from "../api/types";
+
+export type Status = "good" | "warning" | "critical";
 import { cx, EASE } from "./primitives";
 
 // ------------------------------------------------------------------ animated numbers

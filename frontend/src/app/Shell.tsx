@@ -24,16 +24,15 @@ import { motion } from "motion/react";
 import { useEffect } from "react";
 
 import { ApiError, tokens } from "../api/client";
-import { useMe } from "../api/hooks";
+import { useAppContext, useBadges, useMe } from "../api/hooks";
+import { ddmm } from "../lib/format";
 import { ROLE_LABELS } from "../api/types";
 import { Logo, LogoMark } from "../brand/Logo";
 import { cx } from "../ds/primitives";
 import { DEMO } from "../api/client";
-import { PERIOD } from "../mock/data";
 import { PeriodPicker } from "./PeriodPicker";
-import { usePrototype } from "../state/prototype";
+import { useUi } from "../state/ui";
 import { ChatDrawer } from "./chat/ChatDrawer";
-import { useInboxCount, useOpenTaskCount } from "./counts";
 import { useReviewCount } from "./hq/Review";
 
 interface NavItem {
@@ -141,11 +140,13 @@ export function Shell() {
   const { data: me, error: meError } = useMe();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { openChat } = usePrototype();
+  const { openChat } = useUi();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const badges = useBadges();
+  const context = useAppContext();
   const counts = {
-    tasks: useOpenTaskCount(),
-    inbox: useInboxCount(),
+    tasks: badges.data?.open_tasks ?? 0,
+    inbox: badges.data?.inbox ?? 0,
     review: useReviewCount(
       me?.role === "hq_admin" || me?.role === "hq_analyst",
     ),
@@ -247,15 +248,15 @@ export function Shell() {
             </span>
             <PeriodPicker />
             <div className="hidden min-w-0 items-center gap-2 text-sm text-ink-2 md:flex">
-              <span>данные обновлены {PERIOD.dataUntil.slice(0, 5)}</span>
-              {/* Overview screens still show the prototype's figures until their APIs exist (docs/06):
-                  say so in the real product too, so nobody takes them for their network's numbers. */}
-              <span
-                className="rounded-full bg-spark/25 px-2 py-0.5 text-[11px] font-medium text-ink"
-                title={DEMO ? undefined : "Реальные данные — в «Данных», «Проверке находок», «Нормах и настройках» и в блоке «Найдено движком и проверено»"}
-              >
-                {DEMO ? "Прототип · демо-данные" : "Обзорные экраны · демо-данные"}
-              </span>
+              {context.data?.data_until && <span>данные по {ddmm(context.data.data_until)}</span>}
+              {DEMO && (
+                <span
+                  className="rounded-full bg-spark/25 px-2 py-0.5 text-[11px] font-medium text-ink"
+                  title="Ответы сервера на демо-сети, записанные заранее: действия в прототипе меняют только сам объект, итоги — на момент записи"
+                >
+                  Прототип · демо-сеть
+                </span>
+              )}
             </div>
             <button
               type="button"

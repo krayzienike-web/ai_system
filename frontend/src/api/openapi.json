@@ -2370,6 +2370,10 @@
       "title": "Closed Findings",
       "type": "integer"
      },
+     "confirmed_by_tasks_rub_month": {
+      "title": "Confirmed By Tasks Rub Month",
+      "type": "string"
+     },
      "confirmed_rub_month": {
       "title": "Confirmed Rub Month",
       "type": "string"
@@ -2454,6 +2458,7 @@
      "done_tasks",
      "failures",
      "network_name",
+     "confirmed_by_tasks_rub_month",
      "trend",
      "checks"
     ],

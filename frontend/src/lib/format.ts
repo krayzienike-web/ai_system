@@ -49,3 +49,13 @@ export const MODULE_TITLE: Record<string, string> = {
   M6: "Риск дефицита",
   M7: "Качество данных",
 };
+
+/** "2026-10-18" → "18.10". */
+export const ddmm = (iso: string | null | undefined) => (iso ? `${iso.slice(8, 10)}.${iso.slice(5, 7)}` : "");
+
+/** "2026-10-18" → "18 окт". */
+export const dayMonth = (iso: string | null | undefined) =>
+  iso ? new Date(`${iso}T00:00:00`).toLocaleDateString("ru-RU", { day: "numeric", month: "short" }).replace(".", "") : "";
+
+/** Money from the API (a decimal string) as a number to show; never for further arithmetic. */
+export const money = (value: string | number | null | undefined) => (value === null || value === undefined ? null : Number(value));

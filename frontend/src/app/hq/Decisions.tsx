@@ -3,15 +3,14 @@ import { BellRing, ChevronDown, FlaskConical, Timer } from "lucide-react";
 import { useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 
-import { Button, Card, cx, EmptyState, PageTitle, Reveal } from "../../ds/primitives";
-import { rub } from "../../lib/format";
-import { RESTAURANTS } from "../../mock/data";
-import { findingById, restaurantByCode } from "../../mock/selectors";
-import type { Experiment } from "../../mock/types";
-import { usePrototype } from "../../state/prototype";
-import { useInbox } from "../counts";
+import { useCheckAction, useChecks, useTaskAction, useTasks } from "../../api/hooks";
+import type { Check } from "../../api/types";
+import { Button, Card, cx, EmptyState, PageTitle, Reveal, Skeleton } from "../../ds/primitives";
+import { ddmm, money, plural, rub } from "../../lib/format";
+import { useUi } from "../../state/ui";
 
-const names = (codes: string[]) => codes.map((c) => restaurantByCode(c)?.name ?? c).join(", ");
+const names = (places: Check["test"]) => places?.map((p) => p.name).join(", ") ?? "";
+const weeks = (c: Check) => Math.round((new Date(c.ends_on).getTime() - new Date(c.starts_on).getTime()) / (7 * 86_400_000));
 
 function Section({ icon, title, count, children }: { icon: React.ReactNode; title: string; count: number; children: React.ReactNode }) {
   if (!count) return null;
@@ -32,7 +31,7 @@ function Section({ icon, title, count, children }: { icon: React.ReactNode; titl
 const exit = { opacity: 0, x: 60, transition: { duration: 0.3 } };
 
 /** A proposed check as one scannable row; details (hypothesis, tasks) unfold on demand. */
-function ProposedRow({ e, onDecide }: { e: Experiment; onDecide: (id: string, d: "approved" | "rejected") => void }) {
+function ProposedRow({ e, onDecide }: { e: Check; onDecide: (id: string, d: "launch" | "reject") => void }) {
   const [open, setOpen] = useState(false);
   return (
     <motion.li layout exit={{ opacity: 0, height: 0, transition: { duration: 0.25 } }} className="overflow-hidden">
@@ -43,18 +42,19 @@ function ProposedRow({ e, onDecide }: { e: Experiment; onDecide: (id: string, d:
             <span className="truncate">{e.title}</span>
           </span>
           <span className="mt-1 block truncate pl-6 text-sm text-ink-3">
-            Пробуем: <span className="text-ink-2">{names(e.test)}</span> · сравниваем с: {e.control.length ? names(e.control) : "внутри ресторана"} · {e.period}
+            Пробуем: <span className="text-ink-2">{names(e.test)}</span> · сравниваем с: {e.control?.length ? names(e.control) : "внутри ресторана"} ·{" "}
+            {plural(weeks(e), ["неделя", "недели", "недель"])}, до {ddmm(e.ends_on)}
           </span>
         </button>
         <span className="text-right">
-          <span className="num block font-display text-lg font-semibold text-gain">+{rub(e.expectedRubMonth)}</span>
+          <span className="num block font-display text-lg font-semibold text-gain">+{rub(money(e.expected_rub_month) ?? 0)}</span>
           <span className="block text-[11px] text-ink-3">в месяц, если сработает</span>
         </span>
         <span className="col-span-2 flex gap-2 pl-6 sm:col-span-1 sm:pl-0">
-          <Button size="sm" variant="primary" onClick={() => onDecide(e.id, "approved")}>
+          <Button size="sm" variant="primary" onClick={() => onDecide(e.id, "launch")}>
             Запустить
           </Button>
-          <Button size="sm" variant="ghost" onClick={() => onDecide(e.id, "rejected")}>
+          <Button size="sm" variant="ghost" onClick={() => onDecide(e.id, "reject")}>
             Отклонить
           </Button>
         </span>
@@ -66,7 +66,7 @@ function ProposedRow({ e, onDecide }: { e: Experiment; onDecide: (id: string, d:
               <p className="text-ink-2">{e.hypothesis}</p>
               <div className="rounded-[12px] bg-paper p-3 text-ink-2">
                 <span className="font-medium text-ink">После запуска: </span>
-                задача директору {e.test.map((c) => `«${restaurantByCode(c)?.name}»`).join(" и ")} со сроком и чек-листом; замер — «{e.metric}».
+                задача директору {(e.test ?? []).map((p) => `«${p.name}»`).join(" и ")} со сроком и чек-листом; замер — «{e.metric}».
               </div>
               <Link to="/checks/$checkId" params={{ checkId: e.id }} className="inline-block text-brand-strong hover:underline">
                 Вся проверка →
@@ -80,25 +80,33 @@ function ProposedRow({ e, onDecide }: { e: Experiment; onDecide: (id: string, d:
 }
 
 export function DecisionsPage() {
-  const { experiments, overdue, drafts } = useInbox();
-  const { decideExperiment, notify } = usePrototype();
-  const total = experiments.length + overdue.length + drafts.length;
+  const checks = useChecks("proposed");
+  const overdue = useTasks(true);
+  const check = useCheckAction();
+  const task = useTaskAction();
+  const { notify } = useUi();
+  if (!checks.data || !overdue.data) return <Skeleton className="mx-auto h-96 max-w-[920px]" />;
+  const proposed = checks.data;
+  const late = overdue.data;
+  const total = proposed.length + late.length;
+  const decide = (id: string, d: "launch" | "reject") =>
+    check.mutate(
+      { id, action: d },
+      { onSuccess: () => notify(d === "launch" ? "Проверка запущена, задачи отправлены директорам" : "Проверка отклонена") },
+    );
 
   return (
     <div className="mx-auto max-w-[920px] space-y-8">
-      <PageTitle
-        title="Ждут вашего решения"
-        subtitle={total ? "Все, что нельзя сделать без вас. Решения — прямо здесь." : undefined}
-      />
+      <PageTitle title="Ждут вашего решения" subtitle={total ? "Все, что нельзя сделать без вас. Решения — прямо здесь." : undefined} />
       {!total && <EmptyState title="Все решения приняты">Новые вопросы появятся здесь — и на главной сети.</EmptyState>}
 
-      <Section icon={<FlaskConical size={20} />} title="Проверки к запуску" count={experiments.length}>
+      <Section icon={<FlaskConical size={20} />} title="Проверки к запуску" count={proposed.length}>
         <motion.div key="proposed" layout exit={exit}>
           <Card className="p-2">
             <ul className="divide-y divide-line">
               <AnimatePresence initial={false}>
-                {experiments.map((e) => (
-                  <ProposedRow key={e.id} e={e} onDecide={decideExperiment} />
+                {proposed.map((e) => (
+                  <ProposedRow key={e.id} e={e} onDecide={decide} />
                 ))}
               </AnimatePresence>
             </ul>
@@ -106,31 +114,21 @@ export function DecisionsPage() {
         </motion.div>
       </Section>
 
-      <Section icon={<FlaskConical size={20} />} title="Черновики проверок от команды" count={drafts.length}>
-        {drafts.map((id) => {
-          const f = findingById(id);
-          return (
-            <motion.div key={id} layout exit={exit}>
-              <Card className="p-5 text-sm">
-                <div className="font-semibold">{f?.actions[0]}</div>
-                <div className="mt-1 text-ink-3">По находке «{f?.title}» · ждет запуска</div>
-              </Card>
-            </motion.div>
-          );
-        })}
-      </Section>
-
-      <Section icon={<Timer size={20} />} title="Просроченные задачи" count={overdue.length}>
-        {overdue.map((t) => (
+      <Section icon={<Timer size={20} />} title="Просроченные задачи" count={late.length}>
+        {late.map((t) => (
           <motion.div key={t.id} layout exit={exit}>
             <Card className="flex flex-wrap items-center justify-between gap-3 p-5">
               <div>
                 <div className="font-semibold">{t.title}</div>
                 <div className="text-sm text-ink-3">
-                  {RESTAURANTS.find((r) => r.code === t.restaurantId)?.name} · срок был {t.due}
+                  {t.restaurant_name} · срок был {ddmm(t.due_on)}
+                  {t.reminded_on && ` · напомнили ${ddmm(t.reminded_on)}`}
                 </div>
               </div>
-              <Button onClick={() => notify("Директору отправлено напоминание")}>
+              <Button
+                disabled={task.isPending}
+                onClick={() => task.mutate({ id: t.id, action: "remind" }, { onSuccess: () => notify("Директору отправлено напоминание") })}
+              >
                 <BellRing size={15} /> Напомнить
               </Button>
             </Card>

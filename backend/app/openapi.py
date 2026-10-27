@@ -65,7 +65,6 @@ def _object(s: dict[str, Any], indent: str = "") -> str:
 def typescript(schema: dict[str, Any]) -> str:
     out = [
         "// Generated from the API's OpenAPI schema by `python -m app.openapi` (backend). Do not edit.",
-        "/* eslint-disable */",
         "",
     ]
     for name, s in sorted(schema.get("components", {}).get("schemas", {}).items()):

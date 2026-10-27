@@ -1,4 +1,4 @@
-.PHONY: up down migrate seed demo-data load-demo test e2e lint check dev-backend dev-frontend
+.PHONY: up down migrate seed demo-data load-demo api-types demo-snapshot test e2e lint check dev-backend dev-frontend
 
 up:            ## Start everything in Docker (db, redis, backend, frontend) and seed demo data
 	docker compose up --build -d
@@ -19,6 +19,12 @@ demo-data:     ## Write the files of the synthetic 12-restaurant network to demo
 
 load-demo:     ## Load the synthetic network into the demo tenant through the import pipeline
 	cd backend && uv run python -m app.cli load-demo
+
+api-types:     ## Write the API contract for the frontend (frontend/src/api/openapi.json, schema.ts)
+	cd backend && uv run python -m app.openapi
+
+demo-snapshot: ## Record the API's answers on the demo network for the standalone prototype (after seed + load-demo)
+	cd backend && uv run python -m app.demo.snapshot
 
 test:          ## Backend tests with the coverage gate (90 %) and frontend unit tests
 	cd backend && uv run pytest -q --cov

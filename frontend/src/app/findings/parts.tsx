@@ -3,43 +3,47 @@ import { ArrowRight, MessageCircle } from "lucide-react";
 import { motion } from "motion/react";
 import { useState } from "react";
 
+import { useAppContext, useCreateTasks } from "../../api/hooks";
+import type { ApiFinding } from "../../api/types";
 import { ConfidenceNote } from "../../ds/ai";
 import { Button, cx, Dialog, EASE, Pill, type Tone } from "../../ds/primitives";
 import { CYCLE, PROCESS_ICON } from "../../ds/viz";
-import { dateIn, DUE_PRESETS, todayLabel } from "../../lib/dates";
-import { perMonth } from "../../lib/format";
-import { PERIOD } from "../../mock/data";
-import { processTitle, restaurantByCode } from "../../mock/selectors";
-import type { Finding, FindingStatus } from "../../mock/types";
-import { usePrototype } from "../../state/prototype";
-import { useWork, type WorkStage } from "../counts";
+import { ddmm, money, perMonth } from "../../lib/format";
+import { useUi } from "../../state/ui";
 
-export function useStatus(f: Finding): FindingStatus {
-  const { findingStatus } = usePrototype();
-  return findingStatus[f.id] ?? f.status;
-}
+export const PROCESS_TITLE: Record<ApiFinding["process"], string> = {
+  purchasing: "Закупка",
+  receiving: "Приемка",
+  storage: "Хранение",
+  production: "Производство (ТТК)",
+  writeoffs: "Списания",
+  inventory: "Инвентаризация",
+  accounting: "Учет и данные",
+  planning: "Планирование запасов",
+};
+
+export const STAGE_INDEX = { new: 0, doing: 1, checking: 2, done: 3 } as const;
 
 /** Money in words, colored by meaning: "Теряем 38 тыс ₽ в месяц" / "Можно заработать …". */
-export function MoneyWords({ f, size = "md" }: { f: Finding; size?: "md" | "lg" }) {
+export function MoneyWords({ f, size = "md" }: { f: ApiFinding; size?: "md" | "lg" }) {
   const big = size === "lg";
-  if (f.effectRubMonth === null) {
-    return <span className={cx("font-medium text-ink-2", big ? "text-lg" : "text-sm")}>{f.effectNote ?? "Сумму пока не оценить"}</span>;
+  const effect = money(f.effect_rub_month);
+  if (effect === null) {
+    return <span className={cx("font-medium text-ink-2", big ? "text-lg" : "text-sm")}>{f.effect_note ?? "Сумму пока не оценить"}</span>;
   }
   const loss = f.kind === "problem";
   return (
     <span className={cx("leading-tight", big ? "text-lg" : "text-sm")}>
       <span className="text-ink-2">{loss ? "Теряем " : "Можно заработать "}</span>
-      <span className={cx("num font-semibold", loss ? "text-loss" : "text-gain")}>{perMonth(f.effectRubMonth)}</span>
+      <span className={cx("num font-semibold", loss ? "text-loss" : "text-gain")}>{perMonth(effect)}</span>
     </span>
   );
 }
 
 const STAGE_TONE: Tone[] = ["neutral", "info", "brand", "gain"];
 
-const STAGE_INDEX: Record<WorkStage, number> = { new: 0, doing: 1, checking: 2, done: 3 };
-
-export function StagePill({ f }: { f: Finding }) {
-  const stage = STAGE_INDEX[useWork()(f).stage];
+export function StagePill({ f }: { f: ApiFinding }) {
+  const stage = STAGE_INDEX[f.work.stage];
   return (
     <Pill tone={STAGE_TONE[stage]} icon={stage === 3}>
       {CYCLE[stage]}
@@ -47,19 +51,36 @@ export function StagePill({ f }: { f: Finding }) {
   );
 }
 
-export function ProcessChip({ f }: { f: Finding }) {
+/** One line about the work on a finding, from the API's work state; null when nothing is going on. */
+export function workLine(f: ApiFinding): { text: string; tone: "loss" | "gain" | "info" | "warn" } | null {
+  const w = f.work;
+  const confirmed = money(w.confirmed_rub_month) ?? 0;
+  if (w.stage === "done") return { text: confirmed ? `Сработало: +${perMonth(confirmed)}` : "Есть результат", tone: "gain" };
+  if (w.stage === "checking") return { text: "Идет проверка", tone: w.tasks_late ? "loss" : "info" };
+  if (w.stage === "doing") {
+    const text = w.tasks_total
+      ? `Задачи: сделано ${w.tasks_done} из ${w.tasks_total}${w.tasks_late ? ` · просрочено ${w.tasks_late}` : ""}`
+      : "В работе";
+    return { text, tone: w.tasks_late ? "loss" : "info" };
+  }
+  return w.check_waiting_launch ? { text: "Проверка ждет запуска", tone: "warn" } : null;
+}
+
+export function ProcessChip({ f }: { f: ApiFinding }) {
   const Icon = PROCESS_ICON[f.process];
   return (
     <span className="inline-flex items-center gap-1.5 text-xs text-ink-3">
       <Icon size={14} strokeWidth={1.75} aria-hidden />
-      {processTitle(f.process)}
+      {PROCESS_TITLE[f.process]}
     </span>
   );
 }
 
+const text = (f: ApiFinding) => f.headline ?? f.view?.summary ?? "";
+
 /** "This week's action": the decision-ready version of a finding. */
-export function ActionCard({ f, index, onTake }: { f: Finding; index: number; onTake: () => void }) {
-  const { openChat } = usePrototype();
+export function ActionCard({ f, index, onTake }: { f: ApiFinding; index: number; onTake: () => void }) {
+  const { openChat } = useUi();
   return (
     <motion.article
       layout
@@ -77,7 +98,7 @@ export function ActionCard({ f, index, onTake }: { f: Finding; index: number; on
       <div className="mt-1.5">
         <MoneyWords f={f} />
       </div>
-      <p className="mt-3 flex-1 text-sm leading-relaxed text-ink-2">{f.headline ?? f.summary}</p>
+      <p className="mt-3 flex-1 text-sm leading-relaxed text-ink-2">{text(f)}</p>
       <div className="mt-4 rounded-[12px] bg-paper px-3 py-2.5 text-sm">
         <span className="text-ink-3">Первый шаг: </span>
         <span className="text-ink">{f.actions[0]}</span>
@@ -104,9 +125,8 @@ export function ActionCard({ f, index, onTake }: { f: Finding; index: number; on
 }
 
 /** A finding in a list: one line to scan, click for details. */
-export function FindingRow({ f, showRestaurant }: { f: Finding; showRestaurant?: boolean }) {
+export function FindingRow({ f, showRestaurant }: { f: ApiFinding; showRestaurant?: boolean }) {
   const Icon = PROCESS_ICON[f.process];
-  const restaurant = f.restaurantId ? restaurantByCode(f.restaurantId) : null;
   const loss = f.kind === "problem";
   return (
     <Link
@@ -123,8 +143,8 @@ export function FindingRow({ f, showRestaurant }: { f: Finding; showRestaurant?:
           <StagePill f={f} />
         </span>
         <span className="mt-0.5 line-clamp-2 block text-sm text-ink-3">
-          {showRestaurant && <span className="text-ink-2">{restaurant ? restaurant.name : "Вся сеть"} · </span>}
-          {f.headline ?? f.summary}
+          {showRestaurant && <span className="text-ink-2">{f.restaurant_name ?? "Вся сеть"} · </span>}
+          {text(f)}
         </span>
       </span>
       <span className="col-start-2 sm:col-start-3 sm:row-start-1 sm:text-right">
@@ -136,13 +156,17 @@ export function FindingRow({ f, showRestaurant }: { f: Finding; showRestaurant?:
 
 // ------------------------------------------------------------------ dialogs
 
-const DUE = DUE_PRESETS.map((p) => ({ label: `За ${p.label.toLowerCase().replace("неделя", "неделю")}`, date: dateIn(p.days) }));
-
-export function TakeToWorkDialog({ f, open, onClose }: { f: Finding; open: boolean; onClose: () => void }) {
-  const { createTasks } = usePrototype();
+/** The director takes a finding: the chosen steps become one task (with a checklist), due by the chosen date. */
+export function TakeToWorkDialog({ f, open, onClose }: { f: ApiFinding; open: boolean; onClose: () => void }) {
+  const create = useCreateTasks();
+  const context = useAppContext();
+  const { notify } = useUi();
   const [steps, setSteps] = useState<boolean[]>(() => f.actions.map((_, i) => i === 0));
   const [due, setDue] = useState(1);
+  const options = context.data?.due_options ?? [];
   const chosen = f.actions.filter((_, i) => steps[i]);
+  const effect = money(f.effect_rub_month);
+  const option = options[due];
 
   return (
     <Dialog open={open} onClose={onClose} title="Взять в работу">
@@ -166,9 +190,9 @@ export function TakeToWorkDialog({ f, open, onClose }: { f: Finding; open: boole
         <fieldset>
           <legend className="mb-2 font-medium text-ink">Срок</legend>
           <div className="flex flex-wrap gap-2">
-            {DUE.map((d, i) => (
+            {options.map((d, i) => (
               <button
-                key={d.label}
+                key={d.days}
                 type="button"
                 onClick={() => setDue(i)}
                 aria-pressed={due === i}
@@ -177,42 +201,43 @@ export function TakeToWorkDialog({ f, open, onClose }: { f: Finding; open: boole
                   due === i ? "border-brand bg-brand-soft font-medium text-brand-strong" : "border-line-strong text-ink-2",
                 )}
               >
-                {d.label} <span className="text-ink-3">· до {d.date}</span>
+                {d.label} <span className="text-ink-3">· до {ddmm(d.due_on)}</span>
               </button>
             ))}
           </div>
         </fieldset>
         <div className="rounded-[12px] bg-paper p-3.5 text-ink-2">
           <div className="mb-1 font-medium text-ink">Так будет выглядеть задача</div>
-          {chosen.length ? chosen.join("; ") : "Выберите хотя бы один шаг"}. Срок — {DUE[due]!.date}.
-          {f.effectRubMonth !== null && (
-            <> Если сработает, эффект — до {perMonth(f.effectRubMonth)} — проверим после инвентаризации {PERIOD.nextInventory.slice(0, 5)}.</>
+          {chosen.length ? chosen.join("; ") : "Выберите хотя бы один шаг"}
+          {option && <>. Срок — {ddmm(option.due_on)}.</>}
+          {effect !== null && context.data?.next_count_on && (
+            <> Если сработает, эффект — до {perMonth(effect)} — проверим после инвентаризации {ddmm(context.data.next_count_on)}.</>
           )}
         </div>
+        {create.isError && <p className="text-loss">Не получилось поставить задачу. Попробуйте еще раз.</p>}
         <div className="flex justify-end gap-2">
           <Button variant="ghost" onClick={onClose}>
             Отмена
           </Button>
           <Button
             variant="primary"
-            disabled={!chosen.length}
-            onClick={() => {
-              createTasks([
+            disabled={!chosen.length || !option || create.isPending}
+            onClick={() =>
+              create.mutate(
                 {
-                  id: `x-${f.id}`,
-                  restaurantId: f.restaurantId ?? "",
                   title: chosen[0]!,
-                  checklist: chosen.length > 1 ? chosen : undefined,
-                  source: "Взято из сводки недели",
-                  findingId: f.id,
-                  assignedBy: "director",
-                  createdAt: todayLabel(),
-                  due: DUE[due]!.date,
-                  status: "assigned",
+                  checklist: chosen.length > 1 ? chosen : [],
+                  finding_id: f.id,
+                  due_on: option!.due_on,
                 },
-              ]);
-              onClose();
-            }}
+                {
+                  onSuccess: () => {
+                    notify("Задача в «Моих задачах»");
+                    onClose();
+                  },
+                },
+              )
+            }
           >
             Взять в работу
           </Button>
@@ -222,6 +247,7 @@ export function TakeToWorkDialog({ f, open, onClose }: { f: Finding; open: boole
   );
 }
 
-export function FindingConfidence({ f }: { f: Finding }) {
-  return <ConfidenceNote confidence={f.confidence} reason={f.confidenceNote} />;
+export function FindingConfidence({ f }: { f: ApiFinding }) {
+  if (!f.confidence) return null;
+  return <ConfidenceNote confidence={f.confidence} reason={f.view?.confidence_note ?? "по загруженным данным"} />;
 }

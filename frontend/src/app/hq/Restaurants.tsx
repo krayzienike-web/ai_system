@@ -2,11 +2,9 @@ import { Link, useNavigate, useParams } from "@tanstack/react-router";
 import { ArrowDown, ArrowDownRight, ArrowLeft, ArrowUp, ArrowUpRight, Search } from "lucide-react";
 import { useState } from "react";
 
-import { Card, cx, PageTitle, Pill, Reveal } from "../../ds/primitives";
-import { pct, plural, rub } from "../../lib/format";
-import { FRESHNESS, KPIS, LOSSES_LAST_WEEK, RESTAURANTS } from "../../mock/data";
-import { PROCESSES, processStatus, restaurantFindings } from "../../mock/selectors";
-import { useTasks } from "../counts";
+import { useRestaurantRows } from "../../api/hooks";
+import { Card, cx, PageTitle, Pill, Reveal, Skeleton } from "../../ds/primitives";
+import { money, pct, plural, rub } from "../../lib/format";
 import { WeekView } from "../director/Week";
 
 type SortKey = "losses" | "potential" | "foodCost" | "delta" | "late" | "tasksDone" | "name";
@@ -59,28 +57,26 @@ function SortTh({
 /** The general list of restaurants: search and sort by any column; built to stay usable at 100+ rows. */
 export function RestaurantsPage() {
   const navigate = useNavigate();
-  const tasks = useTasks();
+  const data = useRestaurantRows();
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({ key: "losses", desc: true });
+  if (!data.data) return <Skeleton className="mx-auto h-96 max-w-[1180px]" />;
 
-  const rows: Row[] = RESTAURANTS.map((r) => {
-    const { losses, potential } = restaurantFindings(r.code);
-    const stale = FRESHNESS.find((f) => f.restaurantId === r.code && f.status !== "good");
-    return {
-      code: r.code,
-      name: r.name,
-      city: r.city,
-      losses,
-      potential,
-      foodCost: KPIS[r.code]!.foodCostActual,
-      delta: losses - (LOSSES_LAST_WEEK[r.code] ?? losses),
-      late: tasks.filter((t) => t.restaurantId === r.code && t.status === "overdue").length,
-      tasksDone: tasks.filter((t) => t.restaurantId === r.code && t.status === "done").length,
-      tasksTotal: tasks.filter((t) => t.restaurantId === r.code).length,
-      badProcesses: PROCESSES.filter((p) => processStatus(r.code, p.key).status !== "good").length,
-      staleData: stale ? `${stale.dataset} по ${stale.lastDate}` : null,
-    };
-  });
+  // The figures are the API's; the page only searches and sorts what it got.
+  const rows: Row[] = data.data.map((r) => ({
+    code: r.code,
+    name: r.name,
+    city: r.city ?? "",
+    losses: money(r.losses) ?? 0,
+    potential: money(r.potential) ?? 0,
+    foodCost: r.food_cost === null ? 0 : Number(r.food_cost) * 100,
+    delta: money(r.delta) ?? 0,
+    late: r.late,
+    tasksDone: r.tasks_done,
+    tasksTotal: r.tasks_total,
+    badProcesses: r.bad_processes,
+    staleData: r.stale_data,
+  }));
   const q = query.trim().toLowerCase();
   const shown = rows
     .filter((r) => !q || r.name.toLowerCase().includes(q) || r.city.toLowerCase().includes(q))
@@ -89,13 +85,12 @@ export function RestaurantsPage() {
       return sort.key === "name" ? dir * a.name.localeCompare(b.name) : dir * (a[sort.key] - b[sort.key]);
     });
   const maxLoss = Math.max(...rows.map((r) => r.losses), 1);
-  const totalLoss = rows.reduce((acc, r) => acc + r.losses, 0);
 
   return (
     <div className="mx-auto max-w-[1180px]">
       <PageTitle
         title="Рестораны"
-        subtitle={`${plural(rows.length, ["ресторан", "ресторана", "ресторанов"])} · теряют вместе ${rub(totalLoss)} в месяц. Нажмите на заголовок колонки, чтобы отсортировать.`}
+        subtitle={`${plural(rows.length, ["ресторан", "ресторана", "ресторанов"])}. Нажмите на заголовок колонки, чтобы отсортировать.`}
       />
       <Reveal>
         <Card className="p-2">
@@ -154,7 +149,7 @@ export function RestaurantsPage() {
                         </span>
                       )}
                     </td>
-                    <td className="px-4 py-3 text-right">{pct(r.foodCost)}</td>
+                    <td className="px-4 py-3 text-right">{r.foodCost ? pct(r.foodCost) : "—"}</td>
                     <td className={cx("px-4 py-3 text-right", r.late ? "font-semibold text-loss" : "text-ink-3")}>{r.late || "—"}</td>
                     <td className="px-4 py-3 text-right text-ink-2">{r.tasksTotal ? `${r.tasksDone} из ${r.tasksTotal}` : "—"}</td>
                     <td className="px-4 py-3">
