@@ -6,7 +6,7 @@ import { useState } from "react";
 import { useAppContext, useFinding } from "../../api/hooks";
 import type { FindingDetail } from "../../api/types";
 import { TrendChart } from "../../ds/TrendChart";
-import { AiBadge, VerifiedNote } from "../../ds/ai";
+import { VerifiedNote } from "../../ds/ai";
 import { Button, buttonClass, Card, EmptyState, Pill, QuestionBlock, Reveal, Skeleton } from "../../ds/primitives";
 import { BulletScale, CompositionBar, CycleSteps } from "../../ds/viz";
 import { ddmm, money, num, perMonth, rub } from "../../lib/format";
@@ -127,11 +127,8 @@ function FindingView({ f, isHq }: { f: FindingDetail; isHq: boolean }) {
         <Reveal index={2}>
           <QuestionBlock
             question="Почему так и что сделать?"
-            answer={
-              <span className="inline-flex items-center gap-2">
-                Вероятные причины <AiBadge basis={`${view?.confidence_note ?? "По загруженным данным"}. Причины — гипотезы по данным, их стоит проверить на месте.`} />
-              </span>
-            }
+            answer="Вероятные причины"
+            source={<VerifiedNote>типовые причины для такой находки — проверьте на месте; объяснение ИИ по вашим данным появится с помощником аналитика</VerifiedNote>}
             className="h-full"
           >
             {!!view?.causes?.length && (

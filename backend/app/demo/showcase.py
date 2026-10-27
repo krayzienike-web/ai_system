@@ -209,15 +209,11 @@ def work(session: Session, ctx: AccessContext, today: date, analyst: UUID) -> No
     session.flush()
 
 
-# Left for the prototype's «Проверка находок»: the salmon price growth and what it does to the dish.
-LEFT_FOR_REVIEW = {"M3:net:P09:growth", "M2:net:M07"}
-
-
 def confirm_pending(session: Session, analyst: UUID, today: date) -> None:
-    """What an analyst would have confirmed during the demo's history (some findings stay to review)."""
+    """What an analyst confirmed during the demo's history. The salmon price growth and the dish it makes
+    expensive are confirmed too: the prototype's totals are recorded, so a finding confirmed while showing it
+    would not reach «Сеть». Today's findings (the pasta shortage, a missing upload) wait in «Проверка находок»."""
     for f in session.execute(select(Finding).where(Finding.review_status == ReviewStatus.PENDING)).scalars():
-        if f.key in LEFT_FOR_REVIEW:
-            continue
         f.review_status, f.reviewed_by, f.reviewed_on = ReviewStatus.CONFIRMED, analyst, today
     session.flush()
 

@@ -5,7 +5,7 @@ import { useState } from "react";
 
 import { useCheck, useCheckAction, useCheckDraft, useProposeCheck } from "../../api/hooks";
 import type { Check } from "../../api/types";
-import { AiBadge, VerifiedNote } from "../../ds/ai";
+import { VerifiedNote } from "../../ds/ai";
 import { Button, Card, cx, EASE, EmptyState, ErrorText, PageTitle, Pill, QuestionBlock, Reveal, Skeleton } from "../../ds/primitives";
 import { ddmm, money, perMonth, plural, rub } from "../../lib/format";
 import { useViewer } from "../../lib/useViewer";
@@ -276,7 +276,7 @@ export function NewCheckPage() {
             {step === 0 && (
               <div className="space-y-3">
                 <div className="flex items-center gap-2 font-medium">
-                  Что меняем в ресторане <AiBadge basis="Варианты мер — из находки." />
+                  Что меняем в ресторане <span className="text-xs font-normal text-ink-3">· варианты из находки</span>
                 </div>
                 {d.actions.map((a, i) => (
                   <label key={a} className={cx("flex cursor-pointer items-start gap-3 rounded-[12px] border p-4", action === i ? "border-brand bg-brand-soft" : "border-line")}>

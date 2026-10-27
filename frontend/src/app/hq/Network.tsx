@@ -99,7 +99,8 @@ export function NetworkPage() {
               format={(v) => rub(v)}
               height={150}
             />
-            {change !== null && n.trend.change_pct !== null && (
+            {/* No change: the answer above already says «не изменился», an arrow «на 0% меньше» would contradict it. */}
+            {change !== null && change !== 0 && n.trend.change_pct !== null && (
               <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-sm">
                 <span className={`inline-flex items-center gap-1.5 font-medium ${change <= 0 ? "text-gain" : "text-loss"}`}>
                   {change <= 0 ? <ArrowDownRight size={15} /> : <ArrowUpRight size={15} />} на {n.trend.change_pct}%{" "}
