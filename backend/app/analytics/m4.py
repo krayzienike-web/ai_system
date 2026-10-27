@@ -15,7 +15,7 @@ from uuid import UUID
 
 from app.analytics.costs import CostBook
 from app.analytics.drafts import Draft, dmy, pct
-from app.analytics.facts import CountRow, Facts
+from app.analytics.facts import CountRow, Facts, WriteOffRow
 from app.analytics.params import DEFAULT, EngineParams
 
 
@@ -123,21 +123,29 @@ def _pre_count(facts: Facts, costs: CostBook, cfg: EngineParams) -> list[Draft]:
     count_days: dict[UUID, list[date]] = defaultdict(list)
     for d in sorted({(c.restaurant, c.day) for c in facts.counts}):
         count_days[d[0]].append(d[1])
+    write_offs: dict[UUID, list[WriteOffRow]] = defaultdict(list)
+    for w in facts.write_offs:
+        write_offs[w.restaurant].append(w)
     drafts = []
     for restaurant, days in count_days.items():
         if len(days) < 2:
             continue
         since, last = days[0], days[-1]
+        before_count = {c - timedelta(days=i) for c in days[1:] for i in range(1, cfg.M4_PRE_DAYS + 1)}
+        price: dict[UUID, Decimal | None] = {}
         total = before = Decimal(0)
-        for w in facts.write_offs:
-            if w.restaurant != restaurant or not since < w.day <= last:
+        for w in write_offs[restaurant]:
+            if not since < w.day <= last:
                 continue
-            cost = costs.cost(restaurant, w.product, since + timedelta(days=1), last)
-            if cost is None:
+            if w.product not in price:
+                cost = costs.cost(restaurant, w.product, since + timedelta(days=1), last)
+                price[w.product] = None if cost is None else cost.rub_per_unit
+            unit_price = price[w.product]
+            if unit_price is None:
                 continue
-            value = w.qty * cost.rub_per_unit
+            value = w.qty * unit_price
             total += value
-            if any(1 <= (c - w.day).days <= cfg.M4_PRE_DAYS for c in days[1:]):
+            if w.day in before_count:
                 before += value
         if total <= 0:
             continue
