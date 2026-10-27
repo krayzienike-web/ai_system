@@ -45,7 +45,7 @@ export function PeriodPicker() {
         }}
         aria-expanded={open}
         aria-haspopup="dialog"
-        className="inline-flex h-9 items-center gap-2 rounded-full border border-line-strong bg-surface px-3 text-sm font-medium text-ink transition hover:border-brand"
+        className="inline-flex h-9 items-center gap-2 rounded-full border border-line-strong bg-surface px-3 text-sm font-medium whitespace-nowrap text-ink transition hover:border-brand"
       >
         <CalendarDays size={15} className="text-ink-3" />
         <span className="sm:hidden">{label.split(" · ")[1]}</span>

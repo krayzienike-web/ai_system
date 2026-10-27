@@ -15,13 +15,14 @@ import {
   Lightbulb,
   ListChecks,
   LogOut,
+  MoreHorizontal,
   type LucideIcon,
   Settings,
   ShieldCheck,
   Sparkles,
 } from "lucide-react";
 import { motion } from "motion/react";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 
 import { ApiError, tokens } from "../api/client";
 import { useAppContext, useBadges, useMe, useRefreshWhenRunIsDone } from "../api/hooks";
@@ -142,6 +143,7 @@ export function Shell() {
   const queryClient = useQueryClient();
   const { openChat } = useUi();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const [more, setMore] = useState(false);
   useRefreshWhenRunIsDone();
   const badges = useBadges();
   const context = useAppContext();
@@ -259,17 +261,17 @@ export function Shell() {
                   title="Ответы сервера на демо-сети, записанные заранее: действия в прототипе меняют только сам объект, итоги — на момент записи"
                 >
                   Прототип<span className="hidden md:inline"> · демо-сеть</span>
-                  {context.data?.data_until && <span className="md:hidden"> · {ddmm(context.data.data_until)}</span>}
                 </span>
               )}
             </div>
             <button
+              aria-label="Спросить су-шефа"
               type="button"
               onClick={() => openChat()}
               className="group ml-auto inline-flex h-9 items-center gap-2 rounded-full border border-line-strong bg-surface pr-2 pl-3 text-sm text-ink-2 shadow-sm transition hover:border-brand hover:text-ink"
             >
               <Sparkles size={15} className="text-brand" />
-              <span>Спросить су-шефа</span>
+              <span className="hidden sm:inline">Спросить су-шефа</span>
               <kbd className="hidden rounded-md bg-paper px-1.5 py-0.5 text-[11px] text-ink-3 sm:inline">
                 Ctrl K
               </kbd>
@@ -317,23 +319,70 @@ export function Shell() {
               )}
             </Link>
           ))}
-        <Link
-          to={isDirector ? "/data" : "/restaurants"}
-          className={cx(
-            "flex flex-col items-center gap-0.5 py-2 text-[11px]",
-            isActive(isDirector ? "/data" : "/restaurants")
-              ? "text-brand-strong"
-              : "text-ink-3",
-          )}
-        >
-          {isDirector ? (
+        {isDirector ? (
+          <Link
+            to="/data"
+            className={cx("flex flex-col items-center gap-0.5 py-2 text-[11px]", isActive("/data") ? "text-brand-strong" : "text-ink-3")}
+          >
             <Database size={20} strokeWidth={1.75} />
-          ) : (
-            <Building2 size={20} strokeWidth={1.75} />
-          )}
-          {isDirector ? "Данные" : "Рестораны"}
-        </Link>
+            Данные
+          </Link>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setMore((v) => !v)}
+            aria-expanded={more}
+            aria-controls="more-menu"
+            className={cx(
+              "relative flex flex-col items-center gap-0.5 py-2 text-[11px]",
+              more || nav.some((n) => !n.mobile && isActive(n.to)) ? "text-brand-strong" : "text-ink-3",
+            )}
+          >
+            <MoreHorizontal size={20} strokeWidth={1.75} />
+            Еще
+            {counts.review > 0 && (
+              <span className="num absolute top-1 right-1/2 translate-x-4 rounded-full bg-spark px-1 text-[10px] font-semibold text-ink">
+                {counts.review}
+              </span>
+            )}
+          </button>
+        )}
       </nav>
+
+      {/* Everything that does not fit the phone tab bar: the HQ reaches every section from a phone (TC-UI-04). */}
+      {more && (
+        <div className="fixed inset-0 z-20 lg:hidden" onClick={() => setMore(false)} aria-hidden="true">
+          <div className="absolute inset-0 bg-ink/30" />
+        </div>
+      )}
+      {more && (
+        <nav
+          id="more-menu"
+          aria-label="Еще разделы"
+          className="fixed inset-x-0 bottom-[calc(57px+env(safe-area-inset-bottom))] z-30 rounded-t-[20px] border-t border-line bg-surface px-[max(16px,env(safe-area-inset-left))] pt-3 pb-2 shadow-lg lg:hidden"
+        >
+          <ul className="grid gap-1">
+            {nav
+              .filter((n) => !n.mobile)
+              .map(({ to, title, Icon, badge }) => (
+                <li key={to}>
+                  <Link
+                    to={to}
+                    onClick={() => setMore(false)}
+                    className={cx(
+                      "flex items-center gap-3 rounded-[12px] px-3 py-3 text-[15px]",
+                      isActive(to) ? "bg-brand-soft font-medium text-brand-strong" : "text-ink hover:bg-paper",
+                    )}
+                  >
+                    <Icon size={20} strokeWidth={1.75} />
+                    {title}
+                    {badge && <Badge count={counts[badge]} />}
+                  </Link>
+                </li>
+              ))}
+          </ul>
+        </nav>
+      )}
 
       <ChatDrawer />
     </div>

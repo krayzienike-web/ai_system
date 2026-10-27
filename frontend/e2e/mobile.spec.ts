@@ -1,5 +1,6 @@
-// TC-UI-01 (docs/13-testing.md): every main screen fits a phone, for both roles.
-import { test } from "@playwright/test";
+// TC-UI-01, TC-UI-04 (docs/13-testing.md): every main screen fits a phone, for both roles, and the HQ
+// reaches every section from a phone.
+import { expect, test } from "@playwright/test";
 
 import { expectNoOverflow, signIn } from "./helpers";
 
@@ -20,3 +21,14 @@ for (const who of ["Управляющая компания", "Директор 
     }
   });
 }
+
+test("TC-UI-04: from a phone the HQ opens every section through «Еще»", async ({ page }) => {
+  await signIn(page, "Управляющая компания");
+  for (const section of ["Проверка находок", "Рестораны", "Отчет для руководителя", "Данные", "Нормы и настройки"]) {
+    await page.getByRole("button", { name: /Еще/ }).click();
+    await page.getByRole("navigation", { name: "Еще разделы" }).getByRole("link", { name: section }).click();
+    await expect(page.getByRole("navigation", { name: "Еще разделы" })).toHaveCount(0);
+    await expectNoOverflow(page);
+  }
+  await expect(page.getByRole("heading", { name: /Нормы|Настройки/ }).first()).toBeVisible();
+});
