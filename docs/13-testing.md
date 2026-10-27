@@ -111,13 +111,15 @@
 | TC-ENG-07 | Параметры: перевод единиц (75 % ↔ 0,75), значения сети поверх умолчаний, умолчания в допустимых границах | `test_analytics_units.py::test_params_*`, `test_every_default_lies_within_its_editable_range` | ✅ |
 | TC-ENG-08 | Параметры задаются для своей сети и меняют находки; меняет только администратор | `test_engine_params_are_set_per_network_and_change_the_findings` | ✅ |
 | TC-ENG-09 | Пересчет запускает только администратор УК | `test_engine_run_is_hq_admin_only` | ✅ |
-| TC-ENG-10 | На демо-сети находятся все 12 заложенных проблем (13 находок), сверка проходит для каждой; повторный пересчет идемпотентен | `test_engine_finds_planted_problems_and_review_gates_directors` | ✅ |
+| TC-ENG-10 | На демо-сети находятся все 16 заложенных проблем (18 находок), сверка проходит для каждой; повторный пересчет идемпотентен | `test_engine_finds_planted_problems_and_review_gates_directors` | ✅ |
 | TC-ENG-11 | Движок не выдает две находки с одним ключом | проверка в `engine.run` | 🟡 (нет отдельного теста) |
 | TC-ENG-12 | Удаление устаревших находок не трогает находки с задачами и проверками | — | ⬜ |
 | TC-ENG-13 | Пересчет на 100+ ресторанах укладывается во время | — | ⬜ (архитектурное ревью) |
 | TC-ENG-14 | M1 сравнивает ресторан с сетью, когда у ресторанов свои дни инвентаризаций (Q15); слишком далекие периоды не сравниваются | `test_m1_compares_restaurants_counting_on_their_own_days` | ✅ |
 | TC-ENG-17 | M4: списания перед инвентаризацией и пересорт; ровные списания и обычное расхождение — не находка | `test_m4_write_offs_before_counts_and_mixed_up_products` | ✅ |
 | TC-ENG-18 | M5: списания выше сети и по дням недели; разовое списание и списания как у сети — не находка | `test_m5_write_offs_above_the_network_and_on_the_same_weekdays` | ✅ |
+| TC-ENG-19 | M6: товар закончится до поставки; мелкие позиции — не находка | `test_m6_shortage_before_the_next_delivery` | ✅ |
+| TC-ENG-20 | M4 «бумажные» и пропущенные пересчеты, M7 остаток по документам в минус; честный пересчет и минус из-за пропуска выгрузки — не находка | `test_m4_paper_and_overdue_counts_and_m7_books_below_zero`, демо-тест | ✅ |
 | TC-ENG-16 | M7 находит блюдо без техкарты и пропуск выгрузки ресторана; обычная пауза в закупках и загруженная техкарта — не находка; на демо-сети — обе заложенные аномалии, сверка проходит | `test_m7_dish_without_a_recipe_and_missing_exports`, `test_engine_finds_planted_problems_and_review_gates_directors` | ✅ |
 | TC-ENG-15 | M1 показывает «Расход меньше техкарты» как риск качества без рублей; мелкое отклонение и малый товар — нет (E3) | `test_m1_shows_usage_below_the_recipe_as_a_quality_risk` | 🟡 (нет теста сверки по шагам) |
 

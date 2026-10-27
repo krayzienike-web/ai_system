@@ -30,6 +30,12 @@ COUNT_DAYS = (
     date(2026, 10, 1),
 )  # full stock counts after the opening one
 
+SHORT_DELIVERY = date(2026, 10, 14)  # R04: the last pasta delivery is about half of what is needed
+MISSING_INVOICES = (
+    date(2026, 9, 11),
+    date(2026, 9, 15),
+)  # R10: mozzarella invoices never exported from 1С:ERP
+
 RESTAURANTS = [
     ("R01", "Ресторан на Тверской", "Москва", 1.3),
     ("R02", "Ресторан на Арбате", "Москва", 1.1),
@@ -306,6 +312,41 @@ def generate(seed: int = 42, restaurants: int = 12, start: date = START, end: da
         description="«Тыквенный суп» продается с 01.09 без ТТК — его расход система не видит",
     )
 
+    planted(
+        id="r04-pasta-shortage",
+        restaurant="R04",
+        module="M6",
+        product="P15",
+        kind="problem",
+        description="Последняя поставка спагетти — около половины нужного: паста закончится до следующей "
+        "поставки",
+        since=SHORT_DELIVERY.isoformat(),
+    )
+    planted(
+        id="r10-missing-invoice",
+        restaurant="R10",
+        module="M7",
+        product="P01",
+        kind="data_quality",
+        description="Две накладные на моцареллу (11.09 и 15.09) не выгружены: расчетный остаток уходит "
+        "в минус, а расход выглядит меньше техкарты (M1)",
+        since=MISSING_INVOICES[0].isoformat(),
+    )
+    planted(
+        id="r12-paper-counts",
+        restaurant="R12",
+        module="M4",
+        kind="problem",
+        description="Две последние инвентаризации без единого расхождения с учетом — пересчитали «на бумаге»",
+    )
+    planted(
+        id="r08-count-overdue",
+        restaurant="R08",
+        module="M4",
+        kind="problem",
+        description="Инвентаризацию 01.10 пропустили: последняя была 03.08",
+    )
+
     overuse: dict[tuple[str, str], list[float]] = {}
     for a in net.anomalies:
         if "overuse_by_period" in a:
@@ -416,6 +457,8 @@ def generate(seed: int = 42, restaurants: int = 12, start: date = START, end: da
                         need = avg * 1.15
                     else:
                         need = avg * horizon * 1.1 - shelf_stock
+                    if code == "R04" and p_code == "P15" and day == SHORT_DELIVERY:
+                        need *= 0.55  # a short delivery: the pasta runs out before the next one
                     if need > 0:
                         delivered = _q(need) if unit != "pcs" else _q(round(need), "1")
                         sup, unit_price = supplier, base_price * (1 + rnd.uniform(-0.02, 0.02))
@@ -429,7 +472,9 @@ def generate(seed: int = 42, restaurants: int = 12, start: date = START, end: da
                         amount = _q(float(delivered) * unit_price, "0.01")
                         vat_rate = VAT.get(category, Decimal("0.20"))
                         vat = _q(float(amount * vat_rate / (1 + vat_rate)), "0.01")
-                        hidden = code == "R09" and day > end - timedelta(days=7)
+                        hidden = (code == "R09" and day > end - timedelta(days=7)) or (
+                            code == "R10" and p_code == "P01" and day in MISSING_INVOICES
+                        )
                         if not hidden:
                             receipts_rows.append(
                                 [
@@ -478,8 +523,10 @@ def generate(seed: int = 42, restaurants: int = 12, start: date = START, end: da
                 if shelf_stock < 0:
                     shelf_stock = book_stock = 0.0  # emergency purchase; not part of the story
 
-                if day in count_days:
+                if day in count_days and not (code == "R08" and day == count_days[-1]):  # R08 skipped it
                     actual = shelf_stock
+                    if code == "R12" and day >= count_days[1]:
+                        actual = book_stock  # «counted» by copying the books: no difference at all
                     if code == "R11" and day == count_days[-1] and p_code in ("P02", "P03"):
                         swap = 0.6 if p_code == "P02" else -0.6  # counted under the wrong name
                         actual = max(0.0, shelf_stock + swap)

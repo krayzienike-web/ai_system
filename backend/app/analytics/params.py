@@ -52,6 +52,11 @@ class EngineParams:
     M4_PRE_TIMES: Decimal = Decimal(3)  # … and 3 times what evenly spread write-offs would give
     M4_SORT_SHARE: Decimal = Decimal("0.05")  # a surplus of at least 5 % of the books at the last count …
     M4_SORT_MATCH: Decimal = Decimal("0.3")  # … and a shortage of a same-category product within 30 % of it
+    M4_PAPER_COUNTS: int = 2  # this many last counts in a row …
+    M4_PAPER_SHARE: Decimal = Decimal("0.9")  # … each with no difference to the books for 90 % of products
+    M4_OVERDUE_TIMES: Decimal = Decimal(
+        "1.2"
+    )  # no count for longer than 1.2 × the restaurant's usual interval
     # M5 — write-offs
     M5_WINDOW_DAYS: int = 28
     M5_TIMES: Decimal = Decimal(2)  # written off / bought at least twice the network's median …
@@ -61,10 +66,16 @@ class EngineParams:
     M5_MATERIALITY_RUB_MONTH: Decimal = Decimal(3000)
     # A weekday pattern is a sure and cheap fix (order by day), so smaller sums are worth showing
     M5_WEEKDAY_MATERIALITY_RUB_MONTH: Decimal = Decimal(1000)
+    # M6 — stock outlook
+    M6_HISTORY_DAYS: int = 28  # the need per weekday and the delivery days: over the last 4 weeks
+    M6_MAX_LOSS: Decimal = Decimal("0.3")  # the usual unexplained use added to the recipes' is capped
+    M6_SHORT_DAYS: int = 1  # a shortage of at least this many days before the delivery …
+    M6_REVENUE_AT_RISK: Decimal = Decimal(3000)  # … of dishes bringing at least this much a day
     # M7 — data quality
     M7_WINDOW_DAYS: int = 28  # a dish sold without a recipe within the last 4 weeks
     M7_GAP_DAYS: int = 5  # an export missing for this many days, while other restaurants have them …
     M7_GAP_TIMES: Decimal = Decimal(2)  # … and longer than twice the restaurant's usual pause between days
+    M7_NEGATIVE_DAYS: Decimal = Decimal(3)  # the books below zero by more than three days of use
     M7_HISTORY_DAYS: int = 56  # the usual pause: over the last 8 weeks of the restaurant's data
 
 
@@ -334,6 +345,47 @@ DEFS: tuple[ParamDef, ...] = (
         D(0),
         D(100000),
     ),
+    ParamDef("M4_PAPER_COUNTS", "M4", "«Бумажные» пересчеты: подряд пересчетов", "", "", D(1), D(6)),
+    ParamDef(
+        "M4_PAPER_SHARE",
+        "M4",
+        "…в каждом без расхождения с учетом не меньше",
+        "% товаров",
+        "при настоящем пересчете расхождения есть всегда",
+        D(50),
+        D(100),
+        PCT,
+    ),
+    ParamDef(
+        "M4_OVERDUE_TIMES",
+        "M4",
+        "Инвентаризация пропущена, если пауза длиннее обычной в",
+        "раза",
+        "обычная — медиана промежутков между пересчетами ресторана",
+        D(1),
+        D(5),
+    ),
+    ParamDef("M6_HISTORY_DAYS", "M6", "Расход и дни поставок берем за последние", "дней", "", D(14), D(90)),
+    ParamDef("M6_SHORT_DAYS", "M6", "Риск дефицита: без товара хотя бы", "дней до поставки", "", D(1), D(14)),
+    ParamDef(
+        "M6_REVENUE_AT_RISK",
+        "M6",
+        "…если блюда с этим товаром приносят хотя бы",
+        "₽ в день",
+        "мелкие позиции не тревожим",
+        D(0),
+        D(1000000),
+    ),
+    ParamDef(
+        "M6_MAX_LOSS",
+        "M6",
+        "К расходу по техкартам добавляем обычные потери ресторана, но не больше",
+        "%",
+        "по данным M1",
+        D(0),
+        D(100),
+        PCT,
+    ),
     ParamDef(
         "M7_WINDOW_DAYS", "M7", "Блюда без техкарты ищем в продажах за последние", "дней", "", D(7), D(90)
     ),
@@ -345,6 +397,15 @@ DEFS: tuple[ParamDef, ...] = (
         "при том что другие рестораны уже загрузили эти дни",
         D(2),
         D(60),
+    ),
+    ParamDef(
+        "M7_NEGATIVE_DAYS",
+        "M7",
+        "Остаток по документам уходит в минус больше чем на",
+        "дней расхода",
+        "меньше — шум округлений и неточных техкарт",
+        D(1),
+        D(30),
     ),
     ParamDef(
         "M7_GAP_TIMES",

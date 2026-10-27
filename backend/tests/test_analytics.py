@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
-from app.analytics import engine, m1, m2, m3, m4, m5, m7, views
+from app.analytics import engine, m1, m2, m3, m4, m5, m6, m7, views
 from app.analytics.costs import CostBook
 from app.analytics.facts import (
     ContractRow,
@@ -269,6 +269,70 @@ def test_m4_write_offs_before_counts_and_mixed_up_products() -> None:
     assert views.build(mixed, f) is not None and views.build(pre, f) is not None
 
 
+def test_m6_shortage_before_the_next_delivery() -> None:
+    f, rs, cheese, pizza = _facts(restaurants=2)
+    end = date(2026, 10, 18)  # Sunday
+    days = [end - timedelta(days=i) for i in range(28)]
+    # 10 pizzas a day: 1.1 kg of cheese by the recipes; deliveries on Wednesdays.
+    f.sales = [SaleRow(r, d, pizza, Decimal(10), Decimal(5800)) for r in rs for d in days]
+    f.receipts = [
+        ReceiptRow(r, d, cheese, None, Decimal(8), Decimal(4800))
+        for r in rs
+        for d in days
+        if d.weekday() == 2
+    ]
+    # Counted on Wednesday 14.10 after the delivery: R01 has 6 kg (enough until Sunday only), R02 has 12 kg.
+    count = date(2026, 10, 14)
+    f.counts = [
+        CountRow(rs[0], count, cheese, None, Decimal(6)),
+        CountRow(rs[1], count, cheese, None, Decimal(12)),
+    ]
+    u = Usage(f)
+    (d,) = m6.detect(f, u, [])
+    assert d.key == "M6:R01:P01:shortage" and d.restaurant == rs[0]
+    # 6 kg − 4 days × 1.1 kg = 1.6 kg at the end of Sunday: out on Tuesday 20.10, the delivery on Wednesday.
+    assert d.evidence["zero_day"] == "2026-10-20" and d.evidence["next_delivery"] == "2026-10-21"
+    assert d.evidence["revenue_per_day"] == "5800"
+    assert views.build(d, f) is not None
+    # Dishes bringing less than the threshold a day are not worth an alarm.
+    assert m6.detect(f, u, [], replace(DEFAULT, M6_REVENUE_AT_RISK=Decimal(10000))) == []
+
+
+def test_m4_paper_and_overdue_counts_and_m7_books_below_zero() -> None:
+    f, rs, cheese, pizza = _facts(restaurants=2)
+    counts = [date(2026, 5, 1), date(2026, 6, 1), date(2026, 7, 1), date(2026, 8, 1)]
+    end = date(2026, 9, 30)
+    f.sales = [
+        SaleRow(r, counts[0] + timedelta(days=i), pizza, Decimal(10), Decimal(5800))
+        for r in rs
+        for i in range(1, (end - counts[0]).days + 1)
+    ]
+    for r in rs:
+        for i, c in enumerate(counts if r == rs[0] else [*counts[:-1], date(2026, 9, 1)]):
+            # R01 copies the books on its last two counts; R02 counts honestly, the last time on 01.09.
+            paper = r == rs[0] and i >= 2
+            actual = Decimal(20) if paper else Decimal("19.5") if r == rs[0] else Decimal(3)
+            f.counts.append(CountRow(r, c, cheese, Decimal(20), actual))
+    # Weekly deliveries cover the use (1.1 kg a day) — except R02 in August: one invoice is missing.
+    for r in rs:
+        day = counts[0] + timedelta(days=1)
+        while day <= end:
+            if day.weekday() == 0 and not (r == rs[1] and day == date(2026, 8, 10)):
+                f.receipts.append(ReceiptRow(r, day, cheese, None, Decimal("7.7"), Decimal(4620)))
+            day += timedelta(days=1)
+    drafts = {d.key: d for d in m4.detect(f, CostBook(f.receipts))}
+    assert set(drafts) == {"M4:R01:paper", "M4:R01:overdue"}
+    assert drafts["M4:R01:paper"].evidence["counts"] == {"2026-07-01": "1.0000", "2026-08-01": "1.0000"}
+    # R01 counts monthly and has not counted for 60 days; R02 counted a month ago.
+    assert drafts["M4:R01:overdue"].evidence["since_days"] == 60
+    negative = m7.detect_negative_stock(f, Usage(f))
+    assert [d.key for d in negative] == ["M7:R02:P01:negative"]
+    # 3 kg at the counts, the Monday invoice of 10.08 missing: more than 3 days of use below zero by Tuesday.
+    assert negative[0].evidence["first_negative"] == "2026-08-11"
+    for d in [*drafts.values(), *negative]:
+        assert views.build(d, f) is not None
+
+
 def _receipts(
     f: Facts, r: UUID, product: UUID, supplier: UUID, price: str, qty: str = "10", n: int = 6
 ) -> None:
@@ -374,18 +438,18 @@ def test_engine_finds_planted_problems_and_review_gates_directors(
         )
         assert client.post("/api/analytics/run", headers=analyst).status_code == 403
         run = client.post("/api/analytics/run", headers=hq).json()
-        assert run["created"] == 13
+        assert run["created"] == 18
         # Idempotent: the same data gives the same findings, updated in place.
         assert client.post("/api/analytics/run", headers=hq).json() | {} == {
             "created": 0,
-            "updated": 13,
+            "updated": 18,
             "removed": 0,
-            "drafts": 13,
+            "drafts": 18,
         }
 
         pending = client.get("/api/findings", headers=hq, params={"review": "pending"}).json()
         by_key = {(f["module"], f["title"]): f for f in pending}
-        assert len(pending) == 13 and all(f["review_status"] == "pending" for f in pending)
+        assert len(pending) == 18 and all(f["review_status"] == "pending" for f in pending)
         assert {t for _, t in by_key} == {
             "Перерасход по техкарте: Сыр Моцарелла",
             "Перерасход по техкарте: Лосось охлажденный",
@@ -400,6 +464,11 @@ def test_engine_finds_planted_problems_and_review_gates_directors(
             "Пересорт: сыр пармезан и сыр грана падано",
             "Списания выше сети: Руккола",
             "Списания в понедельник и вторник: Хлеб чиабатта",
+            "Инвентаризации не было 76 дней",
+            "Инвентаризации без расхождений с учетом",
+            "Закончится до поставки: Паста спагетти",
+            "Расчетный остаток уходит в минус: Сыр Моцарелла",
+            "Расход меньше техкарты: Сыр Моцарелла",
         }
         # M4 and M5: the planted habits, each recomputed from the rows by the check.
         for module, title in (
@@ -407,6 +476,11 @@ def test_engine_finds_planted_problems_and_review_gates_directors(
             ("M4", "Пересорт: сыр пармезан и сыр грана падано"),
             ("M5", "Списания выше сети: Руккола"),
             ("M5", "Списания в понедельник и вторник: Хлеб чиабатта"),
+            ("M4", "Инвентаризации не было 76 дней"),
+            ("M4", "Инвентаризации без расхождений с учетом"),
+            ("M6", "Закончится до поставки: Паста спагетти"),
+            ("M7", "Расчетный остаток уходит в минус: Сыр Моцарелла"),
+            ("M1", "Расход меньше техкарты: Сыр Моцарелла"),
         ):
             found = by_key[(module, title)]
             check = client.get(f"/api/findings/{found['id']}/verification", headers=analyst).json()
@@ -475,7 +549,8 @@ def test_engine_finds_planted_problems_and_review_gates_directors(
         # TC-REV-04: the network finding is recomputed restaurant by restaurant from the rows.
         vf = client.get(f"/api/findings/{fries['id']}/verification", headers=analyst).json()
         assert all(c["ok"] for c in vf["checks"]) and all(r["passed"] for r in vf["rules"])
-        assert len(vf["steps"][0]["rows"]) == 12 and vf["rules"][0]["value"] == "12 из 12"
+        # R08 skipped its last count: 11 restaurants in the period, 10 of them over the allowance.
+        assert len(vf["steps"][0]["rows"]) == 11 and vf["rules"][0]["value"] == "10 из 11"
         rejected = client.post(
             f"/api/findings/{fries['id']}/review",
             headers=hq,

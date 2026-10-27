@@ -44,12 +44,19 @@ CAUSES = {
     ],
     "M4:pre_count": ["Недостача закрывается актом списания", "Списания не оформляются в момент порчи"],
     "M4:mixed_up": ["Похожие товары хранятся вместе без подписей", "При пересчете перепутали названия"],
+    "M4:paper": ["Остатки переписали из учета, не пересчитывая полки"],
+    "M4:overdue": ["Инвентаризацию перенесли или забыли загрузить"],
+    "M6:shortage": ["Последняя поставка меньше обычной", "Продажи выше, чем рассчитывали при заказе"],
     "M5:rate": [
         "Партии больше, чем кухня успевает использовать до конца срока годности",
         "Нарушены условия хранения или правило «первым пришел — первым ушел»",
     ],
     "M5:weekdays": ["Заказ одинаковый на все дни, а продажи в эти дни ниже"],
     "M7:no_recipe": ["Блюдо ввели в меню, а техкарту в iiko не завели или не загрузили"],
+    "M7:negative": [
+        "Накладная не выгружена из 1С:ERP или не загружена",
+        "Перемещение из другого ресторана не оформлено",
+    ],
     "M7:gap": [
         "Выгрузку забыли сделать или загрузить",
         "Выгрузка из учетной системы упала с ошибкой",
@@ -425,6 +432,36 @@ def _m4(d: Draft, facts: Facts) -> dict[str, Any]:
                 "rows": [[f"{c[8:10]}.{c[5:7]}"] for c in ev["counts"]],
             },
         }
+    if ev["kind"] == "paper":
+        return {
+            "summary": d.headline,
+            "causes": CAUSES["M4:paper"],
+            "confidence_note": "Учетный и фактический остаток по каждому товару на последних пересчетах",
+            "table": {
+                "title": "Товары без расхождения с учетом",
+                "columns": ["Пересчет", "Без расхождения, %", "Товаров"],
+                "rows": [
+                    [f"{day[8:10]}.{day[5:7]}", _pp(share), ev["products"][day]]
+                    for day, share in ev["counts"].items()
+                ],
+            },
+        }
+    if ev["kind"] == "overdue":
+        return {
+            "summary": d.headline,
+            "causes": CAUSES["M4:overdue"],
+            "confidence_note": "Даты загруженных инвентаризаций ресторана",
+            "metric": {
+                "label": "Дней без инвентаризации",
+                "value": str(ev["since_days"]),
+                "benchmark": f"обычно раз в {_n(ev['usual_days'], 0):.0f} дней",
+            },
+            "table": {
+                "title": "Инвентаризации",
+                "columns": ["Дата"],
+                "rows": [[f"{c[8:10]}.{c[5:7]}"] for c in ev["counts"]],
+            },
+        }
     names = {p.code: p.name for p in facts.products.values()}
     return {
         "summary": d.headline,
@@ -478,6 +515,29 @@ def _m5(d: Draft, facts: Facts) -> dict[str, Any]:
     }
 
 
+def _m6(d: Draft, facts: Facts) -> dict[str, Any]:
+    ev = d.evidence
+    product = next(p for p in facts.products.values() if p.code == ev["product"])
+    unit = UNIT.get(product.unit, product.unit)
+    days = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"]
+    return {
+        "summary": d.headline,
+        "causes": CAUSES["M6:shortage"],
+        "confidence_note": "Остаток по последней инвентаризации и движениям после нее, расход — по дням "
+        "недели за 4 недели",
+        "metric": {
+            "label": "Расчетный остаток",
+            "value": f"{_n(ev['stock'])} {unit}",
+            "benchmark": f"поставка {ev['next_delivery'][8:10]}.{ev['next_delivery'][5:7]}",
+        },
+        "table": {
+            "title": f"Расход по дням недели, {unit}",
+            "columns": ["День", "Расход"],
+            "rows": [[days[i], _n(v, 2)] for i, v in enumerate(ev["need_by_weekday"])],
+        },
+    }
+
+
 def _m7(d: Draft, facts: Facts) -> dict[str, Any]:
     ev = d.evidence
     if ev["kind"] == "no_recipe":
@@ -494,6 +554,19 @@ def _m7(d: Draft, facts: Facts) -> dict[str, Any]:
                 "title": "Где продается",
                 "columns": ["Ресторан"],
                 "rows": [[facts.restaurant_names.get(code, code)] for code in ev["restaurants"]],
+            },
+        }
+    if ev["kind"] == "negative":
+        product = next(p for p in facts.products.values() if p.code == ev["product"])
+        unit = UNIT.get(product.unit, product.unit)
+        return {
+            "summary": d.headline,
+            "causes": CAUSES["M7:negative"],
+            "confidence_note": "Инвентаризация, накладные, перемещения, списания и продажи по техкартам",
+            "metric": {
+                "label": "Расчетный остаток в худший день",
+                "value": f"{_n(ev['lowest'])} {unit}",
+                "benchmark": f"расход ≈ {_n(ev['daily_use'])} {unit} в день",
             },
         }
     last, network_last = ev["last"], ev["network_last"]
@@ -518,5 +591,5 @@ def _m7(d: Draft, facts: Facts) -> dict[str, Any]:
 
 
 def build(d: Draft, facts: Facts) -> dict[str, Any] | None:
-    builder = {"M1": _m1, "M2": _m2, "M3": _m3, "M4": _m4, "M5": _m5, "M7": _m7}.get(d.module)
+    builder = {"M1": _m1, "M2": _m2, "M3": _m3, "M4": _m4, "M5": _m5, "M6": _m6, "M7": _m7}.get(d.module)
     return builder(d, facts) if builder else None

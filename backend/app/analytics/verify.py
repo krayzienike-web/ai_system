@@ -8,6 +8,7 @@ shows up as a failed consistency check (the data changed since the run, or the e
 from collections import defaultdict
 from datetime import date, timedelta
 from decimal import ROUND_HALF_UP, Decimal
+from itertools import pairwise
 from typing import Any
 from uuid import UUID
 
@@ -48,6 +49,10 @@ def verify(session: Session, finding: Finding) -> dict[str, Any]:
         return _m3_growth(session, finding)
     if finding.module == "M3" and (finding.evidence or {}).get("kind") == "contract":
         return _m3_contract(session, finding)
+    if finding.module == "M6" and finding.restaurant_id is not None:
+        return _m6(session, finding)
+    if finding.module == "M7" and (finding.evidence or {}).get("kind") == "negative":
+        return _m7_negative(session, finding)
     if finding.module == "M4" and finding.restaurant_id is not None:
         return _m4(session, finding)
     if finding.module == "M5" and finding.restaurant_id is not None:
@@ -1309,6 +1314,10 @@ def _m4(session: Session, f: Finding) -> dict[str, Any]:
     restaurant = session.get(Restaurant, f.restaurant_id)
     if restaurant is None:
         return {"module": "M4", "supported": False, "note": "Ресторана больше нет"}
+    if ev.get("kind") == "paper":
+        return _m4_paper(session, f, restaurant)
+    if ev.get("kind") == "overdue":
+        return _m4_overdue(session, f, restaurant)
     if ev.get("kind") == "pre_count":
         counts = sorted(
             set(
@@ -1670,5 +1679,288 @@ def _m5(session: Session, f: Finding) -> dict[str, Any]:
             "Списывают больше других — партии больше, чем кухня успевает использовать, или нарушено "
             "хранение.",
             "Прежде чем подтверждать: проверьте, все ли закупки загружены (иначе доля завышена).",
+        ],
+    }
+
+
+def _count_rows(session: Session, restaurant_id: UUID) -> dict[date, list[InventoryCount]]:
+    out: dict[date, list[InventoryCount]] = defaultdict(list)
+    for c in session.execute(
+        select(InventoryCount).where(InventoryCount.restaurant_id == restaurant_id)
+    ).scalars():
+        out[c.day].append(c)
+    return out
+
+
+def _m4_paper(session: Session, f: Finding, restaurant: Restaurant) -> dict[str, Any]:
+    ev = f.evidence or {}
+    cfg = params.load(session)
+    by_day = _count_rows(session, restaurant.id)
+    shares = {}
+    for day in ev["counts"]:
+        rows = [c for c in by_day.get(date.fromisoformat(day), []) if c.book_qty is not None]
+        shares[day] = (
+            Decimal(sum(1 for c in rows if c.actual_qty == c.book_qty)) / len(rows) if rows else Decimal(0)
+        )
+    return {
+        "module": "M4",
+        "supported": True,
+        "object": "Инвентаризации без расхождений",
+        "restaurant": restaurant.name,
+        "period": [min(ev["counts"]), max(ev["counts"])],
+        "formula": "Доля = товары, у которых факт равен учету / все товары пересчета",
+        "steps": [
+            {
+                "id": "counts",
+                "label": "Пересчеты: доля товаров без расхождения",
+                "value": None,
+                "unit": "",
+                "rows": [{"day": d, "share": pct(v)} for d, v in shares.items()],
+            }
+        ],
+        "result": [{"label": "Меньшая доля", "value": pct(min(shares.values())), "unit": ""}],
+        "rules": [
+            {
+                "rule": f"Последние {cfg.M4_PAPER_COUNTS} пересчета без расхождений",
+                "value": pct(min(shares.values())),
+                "threshold": pct(cfg.M4_PAPER_SHARE, 0),
+                "passed": min(shares.values()) >= cfg.M4_PAPER_SHARE,
+            }
+        ],
+        "checks": [
+            {
+                "check": "Пересчет из исходных строк совпадает с тем, что посчитал движок",
+                "ok": all(abs(Decimal(ev["counts"][d]) - v) < Decimal("0.0005") for d, v in shares.items()),
+                "note": None,
+            }
+        ],
+        "interpretation": [
+            "При настоящем пересчете расхождения с учетом есть всегда: потери, округления, пересорт.",
+            "Прежде чем подтверждать: спросите, как проводили пересчет, и попросите фото склада.",
+        ],
+    }
+
+
+def _m4_overdue(session: Session, f: Finding, restaurant: Restaurant) -> dict[str, Any]:
+    ev = f.evidence or {}
+    cfg = params.load(session)
+    days = sorted(_count_rows(session, restaurant.id))
+    data_until = session.execute(
+        select(func.max(Sale.day)).where(Sale.restaurant_id == restaurant.id)
+    ).scalar_one_or_none()
+    gaps = [(b - a).days for a, b in pairwise(days)]
+    usual = med([Decimal(g) for g in gaps]) if gaps else Decimal(0)
+    since = (data_until - days[-1]).days if data_until and days else 0
+    return {
+        "module": "M4",
+        "supported": True,
+        "object": "Регулярность инвентаризаций",
+        "restaurant": restaurant.name,
+        "period": [days[-1].isoformat() if days else None, data_until.isoformat() if data_until else None],
+        "formula": "Пауза = последний день данных − последняя инвентаризация; обычная — медиана промежутков",
+        "steps": [
+            {
+                "id": "counts",
+                "label": "Загруженные инвентаризации",
+                "value": None,
+                "unit": "",
+                "rows": [{"day": d.isoformat()} for d in days],
+            }
+        ],
+        "result": [
+            {"label": "Дней с последней", "value": str(since), "unit": ""},
+            {"label": "Обычно между пересчетами", "value": str(usual), "unit": "дн."},
+        ],
+        "rules": [
+            {
+                "rule": "Пауза длиннее обычной",
+                "value": f"{since} дн.",
+                "threshold": f"{cfg.M4_OVERDUE_TIMES} × {usual} дн.",
+                "passed": since > cfg.M4_OVERDUE_TIMES * usual,
+            }
+        ],
+        "checks": [
+            {
+                "check": "Пересчет из исходных строк совпадает с тем, что посчитал движок",
+                "ok": since == ev["since_days"],
+                "note": f"движок: {ev['since_days']} дн., пересчет: {since} дн.",
+            }
+        ],
+        "interpretation": [
+            "Пока нет пересчета, потери по техкартам (M1) за это время не видны.",
+            "Если инвентаризация была, но не загружена, — загрузите файл.",
+        ],
+    }
+
+
+def _m7_negative(session: Session, f: Finding) -> dict[str, Any]:
+    """The books between a count and the next day with data, recomputed from the stored rows."""
+    ev = f.evidence or {}
+    cfg = params.load(session)
+    restaurant = session.get(Restaurant, f.restaurant_id)
+    product = session.execute(select(Product).where(Product.code == ev["product"])).scalar_one_or_none()
+    if restaurant is None or product is None:
+        return {"module": "M7", "supported": False, "note": "Ресторана или товара больше нет"}
+    start, end = date.fromisoformat(ev["from_count"]), date.fromisoformat(ev["to"])
+    opening = session.execute(
+        select(InventoryCount.actual_qty).where(
+            InventoryCount.restaurant_id == restaurant.id,
+            InventoryCount.product_id == product.id,
+            InventoryCount.day == start,
+        )
+    ).scalar_one_or_none()
+    lines = [
+        Line(r.menu_item_id or r.semi_product_id, r.product_id, r.gross_qty, r.valid_from)  # type: ignore[arg-type]
+        for r in session.execute(select(RecipeLine)).scalars()
+    ]
+    daily: dict[date, Decimal] = defaultdict(Decimal)
+    for model, sign, where in (
+        (Receipt, 1, Receipt.restaurant_id == restaurant.id),
+        (Transfer, 1, Transfer.to_restaurant_id == restaurant.id),
+        (Transfer, -1, Transfer.restaurant_id == restaurant.id),
+        (WriteOff, -1, WriteOff.restaurant_id == restaurant.id),
+    ):
+        for day, qty in session.execute(
+            select(model.day, model.qty).where(
+                model.product_id == product.id, model.day > start, model.day <= end, where
+            )
+        ).all():
+            daily[day] += sign * qty
+    per_portion: dict[tuple[UUID, date], Decimal] = {}
+    used_total = Decimal(0)
+    for item, day, qty in session.execute(
+        select(Sale.menu_item_id, Sale.day, Sale.qty).where(
+            Sale.restaurant_id == restaurant.id, Sale.day > start, Sale.day <= end
+        )
+    ).all():
+        version = max((ln.valid_from for ln in lines if ln.valid_from <= day), default=day)
+        if (item, version) not in per_portion:
+            per_portion[(item, version)] = explode(item, Decimal(1), lines_on(lines, version)).get(
+                product.id, Decimal(0)
+            )
+        use = qty * per_portion[(item, version)]
+        daily[day] -= use
+        used_total += use
+    stock = opening or Decimal(0)
+    lowest, rows = stock, []
+    for i in range(1, (end - start).days + 1):
+        day = start + timedelta(days=i)
+        stock += daily.get(day, Decimal(0))
+        lowest = min(lowest, stock)
+        rows.append({"day": day.isoformat(), "qty": _q(stock)})
+    per_day = used_total / max((end - start).days, 1)
+    return {
+        "module": "M7",
+        "supported": True,
+        "object": product.name,
+        "restaurant": restaurant.name,
+        "period": [(start + timedelta(days=1)).isoformat(), end.isoformat()],
+        "formula": "Остаток по документам = инвентаризация + приход ± перемещения − списания "
+        "− расход по техкартам",
+        "steps": [
+            {
+                "id": "stock",
+                "label": "Остаток по документам на конец дня",
+                "value": None,
+                "unit": "",
+                "rows": rows,
+            }
+        ],
+        "result": [
+            {"label": "Худший день", "value": _q(lowest), "unit": ""},
+            {"label": "Расход в день", "value": _q(per_day), "unit": ""},
+        ],
+        "rules": [
+            {
+                "rule": "Остаток ниже нуля больше чем на дни расхода",
+                "value": str((-lowest / per_day).quantize(Decimal("0.1"))) if per_day else "—",
+                "threshold": str(cfg.M7_NEGATIVE_DAYS),
+                "passed": per_day > 0 and lowest < -cfg.M7_NEGATIVE_DAYS * per_day,
+            }
+        ],
+        "checks": [
+            {
+                "check": "Пересчет из исходных строк совпадает с тем, что посчитал движок",
+                "ok": abs(Decimal(ev["lowest"]) - lowest) < Decimal("0.01"),
+                "note": f"движок: {ev['lowest']}, пересчет: {_q(lowest)}",
+            }
+        ],
+        "interpretation": [
+            "Остаток не может быть меньше нуля: значит, часть прихода не загружена или не оформлено "
+            "перемещение.",
+            "Пока документ не загружен, M1 покажет по этому товару «расход меньше техкарты».",
+        ],
+    }
+
+
+def _m6(session: Session, f: Finding) -> dict[str, Any]:
+    """The shortage recomputed with the engine's own outlook (stock and need come from many documents)."""
+    from app.analytics import m1, m6
+    from app.analytics.facts import load_facts
+    from app.analytics.usage import Usage
+
+    ev = f.evidence or {}
+    cfg = params.load(session)
+    facts = load_facts(session)
+    usage = Usage(facts)
+    rows = m1.rows(facts, usage, _costs(session), cfg)
+    outlook = next(
+        (
+            o
+            for o in m6.outlooks(facts, usage, rows, cfg)
+            if o.restaurant == f.restaurant_id and facts.products[o.product].code == ev["product"]
+        ),
+        None,
+    )
+    if outlook is None or outlook.next_delivery is None:
+        return {"module": "M6", "supported": False, "note": "Нет данных для расчета остатка"}
+    zero = outlook.zero_day((outlook.next_delivery - outlook.end).days)
+    restaurant = session.get(Restaurant, f.restaurant_id)
+    days = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"]
+    return {
+        "module": "M6",
+        "supported": True,
+        "object": facts.products[outlook.product].name,
+        "restaurant": restaurant.name if restaurant else "",
+        "period": [(outlook.end + timedelta(days=1)).isoformat(), outlook.next_delivery.isoformat()],
+        "formula": "Остаток = инвентаризация + движения после нее − расход; "
+        "дальше — расход того же дня недели",
+        "steps": [
+            {
+                "id": "need",
+                "label": "Расход по дням недели (среднее за 4 недели, с обычными потерями)",
+                "value": None,
+                "unit": "",
+                "rows": [{"day": days[i], "qty": _q(n)} for i, n in enumerate(outlook.need)],
+            }
+        ],
+        "result": [
+            {"label": "Остаток на конец данных", "value": _q(outlook.stock), "unit": ""},
+            {"label": "Закончится", "value": zero.isoformat() if zero else None, "unit": ""},
+            {"label": "Ближайшая поставка", "value": outlook.next_delivery.isoformat(), "unit": ""},
+        ],
+        "rules": [
+            {
+                "rule": "Закончится раньше поставки",
+                "value": zero.isoformat() if zero else "—",
+                "threshold": outlook.next_delivery.isoformat(),
+                "passed": zero is not None and zero < outlook.next_delivery,
+            }
+        ],
+        "checks": [
+            {
+                "check": "Пересчет совпадает с тем, что посчитал движок",
+                "ok": zero is not None and zero.isoformat() == ev["zero_day"],
+                "note": f"движок: {ev['zero_day']}, пересчет: {zero.isoformat() if zero else '—'}",
+            },
+            {
+                "check": "Остаток посчитан от инвентаризации, а не от фактического остатка на полке",
+                "ok": True,
+                "note": "проверьте полку: если товар есть, находку можно отклонить",
+            },
+        ],
+        "interpretation": [
+            "Это прогноз: остаток посчитан по документам, расход — по прошлым неделям.",
+            "Если поставку можно ускорить или взять товар у соседнего ресторана — сделайте это заранее.",
         ],
     }

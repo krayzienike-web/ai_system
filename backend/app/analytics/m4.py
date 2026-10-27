@@ -9,6 +9,7 @@
 from collections import defaultdict
 from datetime import date, timedelta
 from decimal import Decimal
+from itertools import pairwise
 from statistics import median
 from uuid import UUID
 
@@ -19,7 +20,103 @@ from app.analytics.params import DEFAULT, EngineParams
 
 
 def detect(facts: Facts, costs: CostBook, cfg: EngineParams = DEFAULT) -> list[Draft]:
-    return _pre_count(facts, costs, cfg) + _mixed_up(facts, cfg)
+    return _pre_count(facts, costs, cfg) + _mixed_up(facts, cfg) + _paper(facts, cfg) + _overdue(facts, cfg)
+
+
+def _paper(facts: Facts, cfg: EngineParams) -> list[Draft]:
+    """Counts with no difference to the books for (nearly) every product, several in a row: a real count
+    always finds some — these were most likely copied from the books."""
+    by_count: dict[UUID, dict[date, list[CountRow]]] = defaultdict(lambda: defaultdict(list))
+    for c in facts.counts:
+        if c.book is not None:
+            by_count[c.restaurant][c.day].append(c)
+    drafts = []
+    for restaurant, by_day in by_count.items():
+        days = sorted(by_day)[1:]  # the opening count only opens the books
+        if len(days) < cfg.M4_PAPER_COUNTS:
+            continue
+        last = days[-cfg.M4_PAPER_COUNTS :]
+        shares = {d: Decimal(sum(1 for c in by_day[d] if c.actual == c.book)) / len(by_day[d]) for d in last}
+        if min(shares.values()) < cfg.M4_PAPER_SHARE:
+            continue
+        code = facts.restaurants[restaurant]
+        dates = ", ".join(dmy(d) for d in last)
+        drafts.append(
+            Draft(
+                key=f"M4:{code}:paper",
+                module="M4",
+                kind="problem",
+                process="inventory",
+                restaurant=restaurant,
+                title="Инвентаризации без расхождений с учетом",
+                headline=(
+                    f"На пересчетах {dates} фактический остаток совпал с учетным у "
+                    f"{pct(min(shares.values()), 0)} товаров и больше. При настоящем пересчете расхождения "
+                    "есть всегда — похоже, остатки переписали из учета, и потери ресторана не видны"
+                ),
+                effect_rub_month=None,
+                effect_note="потери ресторана не видны: проверки по техкартам и списаниям слепы",
+                confidence="high",
+                period_from=last[0],
+                period_to=last[-1],
+                actions=["Провести контрольный пересчет при управляющем", "Сверить пересчет с фото склада"],
+                evidence={
+                    "kind": "paper",
+                    "counts": {d.isoformat(): str(v.quantize(Decimal("0.0001"))) for d, v in shares.items()},
+                    "products": {d.isoformat(): len(by_day[d]) for d in last},
+                },
+            )
+        )
+    return drafts
+
+
+def _overdue(facts: Facts, cfg: EngineParams) -> list[Draft]:
+    """The restaurant has not counted for longer than its usual interval between counts."""
+    count_days: dict[UUID, set[date]] = defaultdict(set)
+    for c in facts.counts:
+        count_days[c.restaurant].add(c.day)
+    data_end: dict[UUID, date] = {}
+    for s in facts.sales:
+        data_end[s.restaurant] = max(data_end.get(s.restaurant, s.day), s.day)
+    drafts = []
+    for restaurant, all_days in count_days.items():
+        days = sorted(all_days)
+        if len(days) < 3 or restaurant not in data_end:
+            continue
+        usual = Decimal(median([(b - a).days for a, b in pairwise(days)]))
+        since = (data_end[restaurant] - days[-1]).days
+        if since <= cfg.M4_OVERDUE_TIMES * usual:
+            continue
+        code = facts.restaurants[restaurant]
+        drafts.append(
+            Draft(
+                key=f"M4:{code}:overdue",
+                module="M4",
+                kind="problem",
+                process="inventory",
+                restaurant=restaurant,
+                title=f"Инвентаризации не было {since} дней",
+                headline=(
+                    f"Последний пересчет — {dmy(days[-1])}, с тех пор {since} дней, а обычно ресторан "
+                    f"считает раз в {usual.quantize(Decimal(1))} дней. Без пересчета потери по техкартам "
+                    "за это время не видны"
+                ),
+                effect_rub_month=None,
+                effect_note="потери с последнего пересчета не видны",
+                confidence="high",
+                period_from=days[-1] + timedelta(days=1),
+                period_to=data_end[restaurant],
+                actions=["Провести полную инвентаризацию и загрузить ее"],
+                evidence={
+                    "kind": "overdue",
+                    "counts": [d.isoformat() for d in days],
+                    "since_days": since,
+                    "usual_days": str(usual),
+                    "data_until": data_end[restaurant].isoformat(),
+                },
+            )
+        )
+    return drafts
 
 
 def _pre_count(facts: Facts, costs: CostBook, cfg: EngineParams) -> list[Draft]:
