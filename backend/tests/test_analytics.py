@@ -171,7 +171,7 @@ def test_m2_dish_food_cost_above_target_names_the_cause() -> None:
         and "с 66\u00a0₽ до 198\u00a0₽" in d.headline
         and "сыр: +200%" in d.headline
     )
-    assert "Цена 660\u00a0₽ вместо 580\u00a0₽" in d.headline  # 198 / 0.30 = 660
+    assert "В следующем меню цена 660\u00a0₽ вместо 580\u00a0₽" in d.headline  # 198 / 0.30 = 660
     # Free portions (staff meals, 100 % discounts) and no menu price: skipped, not a division by zero.
     free = Facts(**{**f.__dict__, "menu": {pizza: MenuInfo("M01", "Пицца", "Пицца", None)}})
     free.sales = [SaleRow(r, date(2026, 9, 20), pizza, Decimal(10), Decimal(0))]

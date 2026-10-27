@@ -17,10 +17,12 @@ from app.analytics.params import DEFAULT, EngineParams
 from app.catalog.recipes import explode, lines_on
 from app.norms.service import Norms
 
+# Prices change only with a new menu (twice a year, the client's rule): until then, cost-side steps; the new
+# price goes into the next menu's package.
 ACTIONS = [
-    "Пересмотреть цену блюда в меню",
-    "Проверить техкарту: можно ли уменьшить порцию дорогого ингредиента или заменить его",
     "Запросить у поставщика цену ниже или найти другого поставщика",
+    "Проверить техкарту: можно ли уменьшить порцию дорогого ингредиента или заменить его",
+    "Заложить новую цену блюда в следующее меню",
 ]
 
 
@@ -103,7 +105,7 @@ def detect(facts: Facts, norms: Norms, cfg: EngineParams = DEFAULT) -> list[Draf
                 title=f"Фудкост выше целевого: {info.name}",
                 headline=(
                     f"Фудкост «{info.name}» — {pct(food_cost)} при цели {pct(target, 0)}{cause}. "
-                    f"Цена {rub(new_price)} вместо {rub(price)} вернет фудкост к цели — "
+                    f"В следующем меню цена {rub(new_price)} вместо {rub(price)} вернет фудкост к цели — "
                     f"≈ {rub(potential)} в месяц по сети (консервативно)"
                 ),
                 effect_rub_month=potential,
