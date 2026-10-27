@@ -3,7 +3,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-const FORBIDDEN = ["demo.local", "demo12345", "recorded_for"];
+const FORBIDDEN = ["demo.local", "demo12345", "recorded_for", "Прототип на демонстрационных"];
 const dir = "dist/assets";
 const found = readdirSync(dir)
   .filter((f) => f.endsWith(".js"))

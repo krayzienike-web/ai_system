@@ -390,6 +390,8 @@ export interface KpiOut {
   write_offs_share: string | null;
   food_cost_from: string | null;
   food_cost_to: string | null;
+  write_offs_from?: string | null;
+  write_offs_to?: string | null;
 }
 
 /** When the findings were last recomputed, and whether a run is waiting or going on now. */
@@ -429,6 +431,7 @@ export interface MatrixRowOut {
   id: string;
   code: string;
   name: string;
+  short_name: string;
   total: string;
   cells: MatrixCellOut[];
 }
@@ -525,6 +528,7 @@ export interface ProcessOut {
 export interface ProcessTitleOut {
   process: string;
   title: string;
+  short: string;
 }
 
 export interface ProposeIn {

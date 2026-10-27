@@ -68,7 +68,8 @@ export function SourceDocuments({ findingId }: { findingId: string }) {
   const [tab, setTab] = useState(0);
   const sources = useFindingSources(findingId, open);
   const groups = sources.data?.groups ?? [];
-  const group = groups[Math.min(tab, Math.max(groups.length - 1, 0))];
+  const current = Math.min(tab, Math.max(groups.length - 1, 0));
+  const group = groups[current];
 
   return (
     <Card className="overflow-hidden p-0">
@@ -76,6 +77,7 @@ export function SourceDocuments({ findingId }: { findingId: string }) {
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
+        aria-controls="docs-body"
         className="flex w-full items-center justify-between px-6 py-4 text-left"
       >
         <span>
@@ -87,18 +89,32 @@ export function SourceDocuments({ findingId }: { findingId: string }) {
       <AnimatePresence initial={false}>
         {open && (
           <motion.div initial={{ height: 0 }} animate={{ height: "auto" }} exit={{ height: 0 }} className="overflow-hidden">
-            <div className="space-y-3 px-6 pb-5">
+            <div id="docs-body" className="space-y-3 px-6 pb-5">
               {sources.isPending && <Skeleton className="h-40" />}
               <ErrorText error={sources.error} fallback="Не получилось загрузить документы" />
               {sources.data && <p className="text-sm text-ink-2">{sources.data.note}</p>}
               {groups.length > 1 && (
-                <div role="tablist" className="flex flex-wrap gap-1">
+                <div
+                  role="tablist"
+                  aria-label="Виды документов"
+                  className="flex flex-wrap gap-1"
+                  onKeyDown={(e) => {
+                    // Arrows move between the tabs (WAI-ARIA tabs pattern).
+                    if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+                    const next = (current + (e.key === "ArrowRight" ? 1 : groups.length - 1)) % groups.length;
+                    setTab(next);
+                    e.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next]?.focus();
+                  }}
+                >
                   {groups.map((g, i) => (
                     <button
                       key={g.kind}
+                      id={`docs-tab-${g.kind}`}
                       type="button"
                       role="tab"
                       aria-selected={group === g}
+                      aria-controls="docs-panel"
+                      tabIndex={group === g ? 0 : -1}
                       onClick={() => setTab(i)}
                       className={cx(
                         "rounded-full px-3 py-1 text-sm",
@@ -110,7 +126,11 @@ export function SourceDocuments({ findingId }: { findingId: string }) {
                   ))}
                 </div>
               )}
-              {group && <DocumentsTable group={group} />}
+              {group && (
+                <div id="docs-panel" role="tabpanel" aria-labelledby={groups.length > 1 ? `docs-tab-${group.kind}` : undefined}>
+                  <DocumentsTable group={group} />
+                </div>
+              )}
             </div>
           </motion.div>
         )}

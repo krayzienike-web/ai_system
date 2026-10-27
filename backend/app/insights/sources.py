@@ -13,7 +13,7 @@ the rows are shown as loaded; the check of the figure is the review's «Расч
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import date, timedelta
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 from uuid import UUID
 
@@ -60,33 +60,37 @@ class _Scope:
     restaurant_id: UUID | None  # None: every restaurant the caller sees (network findings — HQ only)
     date_from: date
     date_to: date
-    products: list[UUID]
-    dishes: list[UUID]
+    products: list[UUID] | None  # None: the finding is not about given products (a missed count, a gap)
+    dishes: list[UUID] | None
 
 
 def _scope(session: Session, f: Finding) -> tuple[_Scope, set[str]]:
     """What the finding is about and which documents tell its story."""
     ev = f.evidence or {}
     kind = ev.get("kind")
-    codes: list[str] = []
+    # The products the finding names. A code no longer in the catalogue gives no rows rather than every row
+    # of the restaurant. «paper» keys its `products` by count day, so only «mixed_up» names products there.
+    codes: list[str] | None = None
     if isinstance(ev.get("product"), str):
         codes = [ev["product"]]
-    elif isinstance(ev.get("products"), dict):
+    elif kind == "mixed_up" and isinstance(ev.get("products"), dict):
         codes = list(ev["products"])
     products = (
-        list(session.execute(select(Product.id).where(Product.code.in_(codes))).scalars()) if codes else []
+        list(session.execute(select(Product.id).where(Product.code.in_(codes))).scalars())
+        if codes is not None
+        else None
     )
     dishes = (
         list(session.execute(select(MenuItem.id).where(MenuItem.code == ev["menu_item"])).scalars())
         if isinstance(ev.get("menu_item"), str)
-        else []
+        else None
     )
     start, end = f.period_from or f.found_on, f.period_to or f.found_on
     scope = _Scope(f.restaurant_id, start, end, products, dishes)
     module = f.module
     if module == "M3":
         return scope, {"receipts"}
-    if module in ("M2",) or (module == "M7" and dishes):
+    if module in ("M2",) or (module == "M7" and dishes is not None):
         return scope, {"sales"}
     if module == "M5":
         return scope, {"write_offs"}
@@ -109,14 +113,17 @@ def _filtered[S: "Select[*tuple[Any, ...]]"](stmt: S, model: Any, scope: _Scope,
     stmt = stmt.where(model.day >= scope.date_from, model.day <= scope.date_to)
     if scope.restaurant_id is not None:
         stmt = stmt.where(model.restaurant_id == scope.restaurant_id)
-    if by == "product" and scope.products:
+    if by == "product" and scope.products is not None:
         stmt = stmt.where(model.product_id.in_(scope.products))
-    if by == "dish" and scope.dishes:
+    if by == "dish" and scope.dishes is not None:
         stmt = stmt.where(model.menu_item_id.in_(scope.dishes))
     return stmt
 
 
-def _file(b: ImportBatch) -> dict[str, Any]:
+def _file(b: ImportBatch | None) -> dict[str, Any]:
+    """The file a row came from; another restaurant's file (an incoming transfer) is not shown."""
+    if b is None:
+        return {"file": None, "file_id": None, "loaded_on": None}
     return {"file": b.filename, "file_id": str(b.id), "loaded_on": b.created_at.date().isoformat()}
 
 
@@ -146,7 +153,7 @@ def _receipts(session: Session, scope: _Scope) -> Group:
             "restaurant": place.name,
             "qty": r.qty,
             "unit": UNIT_TITLES.get(p.base_unit, p.base_unit),
-            "price": (r.amount / r.qty).quantize(Decimal("0.01")) if r.qty else None,
+            "price": (r.amount / r.qty).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP) if r.qty else None,
             "amount": r.amount,
             **_file(b),
         }
@@ -250,21 +257,23 @@ def _write_offs(session: Session, scope: _Scope) -> Group:
 
 def _transfers(session: Session, scope: _Scope) -> Group:
     names = dict(session.execute(select(Restaurant.id, Restaurant.name)).tuples().all())
-    q = (
-        select(Transfer, Product, ImportBatch)
-        .join(Product, Product.id == Transfer.product_id)
-        .join(ImportBatch, ImportBatch.id == Transfer.import_batch_id)
-        .where(Transfer.day >= scope.date_from, Transfer.day <= scope.date_to)
-        .order_by(Transfer.day)
-        .limit(LIMIT)
-    )
-    if scope.products:
-        q = q.where(Transfer.product_id.in_(scope.products))
+    where = [Transfer.day >= scope.date_from, Transfer.day <= scope.date_to]
+    if scope.products is not None:
+        where.append(Transfer.product_id.in_(scope.products))
     if scope.restaurant_id is not None:  # out of the restaurant or into it
-        q = q.where(
+        where.append(
             (Transfer.restaurant_id == scope.restaurant_id)
             | (Transfer.to_restaurant_id == scope.restaurant_id)
         )
+    # An incoming transfer's file belongs to the sender, whom a director does not see: the row stays, no file.
+    q = (
+        select(Transfer, Product, ImportBatch)
+        .join(Product, Product.id == Transfer.product_id)
+        .outerjoin(ImportBatch, ImportBatch.id == Transfer.import_batch_id)
+        .where(*where)
+        .order_by(Transfer.day)
+        .limit(LIMIT)
+    )
     rows = [
         {
             "day": t.day.isoformat(),
@@ -278,6 +287,7 @@ def _transfers(session: Session, scope: _Scope) -> Group:
         }
         for t, p, b in session.execute(q)
     ]
+    total: int = session.execute(select(func.count()).select_from(Transfer).where(*where)).scalar_one()
     return Group(
         "transfers",
         "Перемещения",
@@ -288,39 +298,40 @@ def _transfers(session: Session, scope: _Scope) -> Group:
             Column("qty", "Количество", "qty"),
         ],
         rows,
-        len(rows),
+        total,
     )
 
 
 def _sales(session: Session, scope: _Scope) -> Group:
-    """Sales by day and restaurant: a receipt-level export would be thousands of lines."""
+    """Sales by day and restaurant: a receipt-level export would be thousands of lines. Grouped by ids, so two
+    dishes or restaurants with one name stay apart."""
+    places = dict(session.execute(select(Restaurant.id, Restaurant.name)).tuples().all())
+    dishes = dict(session.execute(select(MenuItem.id, MenuItem.name)).tuples().all())
     base = (
         select(
             Sale.day,
-            Restaurant.name,
-            MenuItem.name,
+            Sale.restaurant_id,
+            Sale.menu_item_id,
             func.sum(Sale.qty),
             func.sum(Sale.revenue),
             func.min(ImportBatch.filename),
         )
-        .join(MenuItem, MenuItem.id == Sale.menu_item_id)
-        .join(Restaurant, Restaurant.id == Sale.restaurant_id)
         .join(ImportBatch, ImportBatch.id == Sale.import_batch_id)
-        .group_by(Sale.day, Restaurant.name, MenuItem.name)
+        .group_by(Sale.day, Sale.restaurant_id, Sale.menu_item_id)
     )
     filtered = _filtered(base, Sale, scope, "dish")
-    total = session.execute(select(func.count()).select_from(filtered.subquery())).scalar_one()
+    total: int = session.execute(select(func.count()).select_from(filtered.subquery())).scalar_one()
     rows = [
         {
             "day": d.isoformat(),
-            "restaurant": place,
-            "dish": dish,
+            "restaurant": places.get(place, "—"),
+            "dish": dishes.get(dish, "—"),
             "qty": qty,
             "revenue": revenue,
             "file": file,
         }
         for d, place, dish, qty, revenue, file in session.execute(
-            filtered.order_by(Sale.day, Restaurant.name).limit(LIMIT)
+            filtered.order_by(Sale.day, Sale.restaurant_id).limit(LIMIT)
         )
     ]
     return Group(

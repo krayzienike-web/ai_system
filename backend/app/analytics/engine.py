@@ -119,8 +119,15 @@ def run(session: Session, ctx: AccessContext, today: date, *, as_of: date | None
         raise ForbiddenError("Пересчет находок запускает администратор управляющей компании")
     # The facts and norms are read through row-level security: under a role that bypasses it, or without the
     # network's context, the engine would mix networks. Refuse rather than compute (architecture review p. 9).
-    current = session.execute(text("SELECT current_setting('app.tenant_id', true)")).scalar()
-    if current != str(ctx.tenant_id):
+    current, bypasses = session.execute(
+        text(
+            "SELECT current_setting('app.tenant_id', true), "
+            "r.rolbypassrls OR r.rolsuper OR EXISTS ("
+            "  SELECT 1 FROM pg_tables t WHERE t.schemaname = 'public' AND t.tableowner = current_user"
+            ") FROM pg_roles r WHERE r.rolname = current_user"
+        )
+    ).one()
+    if current != str(ctx.tenant_id) or bypasses:
         raise RuntimeError("The engine runs only inside the network's row-level security context")
     # One run per network at a time: a second one waits, then works on the first one's findings.
     session.execute(text("SELECT pg_advisory_xact_lock(hashtext(:key))"), {"key": f"engine:{ctx.tenant_id}"})

@@ -100,11 +100,14 @@ class KpiOut(BaseModel):
     write_offs_share: Decimal | None
     food_cost_from: date | None
     food_cost_to: date | None
+    write_offs_from: date | None = None
+    write_offs_to: date | None = None
 
 
 class ProcessTitleOut(BaseModel):
     process: str
     title: str
+    short: str  # for a narrow column
 
 
 class MatrixCellOut(BaseModel):
@@ -118,6 +121,7 @@ class MatrixRowOut(BaseModel):
     id: UUID
     code: str
     name: str
+    short_name: str  # «на Тверской»: the network's restaurants all start with «Ресторан»
     total: Decimal
     cells: list[MatrixCellOut]  # in the order of `processes`
 
@@ -244,12 +248,16 @@ def get_network(ctx: CanCompare, session: SessionDep, period: PeriodDep, today: 
         on_table_year=(n.losses + n.potential) * 12,
         ranking=[RankOut(**r.__dict__) for r in n.ranking],
         common=[CommonOut(**c.__dict__) for c in n.common],
-        processes=[ProcessTitleOut(process=p, title=t) for p, t in service.PROCESSES],
+        processes=[
+            ProcessTitleOut(process=p, title=t, short=service.PROCESS_SHORT.get(p, t))
+            for p, t in service.PROCESSES
+        ],
         matrix=[
             MatrixRowOut(
                 id=r.id,
                 code=r.code,
                 name=r.name,
+                short_name=r.name.removeprefix("Ресторан "),
                 total=r.total,
                 cells=[MatrixCellOut(**c.__dict__) for c in r.cells],
             )

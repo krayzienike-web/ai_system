@@ -142,8 +142,11 @@ def test_the_engine_refuses_to_run_outside_the_networks_context(
     with get_sessionmaker()() as session:
         ctx = load_access_context(session, network.a.users["admin@a.ru"], network.a.id)
         assert ctx is not None
-    # A script run as the owner: no context at all.
+    # A script run as the owner: no context at all, and even with the network's context set.
     with Session(owner_engine) as owner, pytest.raises(RuntimeError, match="row-level security context"):
+        engine.run(owner, ctx, date(2026, 10, 20))
+    with Session(owner_engine) as owner, pytest.raises(RuntimeError, match="row-level security context"):
+        owner.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(network.a.id)})
         engine.run(owner, ctx, date(2026, 10, 20))
     with get_sessionmaker()() as session, pytest.raises(RuntimeError, match="row-level security context"):
         load_access_context(session, network.b.users["admin@b.ru"], network.b.id)  # network B's context

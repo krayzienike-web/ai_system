@@ -181,3 +181,14 @@ def test_a_run_left_going_on_is_shown_and_then_written_as_interrupted(
             conn.execute(text("SELECT status FROM analytics_runs ORDER BY requested_at")).scalars().all()
         )
     assert statuses == ["failed", "done"]
+
+
+def test_the_button_pressed_while_an_upload_waits_makes_the_run_manual(network: Network) -> None:
+    """Code review 27.10.2026 (stage 4): the waiting run says it was asked for by a person."""
+    with get_sessionmaker()() as session:
+        ctx = load_access_context(session, network.a.users["admin@a.ru"], network.a.id)
+        assert ctx is not None
+        upload = runs.request(session, ctx)
+        button = runs.request(session, ctx, trigger="manual")
+        assert button.id == upload.id and button.trigger == "manual"
+        assert runs.request(session, ctx).trigger == "manual"  # a later upload does not undo it

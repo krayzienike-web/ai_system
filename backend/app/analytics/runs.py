@@ -70,7 +70,14 @@ def request(session: Session, ctx: AccessContext, trigger: str = "upload") -> An
         stmt.on_conflict_do_update(
             index_elements=["tenant_id"],
             index_where=text("status = 'queued'"),
-            set_={"requested_at": stmt.excluded.requested_at, "requested_by": stmt.excluded.requested_by},
+            # The button pressed while an upload's run waits: the run is now the one someone asked for.
+            set_={
+                "requested_at": stmt.excluded.requested_at,
+                "requested_by": stmt.excluded.requested_by,
+                "trigger": text(
+                    "CASE WHEN excluded.trigger = 'manual' THEN 'manual' ELSE analytics_runs.trigger END"
+                ),
+            },
         ).returning(AnalyticsRun.id)
     ).scalar_one()
     run = session.get(AnalyticsRun, run_id, populate_existing=True)

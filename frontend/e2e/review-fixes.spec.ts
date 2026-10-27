@@ -52,3 +52,17 @@ test("TC-UI-11: «Сеть» shows restaurants × processes; a cell opens that r
   await expect(page.getByRole("link", { name: /Перерасход по техкарте: Сыр Моцарелла/ })).toBeVisible();
   await expect(page.getByRole("combobox").first()).toHaveValue(/.+/);
 });
+
+// The prototype keeps its history in memory, so the address is checked through what the screen shows.
+test("TC-UI-14: the findings filters live in the address: the menu link clears them", async ({ page }) => {
+  await signInAs(page, "admin@demo.local");
+  await page.getByRole("button", { name: /на Тверской, Производство/ }).click();
+  const place = page.getByRole("combobox", { name: "Ресторан" });
+  const process = page.getByRole("combobox", { name: "Процесс" });
+  await expect(process).toHaveValue("production");
+  await process.selectOption("all");
+  await expect(process).toHaveValue("all");
+  await expect(place).not.toHaveValue("all");
+  await page.getByRole("link", { name: /^Находки$/ }).first().click(); // «/findings» without filters
+  await expect(place).toHaveValue("all");
+});

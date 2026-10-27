@@ -77,7 +77,7 @@
 | TC-ISO-12 | Новые endpoint в границах сети и ресторана: чат по чужой находке, напоминание и тиражирование из чужой сети — 404; цены других ресторанов в таблице находки M3 директору не уходят (деталь, список, доска находок) | `test_overview.py::test_new_endpoints_keep_to_the_tenant_and_the_restaurant`, `test_a_director_gets_an_m3_finding_without_other_restaurants_prices` | ✅ |
 | TC-ISO-13 | Действия с задачами и проверками по id: старт и чек-лист чужой задачи, задача по чужой находке, черновик, предложение, запуск и отклонение проверки чужой сети — 404, ничего не меняется; отчет руководителю и счетчики чужой сети не считают нашу | `test_work_loop.py::test_work_actions_on_another_restaurant_or_network_are_not_found` | ✅ |
 | TC-ISO-14 | Журнал аудита для приложения — только добавление и чтение | `test_isolation_db.py::test_the_application_can_only_add_to_the_audit_log` | ✅ |
-| TC-ISO-15 | Движок не работает вне контекста RLS своей сети (под владельцем или в контексте чужой сети) и пишет только строки своей сети | `test_engine_store.py::test_the_engine_refuses_to_run_outside_the_networks_context` | ✅ |
+| TC-ISO-15 | Движок не работает вне контекста RLS своей сети (под владельцем или в контексте чужой сети) и пишет только строки своей сети | `test_engine_store.py::test_the_engine_refuses_to_run_outside_the_networks_context` (и под ролью, обходящей RLS) | ✅ |
 | TC-ISO-16 | Рабочая сборка фронтенда не содержит демо-снимок, демо-логины и пароль | CI: `npm run check:bundle` (`frontend/scripts/check-bundle.mjs`) | ✅ |
 
 ### Импорт данных (IMP)
@@ -140,7 +140,7 @@
 | TC-ENG-23 | С очередью задача уходит в воркер; без очереди или при ее недоступности — пересчет в процессе API | `test_the_queue_is_used_when_configured_and_falls_back_without_it`, `test_the_worker_runs_the_queued_run` | ✅ |
 | TC-ENG-24 | Загрузка, присоединившаяся к ожидающему пересчету, держит его до своего коммита; зависший пересчет показывается и записывается прерванным | `test_runs.py::test_an_upload_joining_the_waiting_run_holds_it_until_its_data_is_committed`, `test_a_run_left_going_on_is_shown_and_then_written_as_interrupted` | ✅ |
 | TC-ENG-25 | Сверка не падает на измененных данных и повторяет правила движка: M4 после отката инвентаризаций, M7 — техкарта заведена внутри окна | `test_check_of_a_pre_count_finding_after_the_counts_were_rolled_back`, `test_m7_dish_without_a_recipe_and_missing_exports` | ✅ |
-| TC-ENG-26 | «Пересчитать» ставит пересчет в очередь (202), а не считает в запросе; результат виден в журнале пересчетов | `test_analytics.py` (повторный пересчет), `test_runs.py::test_publishing_a_file_recomputes_the_findings` | ✅ |
+| TC-ENG-26 | «Пересчитать» ставит пересчет в очередь (202), а не считает в запросе; нажатие при ждущем пересчете после загрузки делает его ручным | `test_analytics.py` (повторный пересчет), `test_runs.py::test_publishing_a_file_recomputes_the_findings`, `test_the_button_pressed_while_an_upload_waits_makes_the_run_manual` | ✅ |
 
 ### Проверка находок (REV)
 
@@ -183,6 +183,7 @@
 | TC-OVR-11 | Итоги, «в год», динамика и вывод словами приходят из API (экран не считает); чат отвечает про дефицит по находкам M6 | `test_trend_line_in_figures_and_words` (расчет вручную), `test_totals_a_year_and_the_trend_come_from_the_api`, `test_head_report_and_chat`, `test_demo_snapshot.py` | ✅ |
 | TC-OVR-12 | «Откуда цифры» до документа: строки загруженных файлов по находке (накладные с номером, поставщиком и ценой; инвентаризации с начальной; списания; продажи), файл у каждой строки, общее вынесено над таблицей; директор — только свой ресторан, чужой ресторан, сетевая находка и чужая сеть — 404; находка без данных говорит, что документов нет | `test_overview.py::test_where_the_figures_come_from_down_to_the_invoice` | ✅ |
 | TC-OVR-13 | «Сеть»: рестораны × процессы — каждая ячейка равна сумме открытых проверенных проблем ресторана по процессу, статус «в норме» только без проблем, итог строки и порядок по убыванию; вывод словами; фудкост и списания сети, переплаты поставщикам = проблемы по закупкам | `test_overview.py::test_restaurants_by_processes_and_the_networks_figures` | ✅ |
+| TC-OVR-14 | «Документы» после ревью этапа 4: директор-получатель видит входящее перемещение без имени и файла отправителя; товар, которого нет в справочнике, — строк нет | `test_overview.py::test_documents_after_the_stage_4_review` | ✅ |
 
 ### Интерфейс (UI)
 
@@ -200,6 +201,8 @@
 | TC-UI-10 | Карточка находки раскрывается до накладных с файлом-источником | `e2e/review-fixes.spec.ts` | ✅ |
 | TC-UI-11 | «Сеть»: таблица рестораны × процессы и показатели сети; клик по ячейке открывает находки ресторана по процессу | `e2e/review-fixes.spec.ts` | ✅ |
 | TC-UI-12 | Сценарий демо на 10 минут ([14](14-demo-scenario.md)) проходится кликами: сеть → ячейка таблицы → находка → документы → проверка находки → решения → отчет → неделя директора → задача с отчетом | `e2e/demo-scenario.spec.ts` | ✅ |
+| TC-UI-13 | Меню «Еще» — диалог для клавиатуры: фокус внутри, Escape закрывает и возвращает фокус; переход по вкладке закрывает меню | `e2e/mobile.spec.ts` | ✅ |
+| TC-UI-14 | Фильтры «ресторан» и «процесс» на «Находках» живут в адресе: ссылка «Находки» в меню их сбрасывает | `e2e/review-fixes.spec.ts` | ✅ |
 
 ### Демо-сеть (DEMO)
 

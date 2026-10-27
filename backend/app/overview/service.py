@@ -51,6 +51,7 @@ PROCESSES: list[tuple[str, str]] = [
     ("planning", "Планирование запасов"),
 ]
 PROCESS_TITLE = dict(PROCESSES)
+PROCESS_SHORT = {"production": "Производство", "planning": "Запасы", "accounting": "Учет"}
 PLACES = ("ресторане", "ресторанах", "ресторанах")
 # A process with open problems worth this much a month is critical, below — a warning.
 PROCESS_CRITICAL_RUB = Decimal(25_000)
@@ -422,6 +423,8 @@ class Kpis:
     write_offs_share: Decimal | None
     food_cost_from: date | None
     food_cost_to: date | None
+    write_offs_from: date | None = None
+    write_offs_to: date | None = None
 
 
 @dataclass
@@ -459,7 +462,13 @@ def _kpis(row: KpiSnapshot | None) -> Kpis | None:
     if row is None:
         return None
     return Kpis(
-        row.food_cost_actual, row.food_cost_theory, row.write_offs_share, row.food_cost_from, row.food_cost_to
+        row.food_cost_actual,
+        row.food_cost_theory,
+        row.write_offs_share,
+        row.food_cost_from,
+        row.food_cost_to,
+        row.write_offs_from,
+        row.write_offs_to,
     )
 
 

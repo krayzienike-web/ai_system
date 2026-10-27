@@ -25,7 +25,7 @@ export function ProcessMatrix({ n }: { n: NetworkOverview }) {
               return (
                 <th key={p.process} className="px-1 py-1 text-center align-bottom font-medium" title={p.title}>
                   {Icon && <Icon size={15} className="mx-auto mb-1" aria-hidden />}
-                  <span className="block leading-tight">{p.title.replace(" (ТТК)", "")}</span>
+                  <span className="block leading-tight">{p.short}</span>
                 </th>
               );
             })}
@@ -36,7 +36,7 @@ export function ProcessMatrix({ n }: { n: NetworkOverview }) {
           {n.matrix.map((row) => (
             <tr key={row.code}>
               <th scope="row" className="sticky left-0 bg-surface py-1 pr-2 text-left font-medium whitespace-nowrap">
-                {row.name.replace("Ресторан ", "")}
+                {row.short_name}
               </th>
               {row.cells.map((c) => {
                 const losses = money(c.losses) ?? 0;

@@ -22,10 +22,10 @@ import {
   Sparkles,
 } from "lucide-react";
 import { motion } from "motion/react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { ApiError, tokens } from "../api/client";
-import { useAppContext, useBadges, useMe, useRefreshWhenRunIsDone } from "../api/hooks";
+import { useAppContext, useBadges, useMe, useRefreshWhenRunIsDone, useReviewCount } from "../api/hooks";
 import { ddmm } from "../lib/format";
 import { ROLE_LABELS } from "../api/types";
 import { Logo, LogoMark } from "../brand/Logo";
@@ -34,7 +34,6 @@ import { DEMO } from "../api/client";
 import { PeriodPicker } from "./PeriodPicker";
 import { useUi } from "../state/ui";
 import { ChatDrawer } from "./chat/ChatDrawer";
-import { useReviewCount } from "./hq/Review";
 
 interface NavItem {
   to: string;
@@ -144,6 +143,40 @@ export function Shell() {
   const { openChat } = useUi();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const [more, setMore] = useState(false);
+  const moreButton = useRef<HTMLButtonElement>(null);
+  const moreMenu = useRef<HTMLDivElement>(null);
+  // Any navigation (a tab, «назад», a link) closes the menu: adjusted while rendering, not in an effect.
+  const [menuPath, setMenuPath] = useState(pathname);
+  if (menuPath !== pathname) {
+    setMenuPath(pathname);
+    setMore(false);
+  }
+  // A dialog: focus inside while open, Escape closes, focus goes back to «Еще».
+  useEffect(() => {
+    if (!more) return;
+    const menu = moreMenu.current;
+    menu?.querySelector<HTMLElement>("a")?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setMore(false);
+        moreButton.current?.focus();
+        return;
+      }
+      if (e.key !== "Tab" || !menu) return;
+      const links = [...menu.querySelectorAll<HTMLElement>("a")];
+      const first = links[0];
+      const last = links[links.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last?.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first?.focus();
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [more]);
   useRefreshWhenRunIsDone();
   const badges = useBadges();
   const context = useAppContext();
@@ -329,10 +362,12 @@ export function Shell() {
           </Link>
         ) : (
           <button
+            ref={moreButton}
             type="button"
             onClick={() => setMore((v) => !v)}
             aria-expanded={more}
             aria-controls="more-menu"
+            aria-label={counts.review > 0 ? `Еще разделы, ${counts.review} ждут проверки` : "Еще разделы"}
             className={cx(
               "relative flex flex-col items-center gap-0.5 py-2 text-[11px]",
               more || nav.some((n) => !n.mobile && isActive(n.to)) ? "text-brand-strong" : "text-ink-3",
@@ -341,7 +376,7 @@ export function Shell() {
             <MoreHorizontal size={20} strokeWidth={1.75} />
             Еще
             {counts.review > 0 && (
-              <span className="num absolute top-1 right-1/2 translate-x-4 rounded-full bg-spark px-1 text-[10px] font-semibold text-ink">
+              <span aria-hidden className="num absolute top-1 right-1/2 translate-x-4 rounded-full bg-spark px-1 text-[10px] font-semibold text-ink">
                 {counts.review}
               </span>
             )}
@@ -356,8 +391,11 @@ export function Shell() {
         </div>
       )}
       {more && (
-        <nav
+        <div
+          ref={moreMenu}
           id="more-menu"
+          role="dialog"
+          aria-modal="true"
           aria-label="Еще разделы"
           className="fixed inset-x-0 bottom-[calc(57px+env(safe-area-inset-bottom))] z-30 rounded-t-[20px] border-t border-line bg-surface px-[max(16px,env(safe-area-inset-left))] pt-3 pb-2 shadow-lg lg:hidden"
         >
@@ -381,7 +419,7 @@ export function Shell() {
                 </li>
               ))}
           </ul>
-        </nav>
+        </div>
       )}
 
       <ChatDrawer />

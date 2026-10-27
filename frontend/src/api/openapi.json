@@ -2598,6 +2598,18 @@
       ],
       "title": "Food Cost To"
      },
+     "write_offs_from": {
+      "anyOf": [
+       {
+        "format": "date",
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Write Offs From"
+     },
      "write_offs_share": {
       "anyOf": [
        {
@@ -2608,6 +2620,18 @@
        }
       ],
       "title": "Write Offs Share"
+     },
+     "write_offs_to": {
+      "anyOf": [
+       {
+        "format": "date",
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Write Offs To"
      }
     },
     "required": [
@@ -2823,6 +2847,10 @@
       "title": "Name",
       "type": "string"
      },
+     "short_name": {
+      "title": "Short Name",
+      "type": "string"
+     },
      "total": {
       "title": "Total",
       "type": "string"
@@ -2832,6 +2860,7 @@
      "id",
      "code",
      "name",
+     "short_name",
      "total",
      "cells"
     ],
@@ -3352,6 +3381,10 @@
       "title": "Process",
       "type": "string"
      },
+     "short": {
+      "title": "Short",
+      "type": "string"
+     },
      "title": {
       "title": "Title",
       "type": "string"
@@ -3359,7 +3392,8 @@
     },
     "required": [
      "process",
-     "title"
+     "title",
+     "short"
     ],
     "title": "ProcessTitleOut",
     "type": "object"

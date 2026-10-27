@@ -15,6 +15,7 @@ import {
   useRestaurants,
   useReviewFinding,
   useReviewFindings,
+  useLatestRun,
   useRunAnalytics,
   useVerification,
 } from "../../api/hooks";
@@ -95,15 +96,14 @@ function useRestaurantName() {
 }
 
 /** How many engine findings wait for a check (HQ only): the menu badge. */
-export function useReviewCount(enabled: boolean) {
-  return useReviewFindings("pending", enabled).data?.length ?? 0;
-}
-
 export function ReviewPage() {
   const viewer = useViewer();
   const [tab, setTab] = useState<ReviewStatus>("pending");
   const list = useReviewFindings(tab);
   const run = useRunAnalytics();
+  const latest = useLatestRun().data;
+  // A run already waiting or going on: a second press would only queue another full run.
+  const busy = run.isPending || latest?.status === "queued" || latest?.status === "running";
   const { notify } = useUi();
   const name = useRestaurantName();
 
@@ -113,7 +113,7 @@ export function ReviewPage() {
         title="Проверка находок"
         subtitle="Пока движок новый, каждую находку сверяем с загруженными данными. Директор видит только подтвержденные"
         actions={
-          viewer?.isAdmin && (
+          viewer?.can("analytics.run") && (
             <Button
               onClick={() =>
                 run.mutate(undefined, {
@@ -125,11 +125,11 @@ export function ReviewPage() {
                     ),
                 })
               }
-              disabled={run.isPending}
+              disabled={busy}
             >
               <RefreshCw
                 size={15}
-                className={run.isPending ? "animate-spin" : ""}
+                className={busy ? "animate-spin" : ""}
               />{" "}
               Пересчитать находки
             </Button>

@@ -82,7 +82,7 @@ export function LoginPage() {
           </div>
           <div>
             <h2 className="font-display text-2xl font-semibold">Вход</h2>
-            <p className="mt-1 text-sm text-ink-3">Прототип на демонстрационных данных</p>
+            {SHOW_DEMO && <p className="mt-1 text-sm text-ink-3">Прототип на демонстрационных данных</p>}
           </div>
           <label className="block">
             <span className="text-sm font-medium">Email</span>

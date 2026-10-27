@@ -179,6 +179,11 @@ export const useReviewFindings = (status: ReviewStatus, enabled = true) =>
     enabled,
   });
 
+/** Findings waiting for the HQ's review: the badge in the menu (kept here so the shell does not load the screen). */
+export function useReviewCount(enabled: boolean) {
+  return useReviewFindings("pending", enabled).data?.length ?? 0;
+}
+
 export const useVerification = (id: string) =>
   useQuery({
     queryKey: ["verification", id],

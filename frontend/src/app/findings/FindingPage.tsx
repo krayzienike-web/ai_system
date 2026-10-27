@@ -250,7 +250,7 @@ function FindingView({ f, isHq }: { f: FindingDetail; isHq: boolean }) {
       )}
 
       <Reveal index={7}>
-        <SourceDocuments findingId={f.id} />
+        <SourceDocuments key={f.id} findingId={f.id} />
       </Reveal>
 
       <p className="text-xs text-ink-3">

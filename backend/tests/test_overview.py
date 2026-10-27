@@ -693,3 +693,58 @@ def test_restaurants_by_processes_and_the_networks_figures(
         Decimal(0),
     )
     assert Decimal(net["overpay"]) == overpay > 0
+
+
+def test_documents_after_the_stage_4_review(
+    client: TestClient, network: Network, demo: dict[str, UUID], owner_engine: Engine
+) -> None:
+    """Code review 27.10.2026 (stage 4): an incoming transfer is shown to the receiving director without the
+    sender's name or file; a product no longer in the catalogue gives no rows (not all the rows)."""
+    hq, director = login(client, "admin@a.ru"), login(client, "r01@a.ru")
+    with owner_engine.begin() as c:
+        finding = c.execute(
+            text("SELECT id, period_from FROM findings WHERE tenant_id = :t AND key = 'M1:R01:P01'"),
+            {"t": network.a.id},
+        ).one()
+        r02, batch, product = c.execute(
+            text(
+                "SELECT r.id, b.id, p.id FROM restaurants r JOIN import_batches b ON b.restaurant_id = r.id "
+                "JOIN products p ON p.tenant_id = r.tenant_id AND p.code = 'P01' "
+                "WHERE r.tenant_id = :t AND r.code = 'R02' LIMIT 1"
+            ),
+            {"t": network.a.id},
+        ).one()
+        c.execute(
+            text(
+                "INSERT INTO transfers (id, tenant_id, restaurant_id, to_restaurant_id, import_batch_id, "
+                "day, product_id, qty) VALUES (gen_random_uuid(), :t, :src, :dst, :b, :d, :p, 2.5)"
+            ),
+            {
+                "t": network.a.id,
+                "src": r02,
+                "dst": demo["R01"],
+                "b": batch,
+                "d": finding.period_from,
+                "p": product,
+            },
+        )
+    groups = {
+        g["kind"]: g
+        for g in client.get(f"/api/findings/{finding.id}/sources", headers=director).json()["groups"]
+    }
+    (incoming,) = groups["transfers"]["rows"]
+    assert incoming["route"].startswith("другой ресторан сети → ") and incoming["file"] is None
+    assert groups["transfers"]["total"] == 1
+    # HQ sees both restaurants by name and the sender's file.
+    hq_groups = {
+        g["kind"]: g for g in client.get(f"/api/findings/{finding.id}/sources", headers=hq).json()["groups"]
+    }
+    assert hq_groups["transfers"]["rows"][0]["file"]
+
+    with owner_engine.begin() as c:
+        c.execute(
+            text('UPDATE findings SET evidence = evidence || \'{"product": "NO-SUCH"}\' WHERE id = :f'),
+            {"f": finding.id},
+        )
+    gone = client.get(f"/api/findings/{finding.id}/sources", headers=hq).json()
+    assert gone["groups"] == []

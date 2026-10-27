@@ -101,7 +101,7 @@ export function NetworkPage() {
               {
                 label: "Списания",
                 value: n.kpi.write_offs_share !== null ? pct((money(n.kpi.write_offs_share) ?? 0) * 100, 2) : "—",
-                note: "доля выручки за последние 4 недели",
+                note: n.kpi.write_offs_from ? `доля выручки; ${ddmm(n.kpi.write_offs_from)}–${ddmm(n.kpi.write_offs_to)}` : "доля выручки",
               },
               {
                 label: "Переплаты поставщикам",
@@ -126,7 +126,7 @@ export function NetworkPage() {
       </Reveal>
 
       <div className="grid gap-6 lg:grid-cols-2">
-        <Reveal index={1}>
+        <Reveal index={3}>
           <QuestionBlock
             question="Сокращаются ли потери сети?"
             answer={n.trend.answer}
@@ -152,7 +152,7 @@ export function NetworkPage() {
           </QuestionBlock>
         </Reveal>
 
-        <Reveal index={2}>
+        <Reveal index={4}>
           <QuestionBlock
             question="Кто теряет больше всего?"
             action={
@@ -173,7 +173,7 @@ export function NetworkPage() {
         </Reveal>
       </div>
 
-      <Reveal index={3}>
+      <Reveal index={5}>
         <QuestionBlock
           question="Общие проблемы сети"
           answer={
@@ -219,7 +219,7 @@ export function NetworkPage() {
         </QuestionBlock>
       </Reveal>
 
-      <Reveal index={4}>
+      <Reveal index={6}>
         <div className="flex flex-wrap gap-3">
           <Link to="/findings" className={buttonClass("secondary")}>
             Все находки сети

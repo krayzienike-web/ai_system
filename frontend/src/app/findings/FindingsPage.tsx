@@ -1,4 +1,4 @@
-import { Link, useSearch } from "@tanstack/react-router";
+import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { ChevronRight, RotateCcw } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useState } from "react";
@@ -116,9 +116,16 @@ export function FindingsPage() {
   const viewer = useViewer();
   const restaurants = useRestaurants();
   const [kind, setKind] = useState<"problem" | "opportunity" | "all">("all");
+  // Restaurant and process live in the address (one source of truth): «Сеть» links to them, «назад» and a reload
+  // keep them.
   const search: { restaurant?: string; process?: string } = useSearch({ strict: false });
-  const [process, setProcess] = useState<string>(search.process ?? "all");
-  const [restaurant, setRestaurant] = useState<string>(search.restaurant ?? "all");
+  const navigate = useNavigate();
+  const process = search.process ?? "all";
+  const restaurant = search.restaurant ?? "all";
+  const setFilter = (key: "process" | "restaurant", value: string) =>
+    void navigate({ to: "/findings", search: { ...search, [key]: value === "all" ? undefined : value }, replace: true });
+  const setProcess = (value: string) => setFilter("process", value);
+  const setRestaurant = (value: string) => setFilter("restaurant", value);
   const [stage, setStage] = useState<Stage>("all");
   const [lateOnly, setLateOnly] = useState(false);
   const board = useFindingBoard({
@@ -239,8 +246,7 @@ export function FindingsPage() {
                 <button
                   type="button"
                   onClick={() => {
-                    setProcess("all");
-                    setRestaurant("all");
+                    void navigate({ to: "/findings", search: {}, replace: true });
                     setStage("all");
                     setLateOnly(false);
                   }}

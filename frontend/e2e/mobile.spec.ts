@@ -26,9 +26,27 @@ test("TC-UI-04: from a phone the HQ opens every section through «Еще»", asy
   await signIn(page, "Управляющая компания");
   for (const section of ["Проверка находок", "Рестораны", "Отчет для руководителя", "Данные", "Нормы и настройки"]) {
     await page.getByRole("button", { name: /Еще/ }).click();
-    await page.getByRole("navigation", { name: "Еще разделы" }).getByRole("link", { name: section }).click();
-    await expect(page.getByRole("navigation", { name: "Еще разделы" })).toHaveCount(0);
+    await page.getByRole("dialog", { name: "Еще разделы" }).getByRole("link", { name: section }).click();
+    await expect(page.getByRole("dialog", { name: "Еще разделы" })).toHaveCount(0);
     await expectNoOverflow(page);
   }
   await expect(page.getByRole("heading", { name: /Нормы|Настройки/ }).first()).toBeVisible();
+});
+
+test("TC-UI-13: «Еще» is a dialog for the keyboard: focus inside, Escape closes and returns focus", async ({ page }) => {
+  await signIn(page, "Управляющая компания");
+  const button = page.getByRole("button", { name: /Еще разделы/ });
+  await button.click();
+  const menu = page.getByRole("dialog", { name: "Еще разделы" });
+  await expect(menu).toBeVisible();
+  await expect(menu.getByRole("link").first()).toBeFocused();
+  for (let i = 0; i < 8; i++) await page.keyboard.press("Tab");
+  expect(await menu.evaluate((m) => m.contains(document.activeElement))).toBe(true); // the focus stays inside
+  await page.keyboard.press("Escape");
+  await expect(menu).toHaveCount(0);
+  await expect(button).toBeFocused();
+  // Any other tab closes it too.
+  await button.click();
+  await page.getByRole("navigation", { name: "Меню" }).getByRole("link", { name: /Находки/ }).click({ force: true });
+  await expect(page.getByRole("dialog", { name: "Еще разделы" })).toHaveCount(0);
 });

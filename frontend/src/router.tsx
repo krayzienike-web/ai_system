@@ -3,6 +3,7 @@ import {
   createRootRoute,
   createRoute,
   createRouter,
+  type ErrorComponentProps,
   Navigate,
   redirect,
 } from "@tanstack/react-router";
@@ -10,7 +11,7 @@ import { type ComponentType, lazy, Suspense } from "react";
 
 import { DEMO, tokens } from "./api/client";
 import { Shell } from "./app/Shell";
-import { Skeleton } from "./ds/primitives";
+import { buttonClass, EmptyState, Skeleton } from "./ds/primitives";
 import { useViewer } from "./lib/useViewer";
 import { LoginPage } from "./pages/Login";
 
@@ -191,9 +192,30 @@ const routeTree = rootRoute.addChildren([
 ]);
 
 // The standalone demo runs inside a sandboxed frame where URL paths are not ours: keep history in memory.
+/** A screen that failed to load (a new version was deployed under an open tab, the network dropped). */
+function ScreenError({ error }: ErrorComponentProps) {
+  // A chunk of an older build is gone after a deploy: reloading picks up the new one.
+  const stale = /dynamically imported module|Importing a module script failed|Failed to fetch/i.test(error instanceof Error ? error.message : String(error));
+  return (
+    <div className="mx-auto max-w-md py-16">
+      <EmptyState
+        title={stale ? "Вышла новая версия" : "Не получилось открыть экран"}
+        action={
+          <button type="button" onClick={() => window.location.reload()} className={buttonClass("primary")}>
+            Обновить страницу
+          </button>
+        }
+      >
+        {stale ? "Обновите страницу, чтобы открыть экран в новой версии." : "Обновите страницу или попробуйте чуть позже."}
+      </EmptyState>
+    </div>
+  );
+}
+
 export const router = createRouter({
   routeTree,
   scrollRestoration: true,
+  defaultErrorComponent: ScreenError,
   // An unknown address leads home instead of an empty "not found" page.
   defaultNotFoundComponent: () => <Navigate to="/" />,
   ...(DEMO
