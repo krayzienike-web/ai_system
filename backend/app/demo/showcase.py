@@ -6,7 +6,7 @@
 Everything is dated relative to `today` (the demo's «today»), so the demo never goes stale.
 """
 
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from app.analytics import engine
 from app.analytics.engine import RunResult
 from app.analytics.facts import load_facts
+from app.analytics.runs import AnalyticsRun, RunStatus
 from app.core.period import last_full_week_end
 from app.experiments.models import Experiment
 from app.insights.models import Finding, ReviewStatus
@@ -230,6 +231,21 @@ def build(session: Session, ctx: AccessContext, analyst: UUID, today: date, week
         confirm_pending(session, analyst, sunday + timedelta(days=1))
     work(session, ctx, today, analyst)
     result = engine.run(session, ctx, today)
+    # Today's run followed the morning's uploads: the screens say when the findings were updated.
+    morning = datetime(today.year, today.month, today.day, 6, 30, tzinfo=UTC)
+    session.add(
+        AnalyticsRun(
+            tenant_id=ctx.tenant_id,
+            trigger="upload",
+            status=RunStatus.DONE,
+            requested_at=morning,
+            started_at=morning,
+            finished_at=morning + timedelta(minutes=1),
+            created=result.created,
+            updated=result.updated,
+            removed=result.removed,
+        )
+    )
     # The weeks since the first measured result, now that the work is in place.
     for sunday in sundays[-2:]:
         trend.record_week(session, ctx.tenant_id, sunday + timedelta(days=1))

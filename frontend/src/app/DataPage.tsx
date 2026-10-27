@@ -19,6 +19,7 @@ import type { AffectedFiles, BatchStatus, Freshness, ImportBatch, MatchKind, Nam
 import { Button, Card, cx, EASE, PageTitle, Pill, QuestionBlock, Reveal, type Tone } from "../ds/primitives";
 import { plural } from "../lib/format";
 import { useViewer } from "../lib/useViewer";
+import { RecalcNote } from "./analytics/RecalcNote";
 
 const NETWORK = "network";
 const KINDS = [
@@ -269,6 +270,7 @@ function Report({ batch, onAgain }: { batch: ImportBatch; onAgain: () => void })
             <span className="flex-1">
               Загружено {plural(current.rows_valid, ["строка", "строки", "строк"])}
               {current.period_from && ` за ${period(current)}`}. Если за эти дни данные уже были, они заменены — дублей не будет.
+              <RecalcNote className="mt-1 flex text-gain" />
             </span>
             {current.restaurant_id && (
               <Button size="sm" variant="ghost" disabled={rollback.isPending} onClick={() => rollback.mutate(current.id)}>

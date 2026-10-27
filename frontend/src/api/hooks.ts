@@ -1,7 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useRef } from "react";
 
 import { api } from "./client";
 import type {
+  LatestRun,
   AffectedFiles,
   CatalogOption,
   Freshness,
@@ -95,6 +97,7 @@ export function useBatchAction(action: "publish" | "rollback" | "reprocess") {
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: ["imports"] });
       void client.invalidateQueries({ queryKey: ["aliases"] });
+      void client.invalidateQueries({ queryKey: ["analytics-run"] }); // the findings are being recomputed
     },
   });
 }
@@ -122,6 +125,7 @@ export function useMatchNames() {
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: ["imports"] });
       void client.invalidateQueries({ queryKey: ["aliases"] });
+      void client.invalidateQueries({ queryKey: ["analytics-run"] }); // the findings are being recomputed
     },
   });
 }
@@ -201,11 +205,31 @@ export function useReviewFinding() {
   });
 }
 
+/** The latest recalculation; polled while one waits or runs, and the screens refresh when it is done. */
+export function useLatestRun() {
+  const client = useQueryClient();
+  const query = useQuery({
+    queryKey: ["analytics-run"],
+    queryFn: () => api<LatestRun | null>("/analytics/runs/latest"),
+    refetchInterval: (q) => (q.state.data && ["queued", "running"].includes(q.state.data.status) ? 3000 : false),
+  });
+  const status = query.data?.status;
+  const before = useRef(status);
+  useEffect(() => {
+    if (before.current && ["queued", "running"].includes(before.current) && status === "done") refreshWork(client);
+    before.current = status;
+  }, [status, client]);
+  return query;
+}
+
 export function useRunAnalytics() {
   const client = useQueryClient();
   return useMutation({
     mutationFn: () => api<AnalyticsRun>("/analytics/run", { method: "POST" }),
-    onSuccess: () => refreshWork(client),
+    onSuccess: () => {
+      refreshWork(client);
+      void client.invalidateQueries({ queryKey: ["analytics-run"] });
+    },
   });
 }
 

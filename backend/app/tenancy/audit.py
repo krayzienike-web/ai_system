@@ -3,6 +3,7 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
+from app.tenancy.context import SYSTEM_USER
 from app.tenancy.models import AuditLog
 
 
@@ -19,7 +20,7 @@ def audit(
     session.add(
         AuditLog(
             tenant_id=tenant_id,
-            user_id=user_id,
+            user_id=None if user_id == SYSTEM_USER else user_id,  # background work: no person
             action=action,
             entity=entity,
             entity_id=entity_id,

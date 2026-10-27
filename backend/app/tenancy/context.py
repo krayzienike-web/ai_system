@@ -49,3 +49,14 @@ def load_access_context(session: Session, user_id: UUID, tenant_id: UUID) -> Acc
     )
     apply_rls_context(session, ctx.to_rls())
     return ctx
+
+
+def system_context(session: Session, tenant_id: UUID) -> AccessContext:
+    """The network's own background work (the engine after an upload): HQ-wide scope, no person behind it.
+    Applies the scope to the session's current transaction; call again after every commit."""
+    ctx = AccessContext(user_id=SYSTEM_USER, tenant_id=tenant_id, role=Role.HQ_ADMIN, restaurant_id=None)
+    apply_rls_context(session, ctx.to_rls())
+    return ctx
+
+
+SYSTEM_USER = UUID(int=0)  # no such user: audit rows of background work have no person

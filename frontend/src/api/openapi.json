@@ -2558,6 +2558,90 @@
     "title": "KpiOut",
     "type": "object"
    },
+   "LatestRunOut": {
+    "description": "When the findings were last recomputed, and whether a run is waiting or going on now.",
+    "properties": {
+     "created": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Created"
+     },
+     "finished_at": {
+      "anyOf": [
+       {
+        "format": "date-time",
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Finished At"
+     },
+     "removed": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Removed"
+     },
+     "requested_at": {
+      "format": "date-time",
+      "title": "Requested At",
+      "type": "string"
+     },
+     "status": {
+      "enum": [
+       "queued",
+       "running",
+       "done",
+       "failed"
+      ],
+      "title": "Status",
+      "type": "string"
+     },
+     "trigger": {
+      "enum": [
+       "upload",
+       "manual"
+      ],
+      "title": "Trigger",
+      "type": "string"
+     },
+     "updated": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Updated"
+     }
+    },
+    "required": [
+     "status",
+     "trigger",
+     "requested_at",
+     "finished_at",
+     "created",
+     "updated",
+     "removed"
+    ],
+    "title": "LatestRunOut",
+    "type": "object"
+   },
    "LoginRequest": {
     "properties": {
      "email": {
@@ -4648,6 +4732,40 @@
      }
     ],
     "summary": "Run",
+    "tags": [
+     "analytics"
+    ]
+   }
+  },
+  "/api/analytics/runs/latest": {
+   "get": {
+    "operationId": "latest_run_api_analytics_runs_latest_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "anyOf": [
+          {
+           "$ref": "#/components/schemas/LatestRunOut"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "title": "Response Latest Run Api Analytics Runs Latest Get"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Latest Run",
     "tags": [
      "analytics"
     ]

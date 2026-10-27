@@ -380,6 +380,17 @@ export interface KpiOut {
   food_cost_to: string | null;
 }
 
+/** When the findings were last recomputed, and whether a run is waiting or going on now. */
+export interface LatestRunOut {
+  status: "queued" | "running" | "done" | "failed";
+  trigger: "upload" | "manual";
+  requested_at: string;
+  finished_at: string | null;
+  created: number | null;
+  updated: number | null;
+  removed: number | null;
+}
+
 export interface LoginRequest {
   email: string;
   password: string;

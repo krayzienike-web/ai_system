@@ -36,6 +36,7 @@ import {
 import { MODULE_TITLE, perMonth, plural } from "../../lib/format";
 import { useViewer } from "../../lib/useViewer";
 import { useUi } from "../../state/ui";
+import { RecalcNote } from "../analytics/RecalcNote";
 import { ReviewTrace } from "../findings/ReviewTrace";
 
 const TABS: { status: ReviewStatus; title: string }[] = [
@@ -133,6 +134,7 @@ export function ReviewPage() {
           )
         }
       />
+      <RecalcNote />
       <div role="tablist" className="flex gap-1 border-b border-line">
         {TABS.map((t) => (
           <button

@@ -2,11 +2,12 @@ from datetime import date, datetime
 from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, UploadFile, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from starlette.concurrency import run_in_threadpool
 
+from app.analytics import runs
 from app.catalog.models import AliasKind
 from app.core.deps import SessionDep, require
 from app.core.errors import NotFoundError
@@ -161,21 +162,33 @@ def match(batch_id: UUID, body: MatchesIn, ctx: CanRead, session: SessionDep, to
 
 
 @router.post("/imports/{batch_id}/publish")
-def publish(batch_id: UUID, ctx: CanRead, session: SessionDep, today: TodayDep) -> BatchOut:
+def publish(
+    batch_id: UUID, ctx: CanRead, session: SessionDep, today: TodayDep, background: BackgroundTasks
+) -> BatchOut:
     out = BatchOut.of(service.publish(session, ctx, batch_id, today=today))
+    run = runs.request(session, ctx)  # the findings follow the data: recomputed after the commit
     session.commit()
+    runs.dispatch(run, today, background)
     return out
 
 
 @router.post("/imports/{batch_id}/reprocess")
-def reprocess(batch_id: UUID, ctx: CanRead, session: SessionDep, today: TodayDep) -> BatchOut:
+def reprocess(
+    batch_id: UUID, ctx: CanRead, session: SessionDep, today: TodayDep, background: BackgroundTasks
+) -> BatchOut:
     out = BatchOut.of(service.reprocess(session, ctx, batch_id, today=today))
+    run = runs.request(session, ctx)  # the findings follow the data: recomputed after the commit
     session.commit()
+    runs.dispatch(run, today, background)
     return out
 
 
 @router.post("/imports/{batch_id}/rollback")
-def rollback(batch_id: UUID, ctx: CanRead, session: SessionDep, today: TodayDep) -> BatchOut:
+def rollback(
+    batch_id: UUID, ctx: CanRead, session: SessionDep, today: TodayDep, background: BackgroundTasks
+) -> BatchOut:
     out = BatchOut.of(service.rollback(session, ctx, batch_id, today=today))
+    run = runs.request(session, ctx)  # the findings follow the data: recomputed after the commit
     session.commit()
+    runs.dispatch(run, today, background)
     return out

@@ -17,6 +17,7 @@ dependencies = [
     "fastexcel>=0.21.0",
     "python-multipart>=0.0.32",
     "xlsxwriter>=3.3.0",
+    "arq>=0.28.0",
 ]
 
 [dependency-groups]

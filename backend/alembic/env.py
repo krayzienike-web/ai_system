@@ -4,6 +4,7 @@ from alembic import context
 from sqlalchemy import create_engine
 
 # Importing the model modules registers their tables on Base.metadata.
+import app.analytics.runs
 import app.catalog.models
 import app.experiments.models
 import app.imports.models

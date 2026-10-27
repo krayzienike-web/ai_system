@@ -190,6 +190,9 @@ export interface Verification {
   interpretation?: string[];
 }
 
+/** When the findings were last recomputed (after an upload or by the button), and whether one waits. */
+export type LatestRun = S.LatestRunOut;
+
 export interface AnalyticsRun {
   created: number;
   updated: number;

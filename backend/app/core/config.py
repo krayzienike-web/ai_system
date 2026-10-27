@@ -23,6 +23,9 @@ class Settings(BaseSettings):
 
     cors_origins: list[str] = ["http://localhost:5173"]
 
+    # The background queue (arq). Not set: background work runs in the API process after the response.
+    redis_url: str | None = None
+
     @model_validator(mode="after")
     def no_dev_secret_outside_dev(self) -> "Settings":
         if self.env not in ("dev", "test") and self.jwt_secret == DEV_JWT_SECRET:

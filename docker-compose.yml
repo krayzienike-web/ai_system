@@ -21,11 +21,25 @@ services:
     environment:
       FAI_DATABASE_URL: postgresql+psycopg://franchise_app:app@db:5432/franchise
       FAI_MIGRATIONS_DATABASE_URL: postgresql+psycopg://franchise_owner:owner@db:5432/franchise
+      FAI_REDIS_URL: redis://redis:6379
     command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
     volumes: ["./backend/app:/app/app"]
     ports: ["8000:8000"]
     depends_on:
       db: { condition: service_healthy }
+      redis: { condition: service_started }
+
+  # Background work: the findings are recomputed here after every upload (app/analytics/runs.py).
+  worker:
+    build: ./backend
+    environment:
+      FAI_DATABASE_URL: postgresql+psycopg://franchise_app:app@db:5432/franchise
+      FAI_REDIS_URL: redis://redis:6379
+    command: arq app.worker.WorkerSettings
+    volumes: ["./backend/app:/app/app"]
+    depends_on:
+      db: { condition: service_healthy }
+      redis: { condition: service_started }
 
   frontend:
     image: node:22

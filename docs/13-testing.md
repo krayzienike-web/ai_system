@@ -120,6 +120,9 @@
 | TC-ENG-18 | M5: списания выше сети и по дням недели; разовое списание и списания как у сети — не находка | `test_m5_write_offs_above_the_network_and_on_the_same_weekdays` | ✅ |
 | TC-ENG-19 | M6: товар закончится до поставки; мелкие позиции — не находка | `test_m6_shortage_before_the_next_delivery` | ✅ |
 | TC-ENG-20 | M4 «бумажные» и пропущенные пересчеты, M7 остаток по документам в минус; честный пересчет и минус из-за пропуска выгрузки — не находка | `test_m4_paper_and_overdue_counts_and_m7_books_below_zero`, демо-тест | ✅ |
+| TC-ENG-21 | После публикации файла находки пересчитываются в фоне; журнал виден ролям своей сети и не виден чужой; в аудите — без человека | `test_runs.py::test_publishing_a_file_recomputes_the_findings` | ✅ |
+| TC-ENG-22 | Загрузки присоединяются к ожидающему пересчету; пересчет выполняется один раз; ошибка движка записывается | `test_uploads_join_the_waiting_run_and_a_run_goes_once`, `test_a_failed_run_is_logged` | ✅ |
+| TC-ENG-23 | С очередью задача уходит в воркер; без очереди или при ее недоступности — пересчет в процессе API | `test_the_queue_is_used_when_configured_and_falls_back_without_it`, `test_the_worker_runs_the_queued_run` | ✅ |
 | TC-ENG-16 | M7 находит блюдо без техкарты и пропуск выгрузки ресторана; обычная пауза в закупках и загруженная техкарта — не находка; на демо-сети — обе заложенные аномалии, сверка проходит | `test_m7_dish_without_a_recipe_and_missing_exports`, `test_engine_finds_planted_problems_and_review_gates_directors` | ✅ |
 | TC-ENG-15 | M1 показывает «Расход меньше техкарты» как риск качества без рублей; мелкое отклонение и малый товар — нет (E3) | `test_m1_shows_usage_below_the_recipe_as_a_quality_risk` | 🟡 (нет теста сверки по шагам) |
 
