@@ -1,7 +1,7 @@
 from collections.abc import Sequence
 from datetime import date
 from decimal import Decimal
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, status
@@ -26,7 +26,7 @@ CanRead = Annotated[AccessContext, Depends(require(Permission.RESTAURANTS_READ))
 
 
 class OutcomeOut(BaseModel):
-    verdict: str
+    verdict: Literal["pending", "confirmed", "not_confirmed"]
     effect_rub_month: Decimal | None
     text: str | None
     measured_on: date | None
@@ -40,11 +40,12 @@ class TaskOut(BaseModel):
     title: str
     checklist: list[str]
     checklist_done: list[bool]
-    assigned_by: str
+    assigned_by: Literal["hq", "director"]
     created_on: date
     due_on: date
-    status: str
+    status: Literal["assigned", "in_progress", "done"]
     late: bool
+    days_left: int  # until the deadline: negative when overdue
     done_on: date | None
     report: str | None
     outcome: OutcomeOut | None
@@ -71,6 +72,7 @@ class TaskOut(BaseModel):
             due_on=t.due_on,
             status=t.status,
             late=is_late(TaskFacts(t.status, t.due_on), today),
+            days_left=(t.due_on - today).days,
             done_on=t.done_on,
             report=t.report,
             outcome=OutcomeOut(

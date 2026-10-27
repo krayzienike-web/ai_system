@@ -1,17 +1,18 @@
 """Overview screens (ADR 0007): figures, rankings and conclusions come from `service`; the screens draw."""
 
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
 from app.core.deps import SessionDep, require
-from app.core.period import PeriodDep, TodayDep
+from app.core.period import PeriodDep, PeriodPreset, TodayDep, resolve_period
 from app.insights.api import FindingOut, findings_out
 from app.insights.service import FindingWork
+from app.insights.work import WorkStage
 from app.overview import service
 from app.tasks.api import TaskOut, tasks_out
 from app.tenancy.context import AccessContext
@@ -22,11 +23,35 @@ router = APIRouter(tags=["overview"])
 CanRead = Annotated[AccessContext, Depends(require(Permission.RESTAURANTS_READ))]
 CanCompare = Annotated[AccessContext, Depends(require(Permission.NETWORK_COMPARE))]
 
+DUE_OPTIONS = [("3 дня", 3), ("Неделя", 7), ("2 недели", 14)]
+PERIOD_TITLES = [
+    (PeriodPreset.WEEK, "Прошлая неделя"),
+    (PeriodPreset.PREV_WEEK, "Неделя до нее"),
+    (PeriodPreset.FOUR_WEEKS, "4 недели"),
+    (PeriodPreset.THIRTEEN_WEEKS, "13 недель"),
+    (PeriodPreset.MONTH, "Прошлый месяц"),
+]
+
+
+class DueOption(BaseModel):
+    label: str
+    days: int
+    due_on: date
+
+
+class PeriodOption(BaseModel):
+    preset: PeriodPreset
+    title: str
+    date_from: date
+    date_to: date
+
 
 class ContextOut(BaseModel):
     today: date
     data_until: date | None
     next_count_on: date | None
+    due_options: list[DueOption]  # deadlines offered for a new task
+    periods: list[PeriodOption]  # the period picker's presets, resolved for today
 
 
 class TrendOut(BaseModel):
@@ -136,7 +161,20 @@ class BadgesOut(BaseModel):
 @router.get("/overview/context")
 def get_context(ctx: CanRead, session: SessionDep, today: TodayDep) -> ContextOut:
     c = service.context(session, today)
-    return ContextOut(today=c.today, data_until=c.data_until, next_count_on=c.next_count_on)
+    return ContextOut(
+        today=c.today,
+        data_until=c.data_until,
+        next_count_on=c.next_count_on,
+        due_options=[
+            DueOption(label=label, days=days, due_on=today + timedelta(days=days))
+            for label, days in DUE_OPTIONS
+        ],
+        periods=[
+            PeriodOption(preset=p, title=title, date_from=r.date_from, date_to=r.date_to)
+            for p, title in PERIOD_TITLES
+            for r in [resolve_period(today, p)]
+        ],
+    )
 
 
 @router.get("/overview/network")
@@ -200,3 +238,59 @@ def get_restaurant(code: str, ctx: CanRead, session: SessionDep, today: TodayDep
 @router.get("/overview/badges")
 def get_badges(ctx: CanRead, session: SessionDep, today: TodayDep) -> BadgesOut:
     return BadgesOut(**service.badges(session, today, hq=ctx.can(Permission.NETWORK_COMPARE)))
+
+
+class KindTotal(BaseModel):
+    kind: str
+    count: int
+    total: Decimal
+
+
+class GroupOut(BaseModel):
+    key: str
+    title: str
+    count: int
+    total: Decimal
+    items: list[FindingOut]
+
+
+class BoardOut(BaseModel):
+    kinds: list[KindTotal]
+    stage_counts: dict[str, int]
+    late_count: int
+    processes: list[str]
+    groups: list[GroupOut]
+    max_effect: Decimal
+
+
+@router.get("/overview/findings")
+def get_board(
+    ctx: CanRead,
+    session: SessionDep,
+    today: TodayDep,
+    kind: Annotated[Literal["problem", "opportunity"] | None, Query()] = None,
+    process: Annotated[str | None, Query()] = None,
+    restaurant: Annotated[str | None, Query(description="restaurant id, or `net` for network-wide")] = None,
+    stage: Annotated[WorkStage | None, Query()] = None,
+    late: Annotated[bool, Query()] = False,
+) -> BoardOut:
+    b = service.board(
+        session, today, kind=kind, process=process, restaurant=restaurant, stage=stage, late=late
+    )
+    return BoardOut(
+        kinds=[KindTotal(kind=k, count=c, total=t) for k, c, t in b.kinds],
+        stage_counts=b.stage_counts,
+        late_count=b.late_count,
+        processes=b.processes,
+        groups=[
+            GroupOut(
+                key=g.key,
+                title=g.title,
+                count=g.count,
+                total=g.total,
+                items=findings_out(session, ctx, g.items),
+            )
+            for g in b.groups
+        ],
+        max_effect=b.max_effect,
+    )

@@ -163,7 +163,14 @@ def test_overview_screens_follow_the_access_rules(
     foreign = login(client, "admin@b.ru")
 
     ctx = client.get("/api/overview/context", headers=director).json()
-    assert ctx == {"today": "2026-10-20", "data_until": "2026-10-18", "next_count_on": "2026-11-29"}
+    assert (ctx["today"], ctx["data_until"], ctx["next_count_on"]) == (
+        "2026-10-20",
+        "2026-10-18",
+        "2026-11-29",
+    )
+    assert [(d["label"], d["due_on"]) for d in ctx["due_options"]][1] == ("Неделя", "2026-10-27")
+    week = next(p for p in ctx["periods"] if p["preset"] == "week")
+    assert (week["date_from"], week["date_to"]) == ("2026-10-12", "2026-10-18")
 
     net = client.get("/api/overview/network", headers=hq, params={"preset": "4w"}).json()
     assert net["restaurants"] == 15  # the 3 of the fixture and the 12 of the demo network
@@ -317,3 +324,29 @@ def test_head_report_and_chat(client: TestClient, network: Network, demo: dict[s
     checks = client.post("/api/chat", headers=hq, json={"question": "Какие проверки сработали?"}).json()
     assert checks["text"].startswith("Завершено 2 проверки, сработало 1")
     assert client.get("/api/chat/suggestions", headers=director).json()[0] == "Почему у меня вырос фудкост?"
+
+
+def test_findings_board_filters_counts_and_sums(
+    client: TestClient, network: Network, demo: dict[str, UUID]
+) -> None:
+    hq, director = login(client, "admin@a.ru"), login(client, "r01@a.ru")
+    board = client.get("/api/overview/findings", headers=hq).json()
+    findings = client.get("/api/findings", headers=hq).json()
+    assert board["stage_counts"]["all"] == len(findings)
+    problems = next(k for k in board["kinds"] if k["kind"] == "problem")
+    assert D(problems["total"]) == sum(
+        D(f["effect_rub_month"] or 0) for f in findings if f["kind"] == "problem"
+    )
+    # The most expensive first; findings without a ruble estimate in their own group, last.
+    first = board["groups"][0]
+    assert first["key"] == "problem"
+    effects = [D(f["effect_rub_month"]) for f in first["items"]]
+    assert effects == sorted(effects, reverse=True)
+    assert board["groups"][-1]["key"] == "unestimated"
+    net = client.get("/api/overview/findings", headers=hq, params={"restaurant": "net"}).json()
+    assert all(f["restaurant_id"] is None for g in net["groups"] for f in g["items"])
+    late = client.get("/api/overview/findings", headers=hq, params={"late": True}).json()
+    assert all(f["work"]["tasks_late"] > 0 for g in late["groups"] for f in g["items"])
+    # A director's board holds only their restaurant.
+    mine = client.get("/api/overview/findings", headers=director).json()
+    assert {f["restaurant_code"] for g in mine["groups"] for f in g["items"]} == {"R01"}

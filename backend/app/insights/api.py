@@ -1,6 +1,6 @@
 from datetime import date
 from decimal import Decimal
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
@@ -37,6 +37,70 @@ class WorkOut(BaseModel):
     check_waiting_launch: bool
 
 
+class MetricView(BaseModel):
+    label: str
+    value: str
+    benchmark: str
+    norm: str | None = None
+
+
+class ScaleView(BaseModel):
+    """«Me / network / norm» on one scale; `answer` — «Это много?» in words."""
+
+    label: str
+    unit: str
+    me: float | None
+    network: float | None = None
+    network_label: str | None = None
+    norm: float | None = None
+    norm_label: str | None = None
+    lower_is_better: bool
+    answer: str | None = None
+
+
+class CompositionPart(BaseModel):
+    label: str
+    value: float | None
+    tone: str  # brand | neutral | loss | gain
+
+
+class CompositionView(BaseModel):
+    unit: str
+    formula: str
+    parts: list[CompositionPart]
+    answer: str | None = None
+
+
+class ChartView(BaseModel):
+    title: str
+    conclusion: str | None = None
+    unit: str
+    labels: list[str]
+    restaurant: list[float | None]
+    network_avg: list[float | None] | None = None
+    norm: float | None = None
+    norm_label: str | None = None
+
+
+class TableView(BaseModel):
+    title: str
+    columns: list[str]
+    rows: list[list[str | float | None]]
+
+
+class FindingView(BaseModel):
+    """How a finding is shown (analytics/views.py; hand-made findings carry the same blocks)."""
+
+    summary: str | None = None
+    causes: list[str] = []
+    confidence_note: str | None = None
+    metric: MetricView | None = None
+    scale: ScaleView | None = None
+    composition: CompositionView | None = None
+    chart: ChartView | None = None
+    table: TableView | None = None
+
+
 class CheckRef(BaseModel):
     id: UUID
     title: str
@@ -49,17 +113,25 @@ class CheckRef(BaseModel):
     progress_text: str | None = None
 
 
+Kind = Literal["problem", "opportunity"]
+Process = Literal[
+    "purchasing", "receiving", "storage", "production", "writeoffs", "inventory", "accounting", "planning"
+]
+Confidence = Literal["high", "medium", "low"]
+FindingStatusName = Literal["new", "in_work", "in_experiment", "resolved", "dismissed"]
+
+
 class FindingOut(BaseModel):
     id: UUID
     restaurant_id: UUID | None
-    kind: str
-    process: str
+    kind: Kind
+    process: Process
     module: str | None
-    confidence: str | None
+    confidence: Confidence | None
     period_from: date | None
     period_to: date | None
-    review_status: str | None  # null: made by hand; pending | confirmed | rejected
-    review_reason: str | None
+    review_status: ReviewStatus | None  # null: made by hand
+    review_reason: RejectReason | None
     review_note: str | None
     reviewed_on: date | None
     reviewed_by_name: str | None = None  # who confirmed or rejected it (HQ sees names; a director gets none)
@@ -68,13 +140,13 @@ class FindingOut(BaseModel):
     effect_rub_month: Decimal | None
     effect_note: str | None
     actions: list[str]
-    status: str
+    status: FindingStatusName
     found_on: date
     work: WorkOut
     restaurant_code: str | None = None
     restaurant_name: str | None = None
     # How it is shown: summary, causes, metric, confidence_note, scale, composition, chart, table (ADR 0007).
-    view: dict[str, Any] | None = None
+    view: FindingView | None = None
 
 
 class FindingDetailOut(FindingOut):

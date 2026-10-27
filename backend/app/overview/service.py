@@ -546,3 +546,85 @@ def badges(session: Session, today: date, *, hq: bool) -> dict[str, Any]:
         ).scalar_one()
         return {"inbox": waiting + sum(1 for t in tasks if _late(t, today)), "open_tasks": 0}
     return {"inbox": 0, "open_tasks": sum(1 for t in tasks if t.status != TaskStatus.DONE)}
+
+
+# ------------------------------------------------------------------ the findings list
+
+
+@dataclass
+class Group:
+    key: str  # problem | opportunity | unestimated
+    title: str
+    count: int
+    total: Decimal
+    items: list[FindingWork]
+
+
+@dataclass
+class Board:
+    kinds: list[tuple[str, int, Decimal]]  # (kind, count, total) under the filters except the kind itself
+    stage_counts: dict[str, int]
+    late_count: int
+    processes: list[str]  # processes that have findings at all (for the filter)
+    groups: list[Group]
+    max_effect: Decimal
+
+
+GROUP_TITLE = {
+    "problem": "Где теряем",
+    "opportunity": "Где можно заработать",
+    "unestimated": "Без оценки в рублях — но важно для точности",
+}
+
+
+def board(
+    session: Session,
+    today: date,
+    *,
+    kind: str | None = None,
+    process: str | None = None,
+    restaurant: str | None = None,  # a restaurant id, or "net" for network-wide findings
+    stage: str | None = None,
+    late: bool = False,
+) -> Board:
+    """The findings list: every filter, count and sum is applied here; the most expensive first."""
+    scope = list_findings(session, today=today)
+
+    def keep(fw: FindingWork) -> bool:
+        f = fw.finding
+        where = "net" if f.restaurant_id is None else str(f.restaurant_id)
+        return (
+            (process is None or f.process == process)
+            and (restaurant is None or where == restaurant)
+            and (stage is None or fw.work.stage == stage)
+            and (not late or fw.work.tasks_late > 0)
+        )
+
+    filtered = [fw for fw in scope if keep(fw)]
+    kinds = [
+        (
+            k,
+            sum(1 for fw in filtered if fw.finding.kind == k),
+            _sum([fw for fw in filtered if fw.finding.kind == k]),
+        )
+        for k in ("problem", "opportunity")
+    ]
+    shown = [k for k in ("problem", "opportunity") if kind in (None, k)]
+    groups = [
+        Group(k, GROUP_TITLE[k], len(items), _sum(items), items)
+        for k in shown
+        for items in [
+            [fw for fw in filtered if fw.finding.kind == k and fw.finding.effect_rub_month is not None]
+        ]
+    ]
+    unestimated = [fw for fw in filtered if fw.finding.effect_rub_month is None and fw.finding.kind in shown]
+    groups.append(Group("unestimated", GROUP_TITLE["unestimated"], len(unestimated), ZERO, unestimated))
+    stages = {s.value: sum(1 for fw in scope if fw.work.stage == s) for s in WorkStage}
+    return Board(
+        kinds=kinds,
+        stage_counts={"all": len(scope), **stages},
+        late_count=sum(1 for fw in scope if fw.work.tasks_late > 0),
+        processes=[p for p, _ in PROCESSES if any(fw.finding.process == p for fw in scope)],
+        groups=[g for g in groups if g.items],
+        max_effect=max((fw.finding.effect_rub_month or ZERO for fw in filtered), default=ZERO),
+    )

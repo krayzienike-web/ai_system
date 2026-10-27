@@ -1,7 +1,7 @@
 from collections.abc import Sequence
 from datetime import date
 from decimal import Decimal
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, status
@@ -43,8 +43,8 @@ class CheckOut(BaseModel):
     starts_on: date
     ends_on: date
     expected_rub_month: Decimal
-    status: str
-    verdict: str | None
+    status: Literal["proposed", "running", "completed", "rejected"]
+    verdict: Literal["confirmed", "inconclusive", "rejected"] | None
     effect_rub_month: Decimal | None
     ci_low_rub_month: Decimal | None
     ci_high_rub_month: Decimal | None
