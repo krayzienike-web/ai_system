@@ -239,6 +239,8 @@ function SourceRows({ step }: { step: VerificationStep }) {
     restaurant: "Ресторан",
     share: "Сверх техкарты",
     over: "Выше допуска",
+    contract: "По договору, ₽",
+    overpay: "Переплата, ₽",
   };
   return (
     <div>

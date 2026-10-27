@@ -610,8 +610,8 @@ def test_erp_iiko_sync_collapses_names_and_contract_prices_load(
     publish(client, hq, batch["id"])
     receipts = (
         "Дата;Поставщик;Товар;Количество;Ед. изм.;Сумма\n"
-        "01.10.2026;Сырный дом;Моцарелла 1 (Сырный дом);10;кг;6200\n"
-        "02.10.2026;Сырный дом;Моцарелла 2 (Лактика);5;кг;3150\n"
+        "01.10.2026;Сырный дом;Моцарелла 1 (Сырный дом);1000;кг;620000\n"
+        "02.10.2026;Сырный дом;Моцарелла 2 (Лактика);500;кг;315000\n"
     )
     r = upload(client, login(client, "director1@a.ru"), "receipts", receipts, network.a.restaurants["A1"])
     assert r.json()["status"] == "validated" and r.json()["unmatched"] == []
@@ -625,3 +625,16 @@ def test_erp_iiko_sync_collapses_names_and_contract_prices_load(
     assert (
         upload(client, login(client, "director1@a.ru"), "contract_prices", contract + " ").status_code == 403
     )
+
+    # TC-REV-04: invoices at 620 and 630 ₽/kg against the contract's 600 — the check recomputes the overpay
+    # from the stored invoices and contract prices, invoice by invoice.
+    publish(client, login(client, "director1@a.ru"), r.json()["id"])
+    assert client.post("/api/analytics/run", headers=hq).status_code == 200
+    pending = client.get("/api/findings", headers=hq, params={"review": "pending"}).json()
+    breach = next(f for f in pending if f["title"] == "Цена выше договорной: Сыр Моцарелла")
+    v = client.get(f"/api/findings/{breach['id']}/verification", headers=hq).json()
+    assert v["supported"] and all(c["ok"] for c in v["checks"]) and all(r["passed"] for r in v["rules"])
+    assert [(row["price"], row["contract"], row["overpay"]) for row in v["steps"][0]["rows"]] == [
+        ("620.00", "600.00", "20000.00"),
+        ("630.00", "600.00", "15000.00"),
+    ]

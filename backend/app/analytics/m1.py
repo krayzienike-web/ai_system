@@ -194,6 +194,11 @@ def detect(facts: Facts, all_rows: list[M1Row], norms: Norms, cfg: EngineParams 
                         facts.restaurants[r.restaurant]: str(r.share.quantize(Decimal("0.0001")))
                         for r in group
                     },
+                    # Each restaurant's own period (own counting days): the check recomputes it.
+                    "periods": {
+                        facts.restaurants[r.restaurant]: [r.first_day.isoformat(), r.end.isoformat()]
+                        for r in group
+                    },
                 },
             )
         )

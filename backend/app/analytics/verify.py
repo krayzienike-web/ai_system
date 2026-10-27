@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from app.analytics import params
 from app.analytics.drafts import pct, rub
 from app.analytics.stats import med
-from app.catalog.models import MenuItem, Product, RecipeLine, Supplier
+from app.catalog.models import ContractPrice, MenuItem, Product, RecipeLine, Supplier
 from app.catalog.recipes import Line, explode, lines_on
 from app.imports.models import ImportBatch
 from app.insights.models import Finding
@@ -421,18 +421,92 @@ def _m1_under_rules(
     return rules
 
 
+def _m1_share(
+    session: Session, restaurant_id: UUID, product: Product, first: date, end: date, lines: list[Line]
+) -> Decimal | None:
+    """U% of one restaurant and period, recomputed from the stored rows (as in `_m1_restaurant`)."""
+    start = first - timedelta(days=1)
+    counts: dict[date, Decimal] = {
+        day: qty
+        for day, qty in session.execute(
+            select(InventoryCount.day, InventoryCount.actual_qty).where(
+                InventoryCount.restaurant_id == restaurant_id,
+                InventoryCount.product_id == product.id,
+                InventoryCount.day.in_([start, end]),
+            )
+        ).all()
+    }
+    if start not in counts or end not in counts:
+        return None
+
+    def total(model: Any, *where: Any) -> Decimal:
+        rows = session.execute(
+            select(model.qty).where(
+                model.product_id == product.id, model.day >= first, model.day <= end, *where
+            )
+        ).scalars()
+        return sum(rows, Decimal(0))
+
+    received = total(Receipt, Receipt.restaurant_id == restaurant_id)
+    moved_in = total(Transfer, Transfer.to_restaurant_id == restaurant_id)
+    moved_out = total(Transfer, Transfer.restaurant_id == restaurant_id)
+    written = total(WriteOff, WriteOff.restaurant_id == restaurant_id)
+    theory = Decimal(0)
+    per_portion: dict[tuple[UUID, date], Decimal] = {}
+    for item, day, qty in session.execute(
+        select(Sale.menu_item_id, Sale.day, Sale.qty).where(
+            Sale.restaurant_id == restaurant_id, Sale.day >= first, Sale.day <= end
+        )
+    ).all():
+        version = max((ln.valid_from for ln in lines if ln.valid_from <= day), default=day)
+        if (item, version) not in per_portion:
+            opened = explode(item, Decimal(1), lines_on(lines, version))
+            per_portion[(item, version)] = opened.get(product.id, Decimal(0))
+        theory += qty * per_portion[(item, version)]
+    if theory <= 0:
+        return None
+    actual = counts[start] + received + moved_in - moved_out - counts[end]
+    return (actual - theory - written) / theory
+
+
 def _m1_network(session: Session, f: Finding) -> dict[str, Any]:
+    """The recipe looks wrong across the network: every restaurant's share recomputed from its rows."""
     cfg = params.load(session)
     ev = f.evidence or {}
     allowance = Decimal(ev["allowance"])
-    shares = {code: Decimal(v) for code, v in ev.get("restaurants", {}).items()}
+    stored = {code: Decimal(v) for code, v in ev.get("restaurants", {}).items()}
+    product = session.execute(select(Product).where(Product.code == ev["product"])).scalar_one_or_none()
+    ids = {code: rid for rid, code in session.execute(select(Restaurant.id, Restaurant.code)).all()}
+    lines = [
+        Line(r.menu_item_id or r.semi_product_id, r.product_id, r.gross_qty, r.valid_from)  # type: ignore[arg-type]
+        for r in session.execute(select(RecipeLine)).scalars()
+    ]
+    # Findings recorded before each restaurant's own period was stored: the finding's period for all.
+    periods: dict[str, list[str]] = ev.get("periods") or {
+        code: [f.period_from.isoformat(), f.period_to.isoformat()]
+        for code in stored
+        if f.period_from and f.period_to
+    }
+    shares: dict[str, Decimal] = {}
+    for code, (first, end) in periods.items():
+        if product is None or code not in ids:
+            continue
+        share = _m1_share(
+            session, ids[code], product, date.fromisoformat(first), date.fromisoformat(end), lines
+        )
+        if share is not None:
+            shares[code] = share
     over = [c for c, s in shares.items() if s > allowance]
-    m = Decimal(ev["median_share"])
+    m = med(list(shares.values())) if shares else Decimal(0)
+    missing = sorted(set(stored) - set(shares))
+    mismatched = sorted(
+        c for c, s in shares.items() if c in stored and abs(stored[c] - s) >= Decimal("0.0005")
+    )
     return {
         "module": "M1",
         "supported": True,
         "formula": FORMULA_M1,
-        "object": ev["product"],
+        "object": product.name if product else ev["product"],
         "period": [
             f.period_from.isoformat() if f.period_from else None,
             f.period_to.isoformat() if f.period_to else None,
@@ -440,11 +514,16 @@ def _m1_network(session: Session, f: Finding) -> dict[str, Any]:
         "steps": [
             {
                 "id": "restaurants",
-                "label": "Необъяснимый расход по ресторанам, доля от расхода по техкартам",
+                "label": "Необъяснимый расход по ресторанам, доля от расхода по техкартам (из строк)",
                 "value": None,
                 "unit": "",
                 "rows": [
-                    {"restaurant": c, "share": pct(s), "over": s > allowance}
+                    {
+                        "restaurant": c,
+                        "day": f"{periods[c][0]} – {periods[c][1]}",
+                        "share": pct(s),
+                        "over": s > allowance,
+                    }
                     for c, s in sorted(shares.items())
                 ],
             }
@@ -464,7 +543,18 @@ def _m1_network(session: Session, f: Finding) -> dict[str, Any]:
                 "passed": m - allowance >= cfg.M1_NET_EXCESS,
             },
         ],
-        "checks": [],
+        "checks": [
+            {
+                "check": "Все рестораны находки пересчитаны из исходных строк",
+                "ok": not missing,
+                "note": None if not missing else f"не пересчитаны: {', '.join(missing)}",
+            },
+            {
+                "check": "Пересчет из исходных строк совпадает с тем, что посчитал движок",
+                "ok": not mismatched,
+                "note": None if not mismatched else f"расходятся: {', '.join(mismatched)}",
+            },
+        ],
         "interpretation": INTERPRETATION_M1_NET,
     }
 
@@ -918,33 +1008,122 @@ def _m3_growth(session: Session, f: Finding) -> dict[str, Any]:
 
 
 def _m3_contract(session: Session, f: Finding) -> dict[str, Any]:
+    """Invoices above the contract, recomputed from the stored receipts and contract prices."""
+    cfg = params.load(session)
     ev = f.evidence or {}
+    assert f.period_from and f.period_to
+    product = session.execute(select(Product).where(Product.code == ev["product"])).scalar_one_or_none()
+    supplier = session.execute(select(Supplier).where(Supplier.name == ev["supplier"])).scalars().first()
+    if product is None or supplier is None:
+        return {"module": "M3", "supported": False, "note": "Товар или поставщик больше не в справочнике"}
+    unit = UNITS.get(product.base_unit, product.base_unit)
+    contracts = list(
+        session.execute(
+            select(ContractPrice).where(
+                ContractPrice.supplier_id == supplier.id, ContractPrice.product_id == product.id
+            )
+        ).scalars()
+    )
+    codes = dict(session.execute(select(Restaurant.id, Restaurant.code)).all())
+    receipts = list(
+        session.execute(
+            select(Receipt)
+            .where(
+                Receipt.supplier_id == supplier.id,
+                Receipt.product_id == product.id,
+                Receipt.day >= f.period_from,
+                Receipt.day <= f.period_to,
+                Receipt.qty > 0,
+            )
+            .order_by(Receipt.day)
+        ).scalars()
+    )
+    files = _files(session, {r.import_batch_id for r in receipts})
+    over: list[tuple[Receipt, Decimal]] = []
+    for r in receipts:
+        valid = [
+            c for c in contracts if c.valid_from <= r.day and (c.valid_to is None or r.day <= c.valid_to)
+        ]
+        if not valid:
+            continue
+        price = max(valid, key=lambda c: c.valid_from).price
+        if r.amount / r.qty > price * (1 + cfg.M3_CONTRACT_TOLERANCE):
+            over.append((r, price))
+    overpay = sum((r.amount - p * r.qty for r, p in over), Decimal(0))
+    days = (f.period_to - f.period_from).days + 1
+    effect = (overpay * 30 / days).quantize(Decimal(1), rounding=ROUND_HALF_UP)
+    contract_price = max((p for _, p in over), default=Decimal(0))
+    qty = sum((r.qty for r, _ in over), Decimal(0))
+    paid = sum((r.amount for r, _ in over), Decimal(0)) / qty if qty else Decimal(0)
     steps = [
         {
-            "id": "restaurants",
-            "label": f"Переплата сверх договора по ресторанам (поставщик «{ev['supplier']}»)",
-            "value": rub(Decimal(ev["overpay"])),
+            "id": "receipts",
+            "label": f"Накладные «{supplier.name}» выше договорной цены",
+            "value": rub(overpay),
             "unit": "",
-            "rows": [{"restaurant": k, "amount": v} for k, v in ev.get("restaurants", {}).items()],
+            "rows": [
+                {
+                    "day": r.day.isoformat(),
+                    "restaurant": codes.get(r.restaurant_id, "—"),
+                    "doc": r.doc_no,
+                    "qty": _q(r.qty),
+                    "price": _q(r.amount / r.qty, Decimal("0.01")),
+                    "contract": _q(p, Decimal("0.01")),
+                    "overpay": _q(r.amount - p * r.qty, Decimal("0.01")),
+                    "file": files.get(r.import_batch_id),
+                }
+                for r, p in over
+            ],
         }
     ]
+    money = Decimal("0.01")
     result = [
-        {"label": "Цена по договору", "value": ev["contract_price"], "unit": "₽"},
-        {"label": "Средняя цена в накладных выше договора", "value": ev["paid"], "unit": "₽"},
-        {"label": "Накладных выше договора", "value": str(ev["receipts"]), "unit": ""},
+        {"label": "Цена по договору", "value": _q(contract_price, money), "unit": f"₽/{unit}"},
+        {"label": "Средняя цена в накладных выше договора", "value": _q(paid, money), "unit": f"₽/{unit}"},
+        {"label": "Накладных выше договора", "value": str(len(over)), "unit": ""},
+        {"label": "Переплата в месяц", "value": rub(effect), "unit": ""},
+    ]
+    rules = [
+        {
+            "rule": "Цена в накладной выше договорной сверх допуска на округления",
+            "value": f"{len(over)} накладных",
+            "threshold": pct(cfg.M3_CONTRACT_TOLERANCE, 0),
+            "passed": bool(over),
+        },
+        {
+            "rule": "Переплата существенная, ₽ в месяц",
+            "value": rub(effect),
+            "threshold": rub(cfg.M3_MATERIALITY_RUB_MONTH),
+            "passed": effect >= cfg.M3_MATERIALITY_RUB_MONTH,
+        },
+    ]
+    checks = [
+        {"check": "Договорная цена загружена на этот период", "ok": bool(contracts)},
+        {
+            "check": "Пересчет из исходных строк совпадает с тем, что посчитал движок",
+            "ok": abs(Decimal(ev["overpay"]) - overpay) < Decimal(1),
+            "note": f"движок: {rub(Decimal(ev['overpay']))}, пересчет: {rub(overpay)}",
+        },
+        {
+            "check": "Сумма в находке совпадает с пересчетом",
+            "ok": f.effect_rub_month is not None and abs(effect - f.effect_rub_month) <= Decimal(1),
+            "note": f"в находке: {rub(f.effect_rub_month or Decimal(0))}, пересчет: {rub(effect)}",
+        },
     ]
     return {
         "module": "M3",
         "supported": True,
-        "object": ev["product"],
+        "object": product.name,
         "restaurant": "Вся сеть",
+        "period": [f.period_from.isoformat(), f.period_to.isoformat()],
         "formula": "Переплата = Σ (сумма накладной − договорная цена × количество) "
         "по накладным выше договора",
         "steps": steps,
         "result": result,
-        "rules": [],
-        "checks": [],
+        "rules": rules,
+        "checks": checks,
         "interpretation": [
-            "Проверьте, не менялся ли договор: новую цену загрузите файлом «Договорные цены»."
+            "Проверьте, не менялся ли договор: новую цену загрузите файлом «Договорные цены».",
+            "Переплату по накладным можно предъявить поставщику: номера документов — в таблице.",
         ],
     }

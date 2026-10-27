@@ -330,6 +330,10 @@ def test_engine_finds_planted_problems_and_review_gates_directors(
         assert in_list["reviewed_by_name"] == "analyst@a.ru"
 
         fries = by_key[("M1", "Техкарта, вероятно, устарела: Картофель фри замороженный")]
+        # TC-REV-04: the network finding is recomputed restaurant by restaurant from the rows.
+        vf = client.get(f"/api/findings/{fries['id']}/verification", headers=analyst).json()
+        assert all(c["ok"] for c in vf["checks"]) and all(r["passed"] for r in vf["rules"])
+        assert len(vf["steps"][0]["rows"]) == 12 and vf["rules"][0]["value"] == "12 из 12"
         rejected = client.post(
             f"/api/findings/{fries['id']}/review",
             headers=hq,
