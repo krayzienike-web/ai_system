@@ -190,6 +190,21 @@
 | TC-OVR-14 | «Документы» после ревью этапа 4: директор-получатель видит входящее перемещение без имени и файла отправителя; товар, которого нет в справочнике, — строк нет | `test_overview.py::test_documents_after_the_stage_4_review` | ✅ |
 | TC-OVR-15 | «Документы» по видам находок: блюдо (M2) — продажи по дням × ресторан × блюдо (число строк и выручка строки сходятся с таблицей продаж, деньги — строкой `Decimal`, не больше 200 строк); списания (M5) — акты с причиной, число — как в таблице; поставки (M6) — накладные за 4 недели до конца периода и инвентаризации | `test_overview.py::test_documents_of_sales_write_offs_and_purchases_on_the_demo_network` | ✅ |
 
+### Ассистент: шлюз к модели, инструменты, чат (AI, этап 5)
+
+Модель в тестах — заглушка `FakeModel`: ключа Claude API пока нет (Q12), и тесты не должны зависеть от сети.
+
+| ID | Требование | Тест | Статус |
+|----|------------|------|--------|
+| TC-AI-01 | Каждый вызов модели записан в `ai_runs`: пользователь, задача, промпт и его версия (и хэш), модель, запрос, ответ, токены, стоимость, время | `test_ai_gateway.py::test_every_call_is_logged_with_prompt_version_tokens_and_cost` | ✅ |
+| TC-AI-02 | Отказ модели, обрыв по лимиту токенов и сбой тоже записаны; сбой — «Ассистент сейчас недоступен» (503), а не 500 | `test_refusals_truncations_and_failures_are_logged_too`, `test_claude_api_errors_become_model_unavailable` | ✅ |
+| TC-AI-03 | Дневной лимит вопросов на пользователя: следующий вызов — 429 без обращения к модели; лимит у каждого свой, вчерашние вызовы не считаются | `test_the_daily_budget_stops_the_next_call_and_is_per_user` | ✅ |
+| TC-AI-04 | Журнал `ai_runs` только дополняется; директор видит свои вызовы, УК — сети, чужая сеть — ничего | `test_the_log_is_append_only_and_each_person_sees_their_own` | ✅ |
+| TC-AI-05 | Промпты — файлы с версией: берется последняя, можно взять любую прежнюю; в промпте чата — правила, которые проверяют evals | `test_prompts_are_versioned_files`, `test_the_shipped_chat_prompt_keeps_the_rules_the_evals_check` | ✅ |
+| TC-AI-06 | Запрос к Claude: системный промпт кэшируется, адаптивное мышление с явным effort, резервная модель при отказе (кроме Haiku); стоимость по прайсу моделей | `test_the_claude_request_caches_the_system_prompt_thinks_adaptively_and_falls_back`, `test_costs_follow_the_price_list_and_unknown_models_cost_nothing` | ✅ |
+| TC-AI-07 | Без провайдера (`FAI_AI_PROVIDER=off`, по умолчанию) модели нет — чат отвечает по правилам | `test_without_a_provider_there_is_no_model` | ✅ |
+| TC-AI-08 | Только `app/ai` обращается к модели, предметные модули не импортируют `ai` и чат | CI: `lint-imports` (`[tool.importlinter]`) | ✅ |
+
 ### Интерфейс (UI)
 
 | ID | Требование (docs/10) | Тест | Статус |

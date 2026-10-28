@@ -7,7 +7,7 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
-import httpx
+import httpx2 as httpx  # starlette's TestClient uses httpx2 once it is installed (anthropic 2.x)
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine, func, select, text

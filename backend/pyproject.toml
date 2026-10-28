@@ -18,6 +18,7 @@ dependencies = [
     "python-multipart>=0.0.32",
     "xlsxwriter>=3.3.0",
     "arq>=0.28.0",
+    "anthropic>=2.3.0",
 ]
 
 [dependency-groups]
@@ -91,19 +92,19 @@ source_modules = [
 forbidden_modules = ["anthropic"]
 
 [[tool.importlinter.contracts]]
-name = "Numbers do not depend on the assistant: domain modules do not import the chat"
+name = "Numbers do not depend on the assistant: domain modules import neither ai nor the chat"
 type = "forbidden"
 source_modules = [
     "app.analytics", "app.auth", "app.catalog", "app.core", "app.experiments", "app.imports", "app.insights",
     "app.norms", "app.operations", "app.overview", "app.reports", "app.tasks", "app.tenancy",
 ]
-forbidden_modules = ["app.chat"]
+forbidden_modules = ["app.ai", "app.chat"]
 
 [[tool.importlinter.contracts]]
 name = "The demo is outside the product: only the CLI loads it"
 type = "forbidden"
 source_modules = [
-    "app.analytics", "app.auth", "app.catalog", "app.chat", "app.core", "app.experiments", "app.imports",
+    "app.ai", "app.analytics", "app.auth", "app.catalog", "app.chat", "app.core", "app.experiments", "app.imports",
     "app.insights", "app.main", "app.norms", "app.operations", "app.overview", "app.reports", "app.tasks",
     "app.tenancy", "app.worker",
 ]
@@ -114,6 +115,6 @@ name = "The kernel knows no domain: core and tenancy import nothing above them"
 type = "forbidden"
 source_modules = ["app.core", "app.tenancy"]
 forbidden_modules = [
-    "app.analytics", "app.auth", "app.catalog", "app.chat", "app.experiments", "app.imports", "app.insights",
+    "app.ai", "app.analytics", "app.auth", "app.catalog", "app.chat", "app.experiments", "app.imports", "app.insights",
     "app.norms", "app.operations", "app.overview", "app.reports", "app.tasks",
 ]

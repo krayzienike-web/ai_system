@@ -28,6 +28,14 @@ class Settings(BaseSettings):
     # The background queue (arq). Not set: background work runs in the API process after the response.
     redis_url: str | None = None
 
+    # The assistant's model (ADR 0005). `off` until the Claude API key comes (Q12): the chat answers by its
+    # rules. `claude` reads the key from ANTHROPIC_API_KEY.
+    ai_provider: str = "off"
+    ai_model: str = "claude-opus-5-5"
+    ai_effort: str = "medium"
+    ai_timeout_s: float = 60.0
+    ai_requests_per_user_day: int = 100
+
     @model_validator(mode="after")
     def no_dev_secret_outside_dev(self) -> "Settings":
         if self.env not in ("dev", "test") and self.jwt_secret == DEV_JWT_SECRET:
