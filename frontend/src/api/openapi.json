@@ -151,6 +151,18 @@
      "text": {
       "title": "Text",
       "type": "string"
+     },
+     "thread_id": {
+      "anyOf": [
+       {
+        "format": "uuid",
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Thread Id"
      }
     },
     "required": [
@@ -183,6 +195,18 @@
       "minLength": 1,
       "title": "Question",
       "type": "string"
+     },
+     "thread_id": {
+      "anyOf": [
+       {
+        "format": "uuid",
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Thread Id"
      }
     },
     "required": [
@@ -2728,6 +2752,30 @@
     "title": "LatestRunOut",
     "type": "object"
    },
+   "LineOut": {
+    "properties": {
+     "at": {
+      "format": "date-time",
+      "title": "At",
+      "type": "string"
+     },
+     "role": {
+      "title": "Role",
+      "type": "string"
+     },
+     "text": {
+      "title": "Text",
+      "type": "string"
+     }
+    },
+    "required": [
+     "role",
+     "text",
+     "at"
+    ],
+    "title": "LineOut",
+    "type": "object"
+   },
    "LoginRequest": {
     "properties": {
      "email": {
@@ -4394,6 +4442,44 @@
     "title": "TemplateOut",
     "type": "object"
    },
+   "ThreadOut": {
+    "properties": {
+     "finding_id": {
+      "anyOf": [
+       {
+        "format": "uuid",
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Finding Id"
+     },
+     "id": {
+      "format": "uuid",
+      "title": "Id",
+      "type": "string"
+     },
+     "title": {
+      "title": "Title",
+      "type": "string"
+     },
+     "updated_at": {
+      "format": "date-time",
+      "title": "Updated At",
+      "type": "string"
+     }
+    },
+    "required": [
+     "id",
+     "title",
+     "finding_id",
+     "updated_at"
+    ],
+    "title": "ThreadOut",
+    "type": "object"
+   },
    "TickIn": {
     "properties": {
      "done": {
@@ -5324,6 +5410,51 @@
     ]
    }
   },
+  "/api/chat/stream": {
+   "post": {
+    "description": "The same answer as Server-Sent Events: `status` while the assistant looks at the data, then `answer`\n(or `error` with the message and the HTTP status it would have had).",
+    "operationId": "ask_streaming_api_chat_stream_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/AskIn"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Ask Streaming",
+    "tags": [
+     "chat"
+    ]
+   }
+  },
   "/api/chat/suggestions": {
    "get": {
     "operationId": "chat_suggestions_api_chat_suggestions_get",
@@ -5349,6 +5480,88 @@
      }
     ],
     "summary": "Chat Suggestions",
+    "tags": [
+     "chat"
+    ]
+   }
+  },
+  "/api/chat/threads": {
+   "get": {
+    "operationId": "chat_threads_api_chat_threads_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "items": {
+          "$ref": "#/components/schemas/ThreadOut"
+         },
+         "title": "Response Chat Threads Api Chat Threads Get",
+         "type": "array"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Chat Threads",
+    "tags": [
+     "chat"
+    ]
+   }
+  },
+  "/api/chat/threads/{thread_id}": {
+   "get": {
+    "operationId": "chat_thread_api_chat_threads__thread_id__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "thread_id",
+      "required": true,
+      "schema": {
+       "format": "uuid",
+       "title": "Thread Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "items": {
+          "$ref": "#/components/schemas/LineOut"
+         },
+         "title": "Response Chat Thread Api Chat Threads  Thread Id  Get",
+         "type": "array"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Chat Thread",
     "tags": [
      "chat"
     ]

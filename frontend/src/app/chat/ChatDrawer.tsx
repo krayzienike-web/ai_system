@@ -5,6 +5,7 @@ import { type FormEvent, useCallback, useEffect, useRef, useState } from "react"
 
 import { LogoMark } from "../../brand/Logo";
 import { useAppContext, useAsk, useChatSuggestions, useCreateTasks, useFinding } from "../../api/hooks";
+import { ApiError } from "../../api/client";
 import type { ChatAnswer } from "../../api/types";
 import { Button, cx, EASE } from "../../ds/primitives";
 import { useViewer } from "../../lib/useViewer";
@@ -140,11 +141,14 @@ function FindingLinks({ id }: { id: string }) {
 
 export function ChatPanel({ context, className }: { context: ChatContextRef | null; className?: string }) {
   const viewer = useViewer();
-  const asking = useAsk();
+  const [status, setStatus] = useState<string | null>(null);
+  const asking = useAsk(setStatus);
   const suggestions = useChatSuggestions();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [thinking, setThinking] = useState(false);
+  // The conversation on the server: the next question continues it (the assistant remembers the context).
+  const [threadId, setThreadId] = useState<string | undefined>();
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -158,11 +162,22 @@ export function ChatPanel({ context, className }: { context: ChatContextRef | nu
     setMessages((m) => [...m, { role: "user", text }]);
     setInput("");
     setThinking(true);
+    setStatus(null);
     asking.mutate(
-      { question: text, finding_id: context?.findingId },
+      { question: text, finding_id: context?.findingId, thread_id: threadId },
       {
-        onSuccess: (a) => setMessages((m) => [...m, { role: "assistant", text: a.text, answer: a }]),
-        onError: () => setMessages((m) => [...m, { role: "assistant", text: "Не получилось ответить. Попробуйте еще раз." }]),
+        onSuccess: (a) => {
+          if (a.thread_id) setThreadId(a.thread_id);
+          setMessages((m) => [...m, { role: "assistant", text: a.text, answer: a }]);
+        },
+        onError: (e) =>
+          setMessages((m) => [
+            ...m,
+            {
+              role: "assistant",
+              text: e instanceof ApiError && e.status === 429 ? e.message : "Не получилось ответить. Попробуйте еще раз.",
+            },
+          ]),
         onSettled: () => setThinking(false),
       },
     );
@@ -214,6 +229,7 @@ export function ChatPanel({ context, className }: { context: ChatContextRef | nu
                 />
               ))}
             </span>
+            {status && <span role="status">{status}…</span>}
           </div>
         )}
         <div ref={endRef} />

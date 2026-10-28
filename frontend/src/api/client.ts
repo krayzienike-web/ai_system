@@ -114,3 +114,60 @@ export async function login(email: string, password: string): Promise<void> {
     ),
   );
 }
+
+/** One Server-Sent Event: `event:` and its JSON `data:`. */
+export function parseEvents(text: string): { event: string; data: unknown }[] {
+  return text
+    .split("\n\n")
+    .filter((block) => block.trim())
+    .map((block) => {
+      const lines = block.split("\n");
+      const event = lines.find((l) => l.startsWith("event: "))?.slice(7) ?? "message";
+      const data = lines
+        .filter((l) => l.startsWith("data: "))
+        .map((l) => l.slice(6))
+        .join("\n");
+      return { event, data: JSON.parse(data) as unknown };
+    });
+}
+
+/**
+ * POST that answers with Server-Sent Events: `status` events go to `onStatus`, the `answer` event resolves,
+ * an `error` event rejects with its HTTP status. The prototype has no stream: it answers at once.
+ */
+export async function stream<T>(
+  path: string,
+  body: unknown,
+  onStatus: (text: string) => void,
+  retry = true,
+): Promise<T> {
+  if (DEMO) return api<T>(path.replace(/\/stream$/, ""), { method: "POST", body: JSON.stringify(body) });
+  const headers = new Headers({ "Content-Type": "application/json" });
+  if (tokens.access) headers.set("Authorization", `Bearer ${tokens.access}`);
+  const response = await fetch(`/api${path}`, { method: "POST", headers, body: JSON.stringify(body) });
+  if (response.status === 401 && retry && (await tryRefresh())) return stream<T>(path, body, onStatus, false);
+  if (!response.ok || !response.body) {
+    const detail = await response.json().catch(() => ({}));
+    throw new ApiError(response.status, typeof detail.detail === "string" ? detail.detail : response.statusText);
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    buffer += decoder.decode(value, { stream: !done });
+    const cut = buffer.lastIndexOf("\n\n");
+    if (cut >= 0) {
+      for (const e of parseEvents(buffer.slice(0, cut))) {
+        if (e.event === "status") onStatus((e.data as { text: string }).text);
+        if (e.event === "answer") return e.data as T;
+        if (e.event === "error") {
+          const err = e.data as { detail: string; status: number };
+          throw new ApiError(err.status, err.detail);
+        }
+      }
+      buffer = buffer.slice(cut + 2);
+    }
+    if (done) throw new ApiError(502, "Ответ прервался");
+  }
+}

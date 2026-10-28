@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
 
-import { api } from "./client";
+import { api, stream } from "./client";
 import type {
   LatestRun,
   AffectedFiles,
@@ -411,8 +411,8 @@ export const useHeadReport = (period: PeriodChoice) =>
 export const useChatSuggestions = () =>
   useQuery({ queryKey: ["chat-suggestions"], queryFn: () => api<string[]>("/chat/suggestions") });
 
-export const useAsk = () =>
+export const useAsk = (onStatus: (text: string) => void = () => {}) =>
   useMutation({
-    mutationFn: (body: { question: string; finding_id?: string }) =>
-      api<ChatAnswer>("/chat", { method: "POST", body: JSON.stringify(body) }),
+    mutationFn: (body: { question: string; finding_id?: string; thread_id?: string }) =>
+      stream<ChatAnswer>("/chat/stream", body, onStatus),
   });

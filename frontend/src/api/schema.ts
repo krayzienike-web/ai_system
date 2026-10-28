@@ -28,11 +28,13 @@ export interface AnswerOut {
   source_finding_id: string | null;
   source: string | null;
   suggestions: string[];
+  thread_id?: string | null;
 }
 
 export interface AskIn {
   question: string;
   finding_id?: string | null;
+  thread_id?: string | null;
 }
 
 export interface BadgesOut {
@@ -405,6 +407,12 @@ export interface LatestRunOut {
   removed: number | null;
 }
 
+export interface LineOut {
+  role: string;
+  text: string;
+  at: string;
+}
+
 export interface LoginRequest {
   email: string;
   password: string;
@@ -687,6 +695,13 @@ export interface TemplateOut {
   scope: string;
   columns: TemplateColumnOut[];
   one_of: string[][];
+}
+
+export interface ThreadOut {
+  id: string;
+  title: string;
+  finding_id: string | null;
+  updated_at: string;
 }
 
 export interface TickIn {

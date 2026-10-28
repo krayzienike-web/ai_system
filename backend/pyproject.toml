@@ -90,6 +90,7 @@ source_modules = [
     "app.insights", "app.norms", "app.operations", "app.overview", "app.reports", "app.tasks", "app.tenancy",
 ]
 forbidden_modules = ["anthropic"]
+allow_indirect_imports = true  # through app.ai is the point; directly — never
 
 [[tool.importlinter.contracts]]
 name = "Numbers do not depend on the assistant: domain modules import neither ai nor the chat"

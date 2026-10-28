@@ -79,3 +79,12 @@ def tool_session(user_id: UUID, tenant_id: UUID) -> Iterator[tuple[Session, Acce
         if ctx is None:
             raise PermissionError("Пользователь не найден или отключен")
         yield session, ctx
+
+
+@contextmanager
+def user_session(ctx: AccessContext) -> Iterator[Session]:
+    """A short transaction of its own under this user's row-level security, apart from the request's: for work
+    around a slow call (the model) that must not hold the request transaction open."""
+    with get_sessionmaker()() as session, session.begin():
+        apply_rls_context(session, ctx.to_rls())
+        yield session

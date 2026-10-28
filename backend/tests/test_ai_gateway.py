@@ -171,6 +171,7 @@ def test_prompts_are_versioned_files(tmp_path: Path, monkeypatch: pytest.MonkeyP
 
 def test_the_shipped_chat_prompt_keeps_the_rules_the_evals_check() -> None:
     chat = prompts.load("chat")
+    assert chat.version >= 2 and "explain_finding" in chat.text  # the question asked from a finding
     for rule in (
         "только из результатов инструментов",
         "не другие рестораны",

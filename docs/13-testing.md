@@ -209,6 +209,14 @@
 | TC-AI-11 | Находку чужого ресторана и ждущую проверки инструмент не объясняет | `test_a_finding_of_another_restaurant_or_under_review_is_not_explained` | ✅ |
 | TC-AI-12 | Цифры инструментов — из расчетов кода, уже отформатированные: показатели движка и среднее по сети, открытые находки как на экране, цена закупки = сумма / количество по накладным | `test_kpis_are_the_engines_figures_formatted_and_the_director_gets_the_network_average`, `test_findings_are_the_screens_open_findings`, `test_purchase_prices_are_amount_over_quantity_from_the_invoices` | ✅ |
 | TC-AI-13 | Неверные аргументы, неизвестный инструмент, отключенный пользователь — ответ с ошибкой для модели, а не сбой; поиск экранирует `%` и `_` | `test_bad_arguments_unknown_tools_and_unknown_users_are_answers_not_crashes`, `test_search_escapes_like_wildcards` | ✅ |
+| TC-AI-14 | Числа ответа сравниваются по значению («12 400 ₽» = «12400», «31,2%» = «31.2»); число, которого нет в результатах инструментов и в вопросе, отмечается (кроме счетных до 10) | `test_ai_chat.py::test_numbers_are_compared_as_values` | ✅ |
+| TC-AI-15 | Ассистент отвечает по результатам инструментов, разговор продолжается: модель получает прежние вопросы и вызовы; история и список разговоров — на экране; директору не предлагается сравнение ресторанов | `test_the_assistant_answers_from_tools_and_the_conversation_goes_on` | ✅ |
+| TC-AI-16 | Разговор — только его автора: ни другой директор сети, ни УК, ни чужая сеть не прочитают и не продолжат его (404) | `test_a_conversation_is_its_authors_only`; обход маршрутов TC-ISO-19 (`/chat/threads/{id}`, `/chat/stream`) | ✅ |
+| TC-AI-17 | Число не из данных → одна просьба исправить; не исправлено → показывается ответ по правилам, непроверенная цифра не показывается никогда | `test_a_number_not_in_the_data_is_corrected_once_then_the_answer_by_rules_is_shown` | ✅ |
+| TC-AI-18 | Отказ модели, слишком длинный ответ, недоступная модель — понятный ответ, а не ошибка (при недоступной — по правилам) | `test_refusals_long_answers_and_an_unreachable_model` | ✅ |
+| TC-AI-19 | «Обсудить с ИИ» из находки: модели передается только находка, которую пользователь видит; промпт велит сначала разобрать ее | `test_a_finding_of_another_restaurant_is_not_given_to_the_model_as_context`, `test_ai_gateway.py::test_the_shipped_chat_prompt_keeps_the_rules_the_evals_check` | ✅ |
+| TC-AI-20 | Ответ потоком (SSE): статусы «что смотрю», затем ответ; лимит — событие ошибки с 429, без потока — 429. Клиент читает поток кусками, ошибку и обрыв показывает | `test_the_stream_says_what_the_assistant_looks_at_then_answers`, `test_the_budget_is_an_error_event_in_the_stream_and_429_otherwise`; `client.test.ts` | ✅ |
+| TC-AI-21 | Без модели чат отвечает по правилам и разговоров не хранит | `test_without_the_model_the_chat_answers_by_rules_and_keeps_no_conversation` | ✅ |
 
 ### Интерфейс (UI)
 

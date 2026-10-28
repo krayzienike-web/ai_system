@@ -25,6 +25,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
+from app.ai.models import ChatThread
 from app.catalog.models import NameAlias, Product
 from app.core.period import get_today
 from app.experiments.models import Experiment
@@ -51,6 +52,7 @@ BODY_REFS = {
     "POST /api/tasks": {"title": "x", "due_on": "2026-10-30", "finding_id": "{finding_id}"},
     "POST /api/checks": {"finding_id": "{finding_id}", "action": "x", "control_ids": [], "weeks": 4},
     "POST /api/chat": {"question": "Почему так получилось?", "finding_id": "{finding_id}"},
+    "POST /api/chat/stream": {"question": "Почему так получилось?", "finding_id": "{finding_id}"},
 }
 # Bodies that pass validation, so that a refusal is about access and not about the form (403 or 404 only).
 BODIES: dict[str, dict[str, Any]] = {
@@ -75,6 +77,7 @@ class Foreign:
     check_id: UUID
     batch_id: UUID
     alias_id: UUID
+    thread_id: UUID
     restaurant_id: UUID
     code: str
     names: list[str]
@@ -142,7 +145,8 @@ def foreign(network: Network, owner_engine: Engine) -> Foreign:
             source_text="Чужое название",
             target_id=item.id,
         )
-        s.add(alias)
+        thread = ChatThread(tenant_id=b.id, user_id=b.users["admin@b.ru"], title="Чужой разговор сети Б")
+        s.add_all([alias, thread])
         s.flush()
         return Foreign(
             finding.id,
@@ -150,6 +154,7 @@ def foreign(network: Network, owner_engine: Engine) -> Foreign:
             check.id,
             batch.id,
             alias.id,
+            thread.id,
             b.restaurants["B1"],
             "B1",
             [
@@ -158,6 +163,7 @@ def foreign(network: Network, owner_engine: Engine) -> Foreign:
                 "Чужая проверка сети Б",
                 "Чужой товар сети Б",
                 "чужой_файл_сети_б.csv",
+                "Чужой разговор сети Б",
             ],
         )
 
@@ -184,6 +190,7 @@ def _ids(f: Foreign) -> dict[str, str]:
         "check_id": str(f.check_id),
         "batch_id": str(f.batch_id),
         "alias_id": str(f.alias_id),
+        "thread_id": str(f.thread_id),
         "restaurant_id": str(f.restaurant_id),
         "code": f.code,
     }
@@ -246,7 +253,7 @@ def test_writes_naming_another_networks_object_are_refused(
         method, path = key.split(" ", 1)
         body = json.loads(_fill(json.dumps(template), ids))
         r = _call(client, method, path, admin, body)
-        if key == "POST /api/chat":  # answers, but never about another network's finding
+        if key.startswith("POST /api/chat"):  # answers, but never about another network's finding
             assert r.status_code == 200 and not any(n in r.text for n in foreign.names), r.text[:300]
         else:
             assert r.status_code in (403, 404), f"{key} → {r.status_code} {r.text[:200]}"

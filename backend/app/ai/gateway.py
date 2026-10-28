@@ -14,21 +14,18 @@ provider (ADR 0005), and the log stores exactly what was sent.
 """
 
 import time
-from collections.abc import Callable, Iterator, Sequence
-from contextlib import contextmanager
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any, Literal, Protocol
 
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
 
 from app.ai.models import AiRun
 from app.ai.prompt import Prompt
 from app.core.config import get_settings
-from app.core.db import apply_rls_context, get_sessionmaker
 from app.core.errors import RuleError
-from app.tenancy.context import AccessContext
+from app.tenancy.context import AccessContext, user_session
 
 Task = Literal["chat", "explain", "digest", "match"]
 Message = dict[str, Any]
@@ -134,15 +131,8 @@ def cost_usd(model: str, usage: Usage) -> Decimal:
 STATUS = {"refusal": "refused", "max_tokens": "truncated"}
 
 
-@contextmanager
-def _as_user(ctx: AccessContext) -> Iterator[Session]:
-    with get_sessionmaker()() as session, session.begin():
-        apply_rls_context(session, ctx.to_rls())
-        yield session
-
-
 def used_today(ctx: AccessContext) -> int:
-    with _as_user(ctx) as s:
+    with user_session(ctx) as s:
         return s.execute(
             select(func.count())
             .select_from(AiRun)
@@ -193,7 +183,7 @@ class Gateway:
     ) -> None:
         usage = reply.usage if reply else Usage()
         model = (reply.model if reply and reply.model else None) or request.model
-        with _as_user(ctx) as s:
+        with user_session(ctx) as s:
             s.add(
                 AiRun(
                     tenant_id=ctx.tenant_id,
@@ -230,3 +220,9 @@ def get_model() -> Model | None:
 
         return ClaudeModel()
     return None
+
+
+def get_gateway() -> Gateway | None:
+    """FastAPI dependency: the gateway, or none while the model is off (tests put a `FakeModel` here)."""
+    model = get_model()
+    return Gateway(model) if model is not None else None
