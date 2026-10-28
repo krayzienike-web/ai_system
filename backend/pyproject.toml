@@ -27,6 +27,7 @@ dev = [
     "ruff",
     "mypy",
     "pytest-cov>=7.1.0",
+    "import-linter>=2.15",
 ]
 
 [tool.uv]
@@ -74,3 +75,45 @@ omit = ["app/cli.py"]
 skip_empty = true
 fail_under = 90
 show_missing = false
+
+# Module boundaries (docs/03-architecture.md; CLAUDE.md: modules talk through services, `analytics` does not import `ai`).
+[tool.importlinter]
+root_packages = ["app"]
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "Only the AI gateway talks to the model"
+type = "forbidden"
+source_modules = [
+    "app.analytics", "app.auth", "app.catalog", "app.chat", "app.core", "app.experiments", "app.imports",
+    "app.insights", "app.norms", "app.operations", "app.overview", "app.reports", "app.tasks", "app.tenancy",
+]
+forbidden_modules = ["anthropic"]
+
+[[tool.importlinter.contracts]]
+name = "Numbers do not depend on the assistant: domain modules do not import the chat"
+type = "forbidden"
+source_modules = [
+    "app.analytics", "app.auth", "app.catalog", "app.core", "app.experiments", "app.imports", "app.insights",
+    "app.norms", "app.operations", "app.overview", "app.reports", "app.tasks", "app.tenancy",
+]
+forbidden_modules = ["app.chat"]
+
+[[tool.importlinter.contracts]]
+name = "The demo is outside the product: only the CLI loads it"
+type = "forbidden"
+source_modules = [
+    "app.analytics", "app.auth", "app.catalog", "app.chat", "app.core", "app.experiments", "app.imports",
+    "app.insights", "app.main", "app.norms", "app.operations", "app.overview", "app.reports", "app.tasks",
+    "app.tenancy", "app.worker",
+]
+forbidden_modules = ["app.demo"]
+
+[[tool.importlinter.contracts]]
+name = "The kernel knows no domain: core and tenancy import nothing above them"
+type = "forbidden"
+source_modules = ["app.core", "app.tenancy"]
+forbidden_modules = [
+    "app.analytics", "app.auth", "app.catalog", "app.chat", "app.experiments", "app.imports", "app.insights",
+    "app.norms", "app.operations", "app.overview", "app.reports", "app.tasks",
+]

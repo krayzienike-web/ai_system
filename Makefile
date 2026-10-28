@@ -37,7 +37,7 @@ e2e:           ## End-to-end scenarios on the demo build (docs/13-testing.md)
 	cd frontend && npm run e2e
 
 lint:
-	cd backend && uv run ruff check . && uv run ruff format --check . && uv run mypy app tests
+	cd backend && uv run ruff check . && uv run ruff format --check . && uv run mypy app tests && uv run lint-imports
 	cd frontend && npm run lint && npm run typecheck
 
 check: lint test

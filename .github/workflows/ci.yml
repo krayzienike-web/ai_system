@@ -34,6 +34,7 @@ jobs:
       - run: uv run ruff check .
       - run: uv run ruff format --check .
       - run: uv run mypy app tests
+      - run: uv run lint-imports
       - run: uv run pytest -q --cov --cov-report=term-missing:skip-covered
       - name: The frontend's API contract is up to date
         run: uv run python -m app.openapi && git diff --exit-code -- ../frontend/src/api/openapi.json ../frontend/src/api/schema.ts
