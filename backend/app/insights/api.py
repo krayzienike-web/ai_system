@@ -5,7 +5,6 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field, computed_field
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.analytics.verify import verify
@@ -17,10 +16,10 @@ from app.insights import review, service, sources
 from app.insights.models import Finding, ReviewStatus
 from app.insights.review import RejectReason, Verdict
 from app.insights.service import FindingWork
+from app.insights.visible import VisibleFinding, visible
 from app.insights.work import WorkStage
 from app.tasks.api import TaskOut, tasks_out
 from app.tenancy.context import AccessContext
-from app.tenancy.models import Restaurant, User
 from app.tenancy.permissions import Permission
 
 router = APIRouter(tags=["findings"])
@@ -161,59 +160,15 @@ class FindingDetailOut(FindingOut):
     result_answer: str | None  # «Что сделали и что получилось?» in words; None while nothing is done
 
 
-def _out(fw: FindingWork, ctx: AccessContext) -> dict[str, object]:
-    f = fw.finding
-    hq = ctx.can(Permission.FINDINGS_REVIEW)  # why a finding was rejected or reopened is HQ's working note
-    return {
-        "id": f.id,
-        "restaurant_id": f.restaurant_id,
-        "kind": f.kind,
-        "process": f.process,
-        "module": f.module,
-        "confidence": f.confidence,
-        "period_from": f.period_from,
-        "period_to": f.period_to,
-        "review_status": f.review_status,
-        "review_reason": f.review_reason if hq else None,
-        "review_note": f.review_note if hq else None,
-        "reviewed_on": f.reviewed_on,
-        "title": f.title,
-        "headline": f.headline,
-        "effect_rub_month": f.effect_rub_month,
-        "effect_note": f.effect_note,
-        "actions": f.actions,
-        "status": f.status,
-        "found_on": f.found_on,
-        "work": WorkOut(**fw.work.__dict__),
-        "view": _view_for(f.view, ctx),
-    }
-
-
-def _view_for(view: dict[str, Any] | None, ctx: AccessContext) -> dict[str, Any] | None:
-    """A director sees their own figures and the network's average, never other restaurants by name."""
-    if not view or not view.get("table_names_restaurants"):
-        return view
-    if ctx.can(Permission.NETWORK_COMPARE):
-        return view
-    return {k: v for k, v in view.items() if k not in ("table", "table_names_restaurants")}
+def finding_out(v: VisibleFinding) -> FindingOut:
+    """A finding for the screens: what `insights.visible` lets this user see, nothing more."""
+    fields = {k: getattr(v, k) for k in FindingOut.model_fields if k != "work"}
+    return FindingOut(**fields, work=WorkOut(**v.work.__dict__))
 
 
 def findings_out(session: Session, ctx: AccessContext, items: list[FindingWork]) -> list[FindingOut]:
-    """Findings as the screens get them: with the reviewer's name (HQ) and the restaurant's code and name."""
-    reviewers = _reviewer_names(session, [fw.finding for fw in items])
-    places = {r.id: r for r in session.execute(select(Restaurant)).scalars()}
-    out = []
-    for fw in items:
-        place = places.get(fw.finding.restaurant_id) if fw.finding.restaurant_id else None
-        out.append(
-            FindingOut(
-                **_out(fw, ctx),
-                reviewed_by_name=reviewers.get(fw.finding.reviewed_by),
-                restaurant_code=place.code if place else None,
-                restaurant_name=place.name if place else None,
-            )
-        )
-    return out
+    """Findings as the screens get them, through the one read path (`insights.visible`)."""
+    return [finding_out(v) for v in visible(session, ctx, items)]
 
 
 def result_answer(fw: FindingWork) -> str | None:
@@ -255,14 +210,6 @@ def list_findings(
         session, today=today, stage=stage, restaurant_id=restaurant_id, late_only=late_only, review=review
     )
     return findings_out(session, ctx, items)
-
-
-def _reviewer_names(session: Session, findings: list[Finding]) -> dict[UUID | None, str]:
-    """Names of the people who reviewed these findings (row-level security hides them from a director)."""
-    ids = {f.reviewed_by for f in findings if f.reviewed_by}
-    if not ids:
-        return {}
-    return dict(session.execute(select(User.id, User.full_name).where(User.id.in_(ids))).all())
 
 
 @router.get("/findings/{finding_id}")

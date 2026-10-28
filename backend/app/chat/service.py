@@ -14,9 +14,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core import words
+from app.core.errors import NotFoundError
 from app.experiments.models import Experiment, ExperimentStatus, Verdict
-from app.insights.models import Finding
-from app.insights.service import FindingWork, list_findings
+from app.insights.models import ReviewStatus
+from app.insights.visible import VisibleFinding, visible_finding, visible_findings
 from app.overview.models import KpiSnapshot
 from app.overview.service import OPEN
 from app.tenancy.context import AccessContext
@@ -52,8 +53,22 @@ def suggestions(ctx: AccessContext) -> list[str]:
     return SUGGESTIONS_HQ if ctx.can(Permission.NETWORK_COMPARE) else SUGGESTIONS_DIRECTOR
 
 
-def _open(session: Session, today: date) -> list[FindingWork]:
-    return [fw for fw in list_findings(session, today=today) if fw.finding.status in OPEN]
+def _open(session: Session, ctx: AccessContext, today: date) -> list[VisibleFinding]:
+    """Open findings through the one read path: what this user may see of them, and nothing else."""
+    return [f for f in visible_findings(session, ctx, today=today) if f.status in OPEN]
+
+
+def _in_context(
+    session: Session, ctx: AccessContext, finding_id: UUID | None, today: date
+) -> VisibleFinding | None:
+    """The finding the question is about, by the card's rules; one still under review is not discussed."""
+    if finding_id is None:
+        return None
+    try:
+        f = visible_finding(session, ctx, finding_id, today=today)
+    except NotFoundError:
+        return None
+    return f if f.review_status in (None, ReviewStatus.CONFIRMED) else None
 
 
 def answer(
@@ -86,9 +101,7 @@ def answer(
             source="последний период между инвентаризациями",
         )
 
-    finding = session.get(Finding, finding_id) if finding_id else None
-    if finding is not None and not finding.checked:
-        finding = None
+    finding = _in_context(session, ctx, finding_id, today)
     if finding is not None and "за год" in q and finding.effect_rub_month:
         return Answer(
             f"{words.per_month(finding.effect_rub_month)} — это около "
@@ -128,11 +141,7 @@ def answer(
                 ]
             )
         top = next(
-            (
-                fw.finding
-                for fw in _open(session, today)
-                if fw.finding.process == "production" and fw.finding.kind == "problem"
-            ),
+            (f for f in _open(session, ctx, today) if f.process == "production" and f.kind == "problem"),
             None,
         )
         period = (
@@ -156,7 +165,7 @@ def answer(
         )
 
     if re.search(r"переплач|цен|поставщ", q):
-        items = [fw.finding for fw in _open(session, today) if fw.finding.process == "purchasing"]
+        items = [f for f in _open(session, ctx, today) if f.process == "purchasing"]
         return Answer(
             f"Нашел {words.plural(len(items), ('позицию', 'позиции', 'позиций'))}, "
             "где закупка дороже, чем у сети или раньше.",
@@ -170,7 +179,7 @@ def answer(
         )
 
     if re.search(r"законч|дефицит|запас|хватит", q):
-        risks = [fw.finding for fw in _open(session, today) if fw.finding.module == "M6"]
+        risks = [f for f in _open(session, ctx, today) if f.module == "M6"]
         if not risks:
             return Answer(
                 "По расчету ничего не закончится раньше ближайшей поставки. Прогноз — по остаткам от "
@@ -190,7 +199,7 @@ def answer(
         )
 
     if "списан" in q:
-        items = [fw.finding for fw in _open(session, today) if fw.finding.process in ("writeoffs", "storage")]
+        items = [f for f in _open(session, ctx, today) if f.process in ("writeoffs", "storage")]
         return Answer(
             "Резервы по списаниям — в заказе скоропорта под реальное потребление."
             if items

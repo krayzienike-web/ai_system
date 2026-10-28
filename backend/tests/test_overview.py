@@ -423,7 +423,7 @@ def test_new_endpoints_keep_to_the_tenant_and_the_restaurant(
     assert places == {"R01"}
     assert client.get("/api/overview/findings", headers=foreign).json()["groups"] == []
     # Other restaurants' prices by name are HQ's: a director's view of an M3 finding has no such table.
-    from app.insights.api import _view_for
+    from app.insights.visible import view_for as _view_for
     from app.tenancy.context import AccessContext
 
     view = {
@@ -843,3 +843,38 @@ def test_documents_of_sales_write_offs_and_purchases_on_the_demo_network(
     end = date.fromisoformat(str(found["M6"].period_to or found["M6"].found_on))
     for r in supply.get("receipts", {"rows": []})["rows"]:
         assert end - timedelta(days=28) <= date.fromisoformat(r["day"]) <= end
+
+
+def test_one_read_path_shows_a_director_nothing_of_other_restaurants(
+    network: Network, demo: dict[str, UUID], owner_engine: Engine
+) -> None:
+    """Architecture review 27.10.2026, p. 10: whatever reads findings for a person (screens, chat, the
+    assistant's tools) gets them through `insights.visible` — no `evidence`, no other restaurant by name or
+    code, no reviewer's note."""
+    import dataclasses
+    import json
+
+    from app.insights.visible import VisibleFinding, visible_findings
+
+    assert "evidence" not in {f.name for f in dataclasses.fields(VisibleFinding)}
+    with owner_engine.connect() as c:
+        others = c.execute(
+            text("SELECT code, name FROM restaurants WHERE tenant_id = :t AND id <> :r"),
+            {"t": network.a.id, "r": demo["R01"]},
+        ).all()
+        director = c.execute(text("SELECT id FROM users WHERE email = 'r01@a.ru'")).scalar_one()
+    with get_sessionmaker()() as session:
+        ctx = load_access_context(session, director, network.a.id)
+        assert ctx is not None
+        seen = visible_findings(session, ctx, today=TODAY)
+        assert seen and all(f.restaurant_id == demo["R01"] for f in seen)
+        text_of = json.dumps([dataclasses.asdict(f) for f in seen], default=str, ensure_ascii=False)
+        for code, name in others:
+            assert f'"{code}"' not in text_of and name not in text_of, name
+        assert all(f.review_note is None and f.reviewed_by_name is None for f in seen)
+    # HQ sees the review notes and the reviewer.
+    with get_sessionmaker()() as session:
+        ctx = load_access_context(session, network.a.users["admin@a.ru"], network.a.id)
+        assert ctx is not None
+        reviewed = [f for f in visible_findings(session, ctx, today=TODAY) if f.reviewed_on]
+        assert reviewed and all(f.reviewed_by_name for f in reviewed)
