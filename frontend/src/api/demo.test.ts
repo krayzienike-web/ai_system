@@ -84,6 +84,25 @@ describe("demo isolation", () => {
     expect(get<{ id: string }>(`/findings/${own.id}`, DIRECTOR).id).toBe(own.id);
   });
 
+  it("opens «Документы» by the card's rules: own checked finding only (TC-ISO-17)", () => {
+    const own = get<ApiFinding[]>("/findings", DIRECTOR).find((f) => `/findings/${f.id}/sources` in users[DIRECTOR]!.answers)!;
+    expect(status(() => get(`/findings/${own.id}/sources`, DIRECTOR))).toBe(200);
+    const other = get<ApiFinding[]>("/findings", ADMIN).find((f) => f.restaurant_id && f.restaurant_id !== r01().id)!;
+    expect(status(() => get(`/findings/${other.id}/sources`, ADMIN))).toBe(200);
+    expect(status(() => get(`/findings/${other.id}/sources`, DIRECTOR))).toBe(404);
+    // Sent back to the check: the card is gone for the director, and so are its documents (as on the server).
+    send(`/findings/${own.id}/review`, ANALYST, "POST", { verdict: "reopen" });
+    expect(status(() => get(`/findings/${own.id}`, DIRECTOR))).toBe(404);
+    expect(status(() => get(`/findings/${own.id}/sources`, DIRECTOR))).toBe(404);
+    send(`/findings/${own.id}/review`, ANALYST, "POST", { verdict: "confirm" });
+    expect(status(() => get(`/findings/${own.id}/sources`, DIRECTOR))).toBe(200);
+  });
+
+  it("lets only the HQ admin press «Пересчитать», as the server's `analytics.run` (TC-ENG-26)", () => {
+    for (const who of [DIRECTOR, ANALYST]) expect(status(() => send("/analytics/run", who, "POST")), who).toBe(403);
+    expect(send<{ trigger: string }>("/analytics/run", ADMIN, "POST").trigger).toBe("manual");
+  });
+
   it("asks why a finding is rejected", () => {
     const [f] = get<ApiFinding[]>("/findings?review=pending", ADMIN);
     expect(status(() => send(`/findings/${f!.id}/review`, ADMIN, "POST", { verdict: "reject" }))).toBe(422);

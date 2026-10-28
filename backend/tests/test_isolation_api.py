@@ -2,9 +2,10 @@
 
 from datetime import date
 from decimal import Decimal
+from uuid import UUID
 
 from fastapi.testclient import TestClient
-from sqlalchemy import Engine
+from sqlalchemy import Engine, text
 from sqlalchemy.orm import Session
 
 from app.insights.models import Finding
@@ -160,3 +161,75 @@ def test_engine_findings_and_settings_stay_within_the_tenant(
         client.put("/api/settings/engine", headers=director, json={"values": {"M3_OVERPAY": 10}}).status_code
         == 403
     )
+
+
+def test_stage_4_endpoints_stay_within_the_restaurant_and_the_network(
+    client: TestClient, network: Network, owner_engine: Engine
+) -> None:
+    """Stage 4 (CLAUDE.md, principle 2): «Откуда цифры» (`/findings/{id}/sources`), «Сеть» with its matrix and
+    overpayment (`/overview/network`), and the recalculation button (`POST /analytics/run`) — for another
+    restaurant's director and for another network."""
+
+    def purchasing(restaurant: UUID | None, key: str, effect: str, review: str = "confirmed") -> Finding:
+        return Finding(
+            tenant_id=network.a.id,
+            restaurant_id=restaurant,
+            kind="problem",
+            process="purchasing",
+            title=f"Переплата {key}",
+            effect_rub_month=Decimal(effect),
+            actions=[],
+            found_on=date(2026, 10, 1),
+            key=key,
+            module="M3",
+            status="new",
+            review_status=review,
+        )
+
+    a1 = network.a.restaurants["A1"]
+    with Session(owner_engine, expire_on_commit=False) as s, s.begin():
+        own = purchasing(a1, "M3:A1:P1", "7000.00")
+        net_wide = purchasing(None, "M3:net:P1:growth", "3000.00")
+        pending = purchasing(a1, "M3:A1:P2", "5000.00", review="pending")
+        s.add_all([own, net_wide, pending])
+    hq, analyst = login(client, "admin@a.ru"), login(client, "analyst@a.ru")
+    director1, director2 = login(client, "director1@a.ru"), login(client, "director2@a.ru")
+    foreign = login(client, "admin@b.ru")
+
+    def sources(finding: Finding, headers: dict[str, str]) -> int:
+        code: int = client.get(f"/api/findings/{finding.id}/sources", headers=headers).status_code
+        return code
+
+    # «Откуда цифры» follows the card: own checked finding only; not another restaurant, not the network's
+    # finding, not one waiting for the check, never another network.
+    assert [sources(own, h) for h in (hq, director1, director2, foreign)] == [200, 200, 404, 404]
+    assert [sources(net_wide, h) for h in (hq, director1, foreign)] == [200, 404, 404]
+    assert [sources(pending, h) for h in (hq, director1, foreign)] == [200, 404, 404]
+
+    # «Сеть»: HQ only; the matrix and the overpayment are the network's own checked open problems.
+    assert client.get("/api/overview/network", headers=director1).status_code == 403
+    assert client.get("/api/overview/network", headers=analyst).status_code == 200
+    mine = client.get("/api/overview/network", headers=hq, params={"preset": "4w"}).json()
+    # 7000.00 (A1) + 3000.00 (the whole network) = 10000.00; the pending 5000.00 is not counted yet.
+    assert Decimal(mine["overpay"]) == Decimal("10000.00")
+    cells = {(r["code"], c["process"]): Decimal(c["losses"]) for r in mine["matrix"] for c in r["cells"]}
+    assert cells[("A1", "purchasing")] == Decimal(
+        "7000.00"
+    )  # the network's finding is in no restaurant's row
+    assert {r["code"] for r in mine["matrix"]} == {"A1", "A2", "A3"}
+    theirs = client.get("/api/overview/network", headers=foreign, params={"preset": "4w"})
+    assert [r["code"] for r in theirs.json()["matrix"]] == ["B1"]
+    assert Decimal(theirs.json()["overpay"]) == Decimal(0)
+    assert "Сеть А" not in theirs.text and "Переплата" not in theirs.text
+
+    # The button: HQ admin only; another network's run does not touch this network's runs or findings.
+    for headers in (director1, analyst):
+        assert client.post("/api/analytics/run", headers=headers).status_code == 403
+    assert client.post("/api/analytics/run", headers=foreign).status_code == 202
+    assert client.get("/api/analytics/runs/latest", headers=foreign).json()["trigger"] == "manual"
+    assert client.get("/api/analytics/runs/latest", headers=hq).json() is None
+    with owner_engine.connect() as c:
+        left = c.execute(
+            text("SELECT count(*) FROM findings WHERE tenant_id = :t"), {"t": network.a.id}
+        ).scalar_one()
+    assert left == 3

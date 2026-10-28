@@ -4,6 +4,7 @@ from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta
 from decimal import Decimal
+from typing import Any
 from uuid import UUID, uuid4
 
 import httpx
@@ -748,3 +749,97 @@ def test_documents_after_the_stage_4_review(
         )
     gone = client.get(f"/api/findings/{finding.id}/sources", headers=hq).json()
     assert gone["groups"] == []
+
+
+def test_documents_of_sales_write_offs_and_purchases_on_the_demo_network(
+    client: TestClient, network: Network, demo: dict[str, UUID], owner_engine: Engine
+) -> None:
+    """Stage 4, «Откуда цифры» (docs/06, п. 3): a dish finding opens its sales by day, a write-off finding —
+    the write-off acts with their reason, a supply finding (M6) — the last 4 weeks of invoices and the counts.
+    The counts of rows are checked against the tables themselves, the sales money as Decimal."""
+    hq = login(client, "admin@a.ru")
+    with owner_engine.connect() as c:
+        found = {
+            m: c.execute(
+                text(
+                    "SELECT id, restaurant_id, period_from, period_to, found_on, evidence FROM findings "
+                    "WHERE tenant_id = :t AND module = :m ORDER BY key LIMIT 1"
+                ),
+                {"t": network.a.id, "m": m},
+            ).one()
+            for m in ("M2", "M5", "M6")
+        }
+
+    def groups(module: str) -> dict[str, dict[str, Any]]:
+        out = client.get(f"/api/findings/{found[module].id}/sources", headers=hq).json()
+        return {g["kind"]: g for g in out["groups"]}
+
+    def scope(module: str) -> dict[str, Any]:
+        f = found[module]
+        return {
+            "t": network.a.id,
+            "r": f.restaurant_id,
+            "from": f.period_from or f.found_on,
+            "to": f.period_to or f.found_on,
+        }
+
+    # A dish: sales grouped by day × restaurant × dish, nothing else.
+    sales = groups("M2")
+    assert list(sales) == ["sales"]
+    dish = found["M2"].evidence["menu_item"]
+    where = (
+        "FROM sales s JOIN menu_items m ON m.id = s.menu_item_id WHERE s.tenant_id = :t AND m.code = :d "
+        "AND s.day BETWEEN :from AND :to AND (CAST(:r AS uuid) IS NULL OR s.restaurant_id = :r)"
+    )
+    with owner_engine.connect() as c:
+        lines = c.execute(
+            text(  # the query is built from constants above
+                f"SELECT count(*) FROM (SELECT 1 {where} "  # noqa: S608
+                "GROUP BY s.day, s.restaurant_id, s.menu_item_id) x"
+            ),
+            {**scope("M2"), "d": dish},
+        ).scalar_one()
+        revenue = c.execute(text(f"SELECT sum(s.revenue) {where}"), {**scope("M2"), "d": dish}).scalar_one()
+    assert sales["sales"]["total"] == lines > 0
+    rows = sales["sales"]["rows"]
+    assert len(rows) == min(lines, 200)  # at most 200 lines are sent, the rest is counted
+    # A line is the day's sales of the dish in one restaurant: its revenue is the sum of those rows.
+    first = rows[0]
+    place = first.get("restaurant") or next(v for v in sales["sales"]["same"] if v.startswith("Ресторан"))
+    with owner_engine.connect() as c:
+        day_revenue = c.execute(
+            text(
+                f"SELECT sum(s.revenue) {where} AND s.day = :day "  # noqa: S608
+                "AND s.restaurant_id = (SELECT id FROM restaurants WHERE tenant_id = :t AND name = :n)"
+            ),
+            {**scope("M2"), "d": dish, "day": date.fromisoformat(first["day"]), "n": place},
+        ).scalar_one()
+    assert isinstance(first["revenue"], str)  # money goes out as a Decimal string, never a float
+    assert Decimal(first["revenue"]) == day_revenue
+    if lines <= 200:  # all rows are sent: their money adds up to the table's
+        assert sum(Decimal(str(r["revenue"])) for r in rows) == revenue
+    assert {c["type"] for c in sales["sales"]["columns"] if c["key"] == "revenue"} == {"money"}
+
+    # Write-offs: the acts of the product in the period, each with the reason it was written off.
+    write_offs = groups("M5")
+    assert list(write_offs) == ["write_offs"]
+    product = found["M5"].evidence.get("product")
+    with owner_engine.connect() as c:
+        acts = c.execute(
+            text(
+                "SELECT count(*) FROM write_offs w JOIN products p ON p.id = w.product_id "
+                "WHERE w.tenant_id = :t AND w.day BETWEEN :from AND :to "
+                "AND (CAST(:r AS uuid) IS NULL OR w.restaurant_id = :r) "
+                "AND (CAST(:p AS text) IS NULL OR p.code = :p)"
+            ),
+            {**scope("M5"), "p": product},
+        ).scalar_one()
+    assert write_offs["write_offs"]["total"] == acts > 0
+    assert all(r["reason"] for r in write_offs["write_offs"]["rows"])
+
+    # A supply finding: invoices of the 4 weeks before its end, and the stock counts.
+    supply = groups("M6")
+    assert set(supply) <= {"receipts", "counts"} and "receipts" in supply
+    end = date.fromisoformat(str(found["M6"].period_to or found["M6"].found_on))
+    for r in supply.get("receipts", {"rows": []})["rows"]:
+        assert end - timedelta(days=28) <= date.fromisoformat(r["day"]) <= end

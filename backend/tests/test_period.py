@@ -66,6 +66,22 @@ def test_since_the_last_count_runs_from_the_day_after_it_to_yesterday() -> None:
         resolve_period(FRIDAY, PeriodPreset.SINCE_COUNT, last_count=date(2025, 1, 1))
 
 
+def test_since_the_last_count_needs_a_day_of_data_and_at_most_a_year() -> None:
+    """TC-PER-02 edges: a count the day before yesterday gives one day (yesterday); a count yesterday gives
+    an empty period, which is refused; 366 days is the longest period (MAX_DAYS)."""
+    # Count on 21.10, today Friday 23.10: from 22.10 to 22.10 — one day.
+    one_day = resolve_period(FRIDAY, PeriodPreset.SINCE_COUNT, last_count=date(2026, 10, 21))
+    assert one_day == Period(date(2026, 10, 22), date(2026, 10, 22)) and one_day.days == 1
+    with pytest.raises(PeriodError, match="Нет подходящей инвентаризации"):
+        resolve_period(FRIDAY, PeriodPreset.SINCE_COUNT, last_count=date(2026, 10, 22))
+    # Count on 21.10.2025: 22.10.2025–22.10.2026 is 366 days (no 29.02 in between: 365 + 1), allowed;
+    # a day earlier is 367 days.
+    year = resolve_period(FRIDAY, PeriodPreset.SINCE_COUNT, last_count=date(2025, 10, 21))
+    assert year.days == 366
+    with pytest.raises(PeriodError):
+        resolve_period(FRIDAY, PeriodPreset.SINCE_COUNT, last_count=date(2025, 10, 20))
+
+
 def test_default_is_last_full_week() -> None:
     assert resolve_period(FRIDAY) == Period(date(2026, 10, 12), date(2026, 10, 18))
 

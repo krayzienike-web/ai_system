@@ -521,6 +521,9 @@ export function demoRequest(path: string, init: RequestInit, token: string | nul
   }
   if (path === "/restaurants") return restaurants(v);
   if (path === "/auth/me") return v.me;
+  // «Документы» follow the card: a director's finding sent back to the check takes its documents with it.
+  const sourcesOf = /^\/findings\/([^/?]+)\/sources$/.exec(path);
+  if (sourcesOf && !v.hq && !findingsOf(v).some((f) => f.id === sourcesOf[1])) throw new ApiError(404, "Finding not found");
   if (path in answers) return overlay(v, clone(answers[path]));
   // Answers that depend on the viewer: forbidden for a director, missing otherwise.
   // (another restaurant's page is «not found», as on the server).
