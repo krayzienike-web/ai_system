@@ -70,7 +70,7 @@ def _reviewer_names(session: Session, findings: list[Finding]) -> dict[UUID | No
     ids = {f.reviewed_by for f in findings if f.reviewed_by}
     if not ids:
         return {}
-    return dict(session.execute(select(User.id, User.full_name).where(User.id.in_(ids))).tuples().all())
+    return dict(session.execute(select(User.id, User.full_name).where(User.id.in_(ids))).all())
 
 
 def visible(session: Session, ctx: AccessContext, items: list[FindingWork]) -> list[VisibleFinding]:
