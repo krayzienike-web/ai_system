@@ -204,6 +204,11 @@
 | TC-AI-06 | Запрос к Claude: системный промпт кэшируется, адаптивное мышление с явным effort, резервная модель при отказе (кроме Haiku); стоимость по прайсу моделей | `test_the_claude_request_caches_the_system_prompt_thinks_adaptively_and_falls_back`, `test_costs_follow_the_price_list_and_unknown_models_cost_nothing` | ✅ |
 | TC-AI-07 | Без провайдера (`FAI_AI_PROVIDER=off`, по умолчанию) модели нет — чат отвечает по правилам | `test_without_a_provider_there_is_no_model` | ✅ |
 | TC-AI-08 | Только `app/ai` обращается к модели, предметные модули не импортируют `ai` и чат | CI: `lint-imports` (`[tool.importlinter]`) | ✅ |
+| TC-AI-09 | Инструменты ассистента — по реестру: у каждого есть тестовые аргументы и схема, которую принимает API (объект, без лишних полей); новый инструмент без места в тесте роняет набор | `test_ai_tools.py::test_every_tool_has_sample_arguments_and_a_schema_the_api_accepts` | ✅ |
+| TC-AI-10 | Изоляция каждого инструмента: директор не видит другой ресторан (id, название, находку), администратор чужой сети — ничего из сети А; сравнение ресторанов — только УК (и не предлагается директору) | `test_a_director_never_sees_another_restaurant_and_another_network_sees_nothing`, `test_comparing_restaurants_is_only_for_hq` | ✅ |
+| TC-AI-11 | Находку чужого ресторана и ждущую проверки инструмент не объясняет | `test_a_finding_of_another_restaurant_or_under_review_is_not_explained` | ✅ |
+| TC-AI-12 | Цифры инструментов — из расчетов кода, уже отформатированные: показатели движка и среднее по сети, открытые находки как на экране, цена закупки = сумма / количество по накладным | `test_kpis_are_the_engines_figures_formatted_and_the_director_gets_the_network_average`, `test_findings_are_the_screens_open_findings`, `test_purchase_prices_are_amount_over_quantity_from_the_invoices` | ✅ |
+| TC-AI-13 | Неверные аргументы, неизвестный инструмент, отключенный пользователь — ответ с ошибкой для модели, а не сбой; поиск экранирует `%` и `_` | `test_bad_arguments_unknown_tools_and_unknown_users_are_answers_not_crashes`, `test_search_escapes_like_wildcards` | ✅ |
 
 ### Интерфейс (UI)
 
