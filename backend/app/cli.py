@@ -13,7 +13,7 @@ from datetime import timedelta
 from pathlib import Path
 from uuid import UUID
 
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import Session
 
 from app.analytics import engine
@@ -127,6 +127,20 @@ def analyze() -> None:
     print(f"findings: {result.created} new, {result.updated} updated, {result.removed} removed")
 
 
+def reset_demo(password: str, seed: int) -> None:
+    """The demo stand every night: the demo network as it was on the first day, whatever visitors changed.
+    Refuses on a database that holds any other network."""
+    owner = create_engine(get_settings().migrations_database_url)
+    with owner.begin() as conn:
+        others = conn.execute(select(Tenant.name).where(Tenant.name != DEMO_TENANT)).scalars().all()
+        if others:
+            raise SystemExit(f"Not a demo stand: other networks here ({', '.join(others)})")
+        conn.execute(text("TRUNCATE tenants CASCADE"))
+    owner.dispose()
+    seed_demo(password)
+    load_demo(seed)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="app.cli")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -138,6 +152,11 @@ def main() -> None:
     ld = sub.add_parser("load-demo", help="Load the synthetic network into the demo tenant")
     ld.add_argument("--seed", type=int, default=42)
     sub.add_parser("analyze", help="Recompute findings of the demo tenant")
+    reset = sub.add_parser(
+        "reset-demo", help="Rebuild the demo network from scratch (the demo stand, nightly)"
+    )
+    reset.add_argument("--password", default=None)
+    reset.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
     if args.command == "analyze":
         analyze()
@@ -147,6 +166,8 @@ def main() -> None:
         generate_demo(args.out, args.seed)
     elif args.command == "load-demo":
         load_demo(args.seed)
+    elif args.command == "reset-demo":
+        reset_demo(args.password or get_settings().demo_password, args.seed)
 
 
 if __name__ == "__main__":

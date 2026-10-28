@@ -15,6 +15,8 @@ from typing import Annotated
 
 from fastapi import Depends
 
+from app.core.config import get_settings
+
 MAX_DAYS = 366
 
 
@@ -114,8 +116,9 @@ def resolve_period(
 
 
 def get_today() -> date:
-    """Today for the request; tests override this dependency to pin the calendar."""
-    return date.today()
+    """Today for the request; tests override this dependency to pin the calendar, the demo stand sets
+    FAI_DEMO_TODAY."""
+    return get_settings().demo_today or date.today()
 
 
 TodayDep = Annotated[date, Depends(get_today)]

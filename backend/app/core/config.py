@@ -1,3 +1,4 @@
+from datetime import date
 from functools import lru_cache
 
 from pydantic import Field, model_validator
@@ -27,6 +28,12 @@ class Settings(BaseSettings):
 
     # The background queue (arq). Not set: background work runs in the API process after the response.
     redis_url: str | None = None
+
+    # The demo stand (docs/06, stage 5): the calendar stays on the demo's «today», so the data never looks
+    # stale, and the worker rebuilds the demo network every night (`app.cli reset-demo`). Not for a real one.
+    demo_today: date | None = None
+    demo_reset_nightly: bool = False
+    demo_password: str = "demo12345"  # noqa: S105  (the demo's public logins)
 
     # The assistant's model (ADR 0005). `off` until the Claude API key comes (Q12): the chat answers by its
     # rules. `claude` reads the key from ANTHROPIC_API_KEY.

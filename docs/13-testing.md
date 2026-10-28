@@ -217,6 +217,9 @@
 | TC-AI-19 | «Обсудить с ИИ» из находки: модели передается только находка, которую пользователь видит; промпт велит сначала разобрать ее | `test_a_finding_of_another_restaurant_is_not_given_to_the_model_as_context`, `test_ai_gateway.py::test_the_shipped_chat_prompt_keeps_the_rules_the_evals_check` | ✅ |
 | TC-AI-20 | Ответ потоком (SSE): статусы «что смотрю», затем ответ; лимит — событие ошибки с 429, без потока — 429. Клиент читает поток кусками, ошибку и обрыв показывает | `test_the_stream_says_what_the_assistant_looks_at_then_answers`, `test_the_budget_is_an_error_event_in_the_stream_and_429_otherwise`; `client.test.ts` | ✅ |
 | TC-AI-21 | Без модели чат отвечает по правилам и разговоров не хранит | `test_without_the_model_the_chat_answers_by_rules_and_keeps_no_conversation` | ✅ |
+| TC-AI-22 | Проверочный набор чата (`app/ai/evals/chat.json`, 40 вопросов: директор, УК, 7 попыток получить чужие данные, вопросы не по теме): у каждого вопроса ожидаемые цифры считает код по данным демо-сети, ни одна не пустая; директору — только его инструменты | `test_ai_evals.py::test_every_case_is_well_formed_and_its_figures_are_computed_from_the_data` | ✅ |
+| TC-AI-23 | Оценка прогона: модель, отвечающая правильно, получает 100 %; утечка роняет прогон при любом проценте; выдуманная цифра не засчитывается | `test_a_model_that_answers_right_scores_full_marks`, `test_a_leak_fails_the_run_whatever_the_score`, `test_an_invented_figure_is_not_counted_as_correct` | ✅ |
+| TC-AI-24 | Критерий этапа 5 на настоящей модели: не менее 90 % верно, 0 утечек (`make eval-chat`) | — | ⬜ ждет ключа Claude API (Q12) |
 
 ### Интерфейс (UI)
 
@@ -247,6 +250,7 @@
 | TC-DEMO-04 | Действия в прототипе меняют только затронутое и по правилам сервера: задачи, чек-листы, напоминания, запуск проверок, вердикты | `frontend/src/api/demo.test.ts` «demo actions» | ✅ |
 | TC-DEMO-05 | Записанные ответы (`snapshot.json`) подходят под текущие модели ответов API; контракт для фронта (`schema.ts`) актуален | `test_demo_snapshot.py`; CI: `make api-types` без изменений в git | ✅ |
 | TC-DEMO-06 | Прототип накладывает действия так, как их видит каждый: директор — без проверок и без имени проверяющего; повтор проверки, свой период и неизвестный id — ошибки сервера, а не падение | `demo.test.ts` «demo follows the server after the actions» | ✅ |
+| TC-DEMO-07 | Демо-стенд: календарь стоит на дне демо (`FAI_DEMO_TODAY`); ночной сброс назначен только на стенде (03:07 по Москве); сброс отказывается работать на базе с другими сетями и ничего не удаляет | `test_demo_stand.py` | ✅ |
 
 ## Пробелы и план
 

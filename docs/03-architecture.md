@@ -162,7 +162,8 @@ ai_system/
   demo-data/      генератор синтетической сети с заложенными аномалиями
   templates/      шаблоны XLSX для импорта
   docs/           эта документация + ADR
-  infra/          docker-compose, nginx, скрипты
+  infra/          роли базы данных (разработка и стенд)
+  deploy/         демо-стенд: compose, Caddy (HTTPS), инструкция
   .github/        CI
   Makefile        make up / test / seed-demo / lint
 ```
