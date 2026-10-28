@@ -8,7 +8,7 @@ from collections.abc import Iterator
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import Engine, text
+from sqlalchemy import Engine, select, text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 
@@ -286,3 +286,31 @@ def test_the_application_can_only_add_to_the_audit_log(app_session: Session) -> 
         )
     ).scalars()
     assert sorted(granted) == ["INSERT", "SELECT"]
+
+
+def test_a_tool_call_gets_its_own_read_only_session_under_the_users_rls(network: Network) -> None:
+    """Architecture review 27.10.2026, p. 20: each tool call of the assistant reads under the user's
+    row-level security, cannot write, and leaves nothing behind for the next session from the pool."""
+    from sqlalchemy.exc import InternalError
+
+    from app.tenancy.context import tool_session
+    from app.tenancy.models import Restaurant
+
+    director = network.a.users["director1@a.ru"]
+    with tool_session(director, network.a.id) as (session, ctx):
+        assert ctx.restaurant_id == network.a.restaurants["A1"]
+        assert set(session.execute(select(Restaurant.code)).scalars()) == {"A1"}
+    # Read-only: a tool cannot change anything, even its own restaurant.
+    with (
+        pytest.raises(InternalError, match="read-only"),
+        tool_session(director, network.a.id) as (session, _),
+    ):
+        session.execute(text("UPDATE restaurants SET name = name"))
+    # The context ended with the transaction: a fresh session from the pool sees nothing.
+    with get_sessionmaker()() as fresh:
+        assert fresh.execute(select(Restaurant.code)).scalars().all() == []
+    # Another network's admin sees only their network; an unknown user gets no session at all.
+    with tool_session(network.b.users["admin@b.ru"], network.b.id) as (session, _):
+        assert set(session.execute(select(Restaurant.code)).scalars()) == {"B1"}
+    with pytest.raises(PermissionError), tool_session(director, network.b.id):
+        pass

@@ -1,10 +1,12 @@
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
-from app.core.db import RlsContext, apply_rls_context
+from app.core.db import RlsContext, apply_rls_context, get_sessionmaker
 from app.tenancy.models import Role, RoleAssignment, User
 from app.tenancy.permissions import ROLE_PERMISSIONS, Permission
 
@@ -60,3 +62,20 @@ def system_context(session: Session, tenant_id: UUID) -> AccessContext:
 
 
 SYSTEM_USER = UUID(int=0)  # no such user: audit rows of background work have no person
+
+
+@contextmanager
+def tool_session(user_id: UUID, tenant_id: UUID) -> Iterator[tuple[Session, AccessContext]]:
+    """One call of the assistant's tool: its own short read-only transaction under this user's row-level
+    security (architecture review 27.10.2026, p. 20).
+
+    The role is read from the database again, so access revoked during a conversation stops the next call; the
+    transaction is read-only, so a tool can show data but never change it (actions go through the screens and
+    a person's approval, CLAUDE.md principle 5). The context ends with the transaction: nothing carries over
+    to the next call or to another user's session from the pool."""
+    with get_sessionmaker()() as session, session.begin():
+        session.execute(text("SET TRANSACTION READ ONLY"))
+        ctx = load_access_context(session, user_id, tenant_id)
+        if ctx is None:
+            raise PermissionError("Пользователь не найден или отключен")
+        yield session, ctx
