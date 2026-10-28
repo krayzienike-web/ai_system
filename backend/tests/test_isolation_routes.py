@@ -13,6 +13,7 @@ into one of the groups below, or this test fails and says where to put it.
 
 import json
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, fields
 from datetime import date
 from decimal import Decimal
@@ -280,3 +281,55 @@ def test_lists_and_screens_hold_nothing_of_another_network_or_restaurant(
             if who == "director":
                 leaks += [f"director: GET {url} shows restaurant {rid}" for rid in others if rid in body]
     assert leaks == [], leaks
+
+
+def test_the_assistant_through_the_model_holds_nothing_of_another_network(
+    client: TestClient, network: Network, foreign: Foreign
+) -> None:
+    """Code review 28.10.2026, stage 5, p. 18: the chat's model path walked like the routes — every tool is
+    called (also with another network's ids) and its results quoted back; neither the answer nor anything sent
+    to the model holds another network's ids or names."""
+    from app.ai import tools
+    from app.ai.gateway import FakeModel, Gateway, ModelRequest, Reply, Usage, get_gateway, text_reply
+
+    args = {
+        "get_findings": {"restaurant_code": foreign.code},
+        "explain_finding": {"finding_id": str(foreign.finding_id)},
+        "search_products": {"query": "Чужой"},
+        "get_purchase_prices": {"product": "Чужой", "days": 180},
+    }
+
+    def call_all(_: ModelRequest) -> Reply:
+        blocks = [
+            {"type": "tool_use", "id": f"c{i}", "name": name, "input": args.get(name, {})}
+            for i, name in enumerate(tools.TOOLS)
+        ]
+        return Reply(blocks, "tool_use", Usage(1, 1))
+
+    def quote(r: ModelRequest) -> Reply:
+        results = [b["content"] for b in r.messages[-1]["content"] if b.get("type") == "tool_result"]
+        return text_reply("\n".join(results))
+
+    def gateway_of(model: FakeModel) -> Callable[[], Gateway]:
+        return lambda: Gateway(model, per_user_day=100)
+
+    for who in ("admin@a.ru", "director1@a.ru"):
+        model = FakeModel([call_all, quote])
+        app.dependency_overrides[get_gateway] = gateway_of(model)
+        try:
+            body = {"question": "Расскажи всё", "finding_id": str(foreign.finding_id)}
+            r = client.post("/api/chat", headers=login(client, who), json=body)
+        finally:
+            app.dependency_overrides.pop(get_gateway, None)
+        assert r.status_code == 200 and len(model.requests) == 2
+        # What the server gave the model (the question and the tools' results) and the answer — not the
+        # arguments the model itself chose.
+        given = [
+            b.get("content") or b.get("text")
+            for m in model.requests[-1].messages
+            if m["role"] == "user"
+            for b in m["content"]
+        ]
+        sent = json.dumps(given, ensure_ascii=False) + r.text
+        markers = [str(foreign.finding_id), str(foreign.restaurant_id), *foreign.names]
+        assert [m for m in markers if m in sent] == [], who

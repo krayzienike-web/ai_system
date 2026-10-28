@@ -5,6 +5,7 @@ from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 DEV_JWT_SECRET = "dev-secret-change-me-dev-secret-change-me"  # noqa: S105  (dev only, refused outside dev)
+DEV_DEMO_PASSWORD = "demo12345"  # noqa: S105  (the prototype's public logins; the demo stand sets its own)
 
 
 class Settings(BaseSettings):
@@ -33,20 +34,26 @@ class Settings(BaseSettings):
     # stale, and the worker rebuilds the demo network every night (`app.cli reset-demo`). Not for a real one.
     demo_today: date | None = None
     demo_reset_nightly: bool = False
-    demo_password: str = "demo12345"  # noqa: S105  (the demo's public logins)
+    demo_password: str = DEV_DEMO_PASSWORD
 
     # The assistant's model (ADR 0005). `off` until the Claude API key comes (Q12): the chat answers by its
     # rules. `claude` reads the key from ANTHROPIC_API_KEY.
     ai_provider: str = "off"
     ai_model: str = "claude-opus-5-5"
     ai_effort: str = "medium"
-    ai_timeout_s: float = 60.0
+    ai_timeout_s: float = 120.0
     ai_requests_per_user_day: int = 100
 
     @model_validator(mode="after")
     def no_dev_secret_outside_dev(self) -> "Settings":
         if self.env not in ("dev", "test") and self.jwt_secret == DEV_JWT_SECRET:
             raise ValueError("FAI_JWT_SECRET must be set outside dev/test")
+        if (
+            self.env not in ("dev", "test")
+            and self.demo_reset_nightly
+            and self.demo_password == DEV_DEMO_PASSWORD
+        ):
+            raise ValueError("FAI_DEMO_PASSWORD must be set on the demo stand")
         return self
 
 

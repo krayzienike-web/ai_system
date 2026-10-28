@@ -125,8 +125,8 @@ def test_the_daily_budget_stops_the_next_call_and_is_per_user(network: Network, 
 
 
 def test_the_log_is_append_only_and_each_person_sees_their_own(network: Network) -> None:
-    """TC-ISO: a director sees their own calls, the HQ the network's, another network nothing; nobody may
-    change or delete the log (it is what the budget counts)."""
+    """TC-ISO: everyone sees only their own calls, the HQ too (they hold whole conversations), another
+    network nothing; nobody may change or delete the log (it is what the budget counts)."""
     director, admin = _ctx(network), _ctx(network, "admin@a.ru")
     gateway = Gateway(FakeModel([text_reply("1"), text_reply("2")]))
     chat = prompts.load("chat")
@@ -139,7 +139,7 @@ def test_the_log_is_append_only_and_each_person_sees_their_own(network: Network)
 
     assert visible(network.a.users["director1@a.ru"], network.a.id) == ["мой"]
     assert visible(network.a.users["director2@a.ru"], network.a.id) == []
-    assert visible(network.a.users["admin@a.ru"], network.a.id) == ["мой", "ук"]
+    assert visible(network.a.users["admin@a.ru"], network.a.id) == ["ук"]  # conversations are private (p. 5)
     assert visible(network.b.users["admin@b.ru"], network.b.id) == []
     for statement in ("UPDATE ai_runs SET status = 'ok'", "DELETE FROM ai_runs"):
         with get_sessionmaker()() as s, s.begin(), pytest.raises(ProgrammingError, match="permission denied"):
@@ -150,7 +150,7 @@ def test_costs_follow_the_price_list_and_unknown_models_cost_nothing() -> None:
     assert cost_usd("claude-haiku-5-5", Usage(1_000_000, 1_000_000, 1_000_000, 1_000_000)) == Decimal(
         "0.735000"
     )
-    assert cost_usd("fake", Usage(10, 10)) == Decimal("0")
+    assert cost_usd("fake", Usage(10, 10)) is None  # unknown, not free
 
 
 def test_prompts_are_versioned_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

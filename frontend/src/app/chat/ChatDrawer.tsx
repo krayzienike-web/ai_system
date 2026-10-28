@@ -150,10 +150,16 @@ export function ChatPanel({ context, className }: { context: ChatContextRef | nu
   // The conversation on the server: the next question continues it (the assistant remembers the context).
   const [threadId, setThreadId] = useState<string | undefined>();
   const endRef = useRef<HTMLDivElement>(null);
+  // The question in flight: closing the chat stops it, so the assistant does not spend the day's questions.
+  const inFlight = useRef<AbortController | null>(null);
+  // What a screen reader hears: «Су-шеф думает…», what it looks at, then that the answer came.
+  const [announce, setAnnounce] = useState("");
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages, thinking]);
+
+  useEffect(() => () => inFlight.current?.abort(), []);
 
   if (!viewer) return null;
 
@@ -163,21 +169,24 @@ export function ChatPanel({ context, className }: { context: ChatContextRef | nu
     setInput("");
     setThinking(true);
     setStatus(null);
+    setAnnounce("Су-шеф думает…");
+    inFlight.current?.abort();
+    const controller = new AbortController();
+    inFlight.current = controller;
     asking.mutate(
-      { question: text, finding_id: context?.findingId, thread_id: threadId },
+      { question: text, finding_id: context?.findingId, thread_id: threadId, signal: controller.signal },
       {
         onSuccess: (a) => {
           if (a.thread_id) setThreadId(a.thread_id);
           setMessages((m) => [...m, { role: "assistant", text: a.text, answer: a }]);
+          setAnnounce(`Ответ су-шефа: ${a.text}`);
         },
-        onError: (e) =>
-          setMessages((m) => [
-            ...m,
-            {
-              role: "assistant",
-              text: e instanceof ApiError && e.status === 429 ? e.message : "Не получилось ответить. Попробуйте еще раз.",
-            },
-          ]),
+        onError: (e) => {
+          if (controller.signal.aborted) return;
+          const text = e instanceof ApiError && e.status === 429 ? e.message : "Не получилось ответить. Попробуйте еще раз.";
+          setMessages((m) => [...m, { role: "assistant", text }]);
+          setAnnounce(text);
+        },
         onSettled: () => setThinking(false),
       },
     );
@@ -194,6 +203,9 @@ export function ChatPanel({ context, className }: { context: ChatContextRef | nu
 
   return (
     <div className={cx("flex min-h-0 flex-col", className)}>
+      <div role="status" aria-live="polite" className="sr-only">
+        {status && thinking ? `${status}…` : announce}
+      </div>
       {context && (
         <div className="border-b border-line bg-brand-soft px-5 py-2.5 text-[13px] text-brand-strong">
           Говорим о: <span className="font-semibold">{context.title}</span>
@@ -219,7 +231,7 @@ export function ChatPanel({ context, className }: { context: ChatContextRef | nu
         {thinking && (
           <div className="flex items-center gap-2.5 text-sm text-ink-3">
             <LogoMark size={26} />
-            <span className="flex gap-1" aria-label="Су-шеф думает">
+            <span className="flex gap-1" aria-hidden>
               {[0, 1, 2].map((d) => (
                 <motion.span
                   key={d}
@@ -229,7 +241,7 @@ export function ChatPanel({ context, className }: { context: ChatContextRef | nu
                 />
               ))}
             </span>
-            {status && <span role="status">{status}…</span>}
+            {status && <span>{status}…</span>}
           </div>
         )}
         <div ref={endRef} />
@@ -253,6 +265,7 @@ export function ChatPanel({ context, className }: { context: ChatContextRef | nu
             onChange={(e) => setInput(e.target.value)}
             placeholder="Спросите своими словами…"
             aria-label="Вопрос су-шефу"
+            maxLength={1000}
             className="min-w-0 flex-1 bg-transparent py-1.5 text-sm outline-none"
           />
           <button type="submit" aria-label="Отправить" className="grid h-9 w-9 place-items-center rounded-full bg-brand text-white hover:bg-brand-strong">

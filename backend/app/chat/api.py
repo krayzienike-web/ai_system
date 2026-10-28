@@ -1,4 +1,5 @@
 import json
+import logging
 from collections.abc import Iterator
 from datetime import datetime
 from typing import Annotated
@@ -7,17 +8,19 @@ from uuid import UUID
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
 
 from app.ai import history
 from app.ai.gateway import Gateway, get_gateway
 from app.chat import service
 from app.chat.assistant import Done, respond
-from app.core.deps import require
+from app.core.deps import SessionDep, require
 from app.core.errors import RuleError
 from app.core.period import TodayDep
 from app.tenancy.context import AccessContext
 from app.tenancy.permissions import Permission
 
+log = logging.getLogger(__name__)
 router = APIRouter(tags=["chat"])
 
 CanChat = Annotated[AccessContext, Depends(require(Permission.AI_CHAT))]
@@ -62,8 +65,16 @@ def chat_suggestions(ctx: CanChat) -> list[str]:
     return service.suggestions(ctx)
 
 
+def _release(session: Session) -> None:
+    """The request's transaction ends here: the model may think for a minute, and no connection waits idle in
+    a transaction meanwhile (code review 28.10.2026, stage 5, p. 4). The chat reads and writes in short
+    transactions of its own."""
+    session.rollback()
+
+
 @router.post("/chat")
-def ask(body: AskIn, ctx: CanChat, gateway: GatewayDep, today: TodayDep) -> AnswerOut:
+def ask(body: AskIn, ctx: CanChat, session: SessionDep, gateway: GatewayDep, today: TodayDep) -> AnswerOut:
+    _release(session)
     events = respond(
         gateway,
         ctx,
@@ -77,9 +88,12 @@ def ask(body: AskIn, ctx: CanChat, gateway: GatewayDep, today: TodayDep) -> Answ
 
 
 @router.post("/chat/stream")
-def ask_streaming(body: AskIn, ctx: CanChat, gateway: GatewayDep, today: TodayDep) -> StreamingResponse:
+def ask_streaming(
+    body: AskIn, ctx: CanChat, session: SessionDep, gateway: GatewayDep, today: TodayDep
+) -> StreamingResponse:
     """The same answer as Server-Sent Events: `status` while the assistant looks at the data, then `answer`
     (or `error` with the message and the HTTP status it would have had)."""
+    _release(session)
 
     def events() -> Iterator[str]:
         try:
@@ -97,6 +111,10 @@ def ask_streaming(body: AskIn, ctx: CanChat, gateway: GatewayDep, today: TodayDe
                     yield f"event: status\ndata: {json.dumps({'text': e.text}, ensure_ascii=False)}\n\n"
         except RuleError as exc:
             error = {"detail": str(exc), "status": exc.status_code}
+            yield f"event: error\ndata: {json.dumps(error, ensure_ascii=False)}\n\n"
+        except Exception:  # the stream must end with an event, not break off
+            log.exception("chat stream failed")
+            error = {"detail": "Не получилось ответить. Попробуйте еще раз.", "status": 500}
             yield f"event: error\ndata: {json.dumps(error, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(events(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})

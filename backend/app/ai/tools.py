@@ -13,6 +13,7 @@ findings come through `insights.visible`, other rows through RLS. Every tool has
 (tests/test_ai_tools.py walks the registry).
 """
 
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -38,6 +39,7 @@ from app.tenancy.context import AccessContext, tool_session
 from app.tenancy.models import Restaurant
 from app.tenancy.permissions import Permission
 
+log = logging.getLogger(__name__)
 Result = dict[str, Any]
 LIMIT = 20  # rows per answer: the model reads them all, so lists stay short
 
@@ -183,7 +185,9 @@ def get_findings(session: Session, ctx: AccessContext, args: FindingsArgs, today
     if args.restaurant_code:
         match = [r for r in _places(session).values() if r.code == args.restaurant_code]
         if not match:
-            return {"error": f"Ресторан {args.restaurant_code} не найден или недоступен"}
+            return {
+                "error": "Ресторан с таким кодом не найден или недоступен"
+            }  # the argument is not repeated
         restaurant_id = match[0].id
     items = [
         f
@@ -378,10 +382,9 @@ def run(name: str, arguments: Any, *, user_id: UUID, tenant_id: UUID, today: dat
     try:
         args = tool.args.model_validate(arguments or {})
     except ValidationError as exc:
-        return {
-            "error": "Неверные аргументы",
-            "details": exc.errors(include_url=False, include_context=False),
-        }, True
+        # Which fields are wrong, not what was in them: an error repeats no figure of the model's own.
+        fields = sorted({".".join(map(str, e["loc"])) or "arguments" for e in exc.errors()})
+        return {"error": "Неверные аргументы", "fields": fields}, True
     try:
         with tool_session(user_id, tenant_id) as (session, ctx):
             if tool.permission is not None and not ctx.can(tool.permission):
@@ -389,4 +392,7 @@ def run(name: str, arguments: Any, *, user_id: UUID, tenant_id: UUID, today: dat
             result = tool.run(session, ctx, args, today)
     except PermissionError:
         return {"error": "Пользователь не найден или отключен"}, True
+    except Exception:  # a tool that failed is an answer for the model too, not a failed question
+        log.exception("tool %s failed", name)
+        return {"error": "Не удалось получить данные"}, True
     return result, "error" in result

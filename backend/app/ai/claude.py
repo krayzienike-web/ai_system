@@ -5,7 +5,8 @@
   sits on the system prompt, so the conversation after it is the only part paid in full.
 - Adaptive thinking with an explicit effort; on a refusal the API re-runs the request on a fallback model
   (`fallbacks: "default"`); a refusal that remains comes back as `stop_reason="refusal"`.
-- Retries of 408/409/429/5xx and connection errors are the SDK's (`max_retries`).
+- One retry of 408/409/429/5xx and connection errors (the SDK's `max_retries`): a slow answer is not
+  paid three times.
 """
 
 from typing import Any
@@ -22,7 +23,7 @@ class ClaudeModel:
     def __init__(self, client: anthropic.Anthropic | None = None) -> None:
         settings = get_settings()
         self.effort = settings.ai_effort
-        self.client = client or anthropic.Anthropic(timeout=settings.ai_timeout_s, max_retries=2)
+        self.client = client or anthropic.Anthropic(timeout=settings.ai_timeout_s, max_retries=1)
 
     def params(self, request: ModelRequest) -> dict[str, Any]:
         params: dict[str, Any] = {

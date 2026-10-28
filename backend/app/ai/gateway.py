@@ -13,6 +13,7 @@ Messages, tools and replies are kept in the Messages API's JSON shape: no transl
 provider (ADR 0005), and the log stores exactly what was sent.
 """
 
+import logging
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
@@ -26,6 +27,8 @@ from app.ai.prompt import Prompt
 from app.core.config import get_settings
 from app.core.errors import RuleError
 from app.tenancy.context import AccessContext, user_session
+
+log = logging.getLogger(__name__)
 
 Task = Literal["chat", "explain", "digest", "match"]
 Message = dict[str, Any]
@@ -64,7 +67,7 @@ class ModelRequest:
     system: str
     messages: Sequence[Message]
     tools: Sequence[Tool] = ()
-    max_tokens: int = 16000
+    max_tokens: int = 8000  # a chat answer is short; thinking counts in it too
 
 
 @dataclass(frozen=True)
@@ -115,9 +118,11 @@ def tool_reply(name: str, args: dict[str, Any], *, call_id: str = "call_1") -> R
     )
 
 
-def cost_usd(model: str, usage: Usage) -> Decimal:
+def cost_usd(model: str, usage: Usage) -> Decimal | None:
+    """None for a model without a price (a fallback model, say): unknown, not free (code review 28.10)."""
     if model not in PRICES:
-        return Decimal("0")
+        log.warning("no price for model %s: ai_runs.cost_usd left empty", model)
+        return None
     inp, out, read, write = PRICES[model]
     total = (
         usage.input_tokens * inp
@@ -131,12 +136,18 @@ def cost_usd(model: str, usage: Usage) -> Decimal:
 STATUS = {"refusal": "refused", "max_tokens": "truncated"}
 
 
+DAY_ZONE = "Europe/Moscow"  # the budget's day starts at midnight in Moscow, not in UTC
+
+
 def used_today(ctx: AccessContext) -> int:
+    """Calls to the model this person made today."""
+    local_now = func.timezone(DAY_ZONE, func.now())
+    day_start = func.timezone(DAY_ZONE, func.date_trunc("day", local_now))
     with user_session(ctx) as s:
         return s.execute(
             select(func.count())
             .select_from(AiRun)
-            .where(AiRun.user_id == ctx.user_id, AiRun.created_at >= func.date_trunc("day", func.now()))
+            .where(AiRun.user_id == ctx.user_id, AiRun.created_at >= day_start)
         ).scalar_one()
 
 
@@ -155,9 +166,12 @@ class Gateway:
         prompt: Prompt,
         messages: Sequence[Message],
         tools: Sequence[Tool] = (),
+        check_budget: bool = True,
     ) -> Reply:
-        if used_today(ctx) >= self.per_user_day:
-            raise BudgetError("Лимит вопросов ассистенту на сегодня исчерпан, он обновится завтра")
+        """One call to the model. A conversation checks the budget once per question (`check_budget`) and
+        passes False for its later rounds, so a question once started is answered to the end."""
+        if check_budget:
+            self.check_budget(ctx)
         request = ModelRequest(self.model_id, prompt.text, list(messages), list(tools))
         started = time.monotonic()
         try:
@@ -169,6 +183,11 @@ class Gateway:
             raise ModelUnavailableError("Ассистент сейчас недоступен, попробуйте позже") from exc
         self._log(ctx, task, prompt, request, reply, started)
         return reply
+
+    def check_budget(self, ctx: AccessContext) -> None:
+        """The daily limit counts calls to the model (a question takes one to a few)."""
+        if used_today(ctx) >= self.per_user_day:
+            raise BudgetError("Лимит обращений к ассистенту на сегодня исчерпан, он обновится в полночь")
 
     def _log(
         self,

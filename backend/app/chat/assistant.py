@@ -90,6 +90,8 @@ def respond(
         )
     else:
         answer = _by_rules(ctx, question, finding_id, today)
+        # The conversation keeps what the person saw, not the attempts that failed the check.
+        final.new_messages.append({"role": "assistant", "content": [{"type": "text", "text": answer.text}]})
     if thread_id is None:
         thread_id = history.start(ctx, title=question, finding_id=finding_id)
     history.append(ctx, thread_id, final.new_messages, question=question, answer=answer.text)

@@ -35,8 +35,6 @@ services:
       FAI_DEMO_TODAY: ${DEMO_TODAY:-2026-10-20}
       FAI_DEMO_RESET_NIGHTLY: "true"
       FAI_DEMO_PASSWORD: ${DEMO_PASSWORD:?set in deploy/.env}
-      FAI_AI_PROVIDER: ${AI_PROVIDER:-off}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
     command: alembic upgrade head
     depends_on:
       db: { condition: service_healthy }
@@ -44,7 +42,11 @@ services:
   backend:
     build: ../backend
     restart: unless-stopped
-    environment: *backend-env
+    environment:
+      <<: *backend-env
+      # The model's key only where the chat runs.
+      FAI_AI_PROVIDER: ${AI_PROVIDER:-off}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2 --proxy-headers --forwarded-allow-ips '*'
     depends_on:
       migrate: { condition: service_completed_successfully }

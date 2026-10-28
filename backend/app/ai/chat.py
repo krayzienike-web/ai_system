@@ -65,6 +65,20 @@ def question_message(question: str, finding_id: UUID | None) -> Message:
     return {"role": "user", "content": [{"type": "text", "text": text}]}
 
 
+def _past_results(history: list[Message]) -> list[Any]:
+    """Tool results earlier in the conversation: figures the model was given before may be quoted again."""
+    out = []
+    for message in history:
+        for block in message["content"] if isinstance(message["content"], list) else []:
+            if isinstance(block, dict) and block.get("type") == "tool_result" and not block.get("is_error"):
+                out.append(block.get("content"))
+    return out
+
+
+def _text(text: str) -> Message:
+    return {"role": "assistant", "content": [{"type": "text", "text": text}]}
+
+
 def converse(
     gateway: Gateway,
     ctx: AccessContext,
@@ -74,24 +88,30 @@ def converse(
     finding_id: UUID | None,
     today: date,
 ) -> Iterator[Status | Final]:
+    """The question's messages come back in `Final.new_messages`, ready to be kept: never an empty or cut-off
+    reply, never an answer that failed the check (code review 28.10.2026, pp. 6–7) — the conversation stays
+    valid for the next question."""
     chat = prompts.load("chat")
     schemas = tools.schemas(ctx)
     new: list[Message] = [question_message(question, finding_id)]
-    sources: list[Any] = [question]
+    # Only figures the tools computed: not the question (one could ask to «confirm» any number) and not the
+    # text of a tool's error, which repeats the model's own arguments (code review 28.10.2026, p. 2).
+    sources: list[Any] = _past_results(history)
     used: list[str] = []
     found: list[UUID] = [finding_id] if finding_id else []
-    corrected = False
+    answer_at: int | None = None  # where the first unchecked answer starts: dropped if it fails
     bad: list[str] = []
+    gateway.check_budget(ctx)  # once per question: a started question is finished
 
     for _ in range(MAX_ROUNDS):
-        reply = gateway.complete(ctx, task="chat", prompt=chat, messages=history + new, tools=schemas)
+        reply = gateway.complete(
+            ctx, task="chat", prompt=chat, messages=history + new, tools=schemas, check_budget=False
+        )
+        if reply.stop_reason in ("refusal", "max_tokens"):
+            text = REFUSED if reply.stop_reason == "refusal" else TOO_LONG
+            yield Final(text, True, found, used, [], [*new[: answer_at or len(new)], _text(text)])
+            return
         new.append({"role": "assistant", "content": reply.content})
-        if reply.stop_reason == "refusal":
-            yield Final(REFUSED, True, found, used, [], new)
-            return
-        if reply.stop_reason == "max_tokens":
-            yield Final(TOO_LONG, True, found, used, [], new)
-            return
         if reply.tool_calls:
             results = []
             for call in reply.tool_calls:
@@ -101,7 +121,8 @@ def converse(
                     name, call.get("input"), user_id=ctx.user_id, tenant_id=ctx.tenant_id, today=today
                 )
                 used.append(name)
-                sources.append(result)
+                if not is_error:
+                    sources.append(result)
                 if name == "explain_finding" and not is_error:
                     found.append(UUID(result["id"]))
                 results.append(
@@ -118,11 +139,12 @@ def converse(
         if not bad:
             yield Final(reply.text.strip(), True, list(dict.fromkeys(found)), used, [], new)
             return
-        if corrected:
+        if answer_at is not None:
             break
-        corrected = True
+        answer_at = len(new) - 1
         yield Status("Сверяю цифры")
         new.append(
             {"role": "user", "content": [{"type": "text", "text": CORRECT.format(numbers=", ".join(bad))}]}
         )
-    yield Final("", False, list(dict.fromkeys(found)), used, bad, new)
+    # Not checked: the caller shows the answer by rules and adds it as the assistant's reply.
+    yield Final("", False, list(dict.fromkeys(found)), used, bad, new[: answer_at or len(new)])

@@ -413,6 +413,6 @@ export const useChatSuggestions = () =>
 
 export const useAsk = (onStatus: (text: string) => void = () => {}) =>
   useMutation({
-    mutationFn: (body: { question: string; finding_id?: string; thread_id?: string }) =>
-      stream<ChatAnswer>("/chat/stream", body, onStatus),
+    mutationFn: ({ signal, ...body }: { question: string; finding_id?: string; thread_id?: string; signal?: AbortSignal }) =>
+      stream<ChatAnswer>("/chat/stream", body, onStatus, signal),
   });

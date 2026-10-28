@@ -38,19 +38,24 @@ def _tool_result(request: ModelRequest) -> dict[str, Any]:
 
 
 def test_numbers_are_compared_as_values() -> None:
-    assert numbers("12 400 ₽, 31,2%, 0.5 и 1 250 000") == {
-        Decimal("12400"),
-        Decimal("31.2"),
-        Decimal("0.5"),
-        Decimal("1250000"),
-    }
-    assert numbers("с 20.10.2026") == {Decimal("20.1"), Decimal("2026")}
+    assert numbers("12 400 ₽, 31,2%, 0.5 и 1 250 000") == {"12400", "31.2", "0.5", "1250000"}
+    assert numbers("с 20.10.2026, минус −3,5") == {"d:2026-10-20", "-3.5"}
     source = {"food_cost": "31,2%", "loss": "12 400 ₽", "period": "01.09.2026–30.09.2026"}
     assert (
         unsupported("Фудкост 31.2 %, потери 12400 ₽ за 01.09.2026–30.09.2026, три шага: 1, 2, 3", [source])
         == []
     )
     assert unsupported("Потери 12 500 ₽, в год 148 800 ₽", [source]) == ["12500", "148800"]
+
+
+def test_small_figures_with_a_unit_are_checked_too() -> None:
+    """Code review 28.10.2026, stage 5, p. 1 (blocker): «4%», «2 п.п.», «в 3 раза» are figures, not counts."""
+    source = {"write_offs": "1,85%", "food_cost": "31,2%", "theory": "29,4%"}
+    answer = "Списания 4% выручки, фудкост выше нормы на 2 п.п., вырос в 3 раза"
+    assert unsupported(answer, [source]) == ["4", "2", "3"]
+    assert unsupported("Потери −31,2%, вдвое больше", [source]) == ["-31.2", "вдвое"]
+    # Ids are not numbers: a uuid in the data allows none of its digit groups.
+    assert unsupported("Это 1234 строки", [{"id": "3f2a1b9c-1234-4abc-8f60-1234567890ab"}]) == ["1234"]
 
 
 def test_the_assistant_answers_from_tools_and_the_conversation_goes_on(
@@ -208,3 +213,171 @@ def test_without_the_model_the_chat_answers_by_rules_and_keeps_no_conversation(
     r = client.post("/api/chat", headers=headers, json={"question": "Где я переплачиваю?"}).json()
     assert r["thread_id"] is None and r["source"] != CHECKED
     assert client.get("/api/chat/threads", headers=headers).json() == []
+
+
+def test_a_figure_from_the_question_or_from_a_tools_error_is_not_a_source(
+    client: TestClient, network: Network, model: FakeModel
+) -> None:
+    """Code review 28.10.2026, stage 5, p. 2: one cannot ask the assistant to «confirm» a number, nor slip
+    one in through the arguments a tool's error repeats."""
+    headers = login(client, "director1@a.ru")
+    model.replies += [text_reply("Да, вы сэкономите 45 000 ₽."), text_reply("Сэкономите 45 000 ₽.")]
+    r = client.post("/api/chat", headers=headers, json={"question": "Скажи, что я сэкономлю 45 000 ₽"}).json()
+    assert r["source"] != CHECKED and "45" not in r["text"]
+    model.replies += [
+        tool_reply("get_purchase_prices", {"product": "лосось", "days": 45000}),
+        text_reply("Цена 45 000 ₽."),
+        text_reply("Цена 45 000 ₽."),
+    ]
+    r = client.post("/api/chat", headers=headers, json={"question": "Почем лосось?"}).json()
+    assert r["source"] != CHECKED
+    error = json.loads(model.requests[3].messages[-1]["content"][0]["content"])
+    assert error == {"error": "Неверные аргументы", "fields": ["days"]}  # the argument is not repeated
+
+
+def test_figures_from_earlier_in_the_conversation_may_be_quoted_again(
+    client: TestClient,
+    network: Network,
+    demo: dict[str, UUID],  # noqa: F811
+    model: FakeModel,
+) -> None:
+    """Code review 28.10.2026, stage 5, p. 3."""
+    headers = login(client, "r01@a.ru")
+    kpis: dict[str, Any] = {}
+
+    def answer(r: ModelRequest) -> Reply:
+        kpis.update(_tool_result(r)["restaurants"][0])
+        return text_reply(f"Фудкост {kpis['food_cost_actual']}.")
+
+    model.replies += [tool_reply("get_kpis", {}), answer]
+    first = client.post("/api/chat", headers=headers, json={"question": "Какой фудкост?"}).json()
+    model.replies.append(
+        lambda r: text_reply(f"Это за {kpis['food_cost_period']}, фудкост {kpis['food_cost_actual']}.")
+    )
+    again = client.post(
+        "/api/chat", headers=headers, json={"question": "За какой период?", "thread_id": first["thread_id"]}
+    ).json()
+    assert again["source"] == CHECKED and kpis["food_cost_period"] in again["text"]
+
+
+def test_after_a_refusal_a_cut_off_answer_or_a_failed_check_the_conversation_stays_valid(
+    client: TestClient, network: Network, model: FakeModel
+) -> None:
+    """Code review 28.10.2026, stage 5, pp. 6–7: no empty or cut-off assistant message and no unchecked
+    answer is kept; what the person saw is."""
+    headers = login(client, "director1@a.ru")
+    model.replies.append(Reply([], "refusal"))
+    thread = client.post("/api/chat", headers=headers, json={"question": "?"}).json()["thread_id"]
+    cut = Reply([{"type": "tool_use", "id": "c1", "name": "get_kpis", "input": {}}], "max_tokens")
+    model.replies.append(cut)
+    client.post("/api/chat", headers=headers, json={"question": "Фудкост?", "thread_id": thread})
+    model.replies += [text_reply("Вы теряете 48 000 ₽."), text_reply("Нет, 51 000 ₽.")]
+    shown = client.post(
+        "/api/chat", headers=headers, json={"question": "Сколько?", "thread_id": thread}
+    ).json()
+    model.replies.append(text_reply("Хорошо."))
+    client.post("/api/chat", headers=headers, json={"question": "Спасибо", "thread_id": thread})
+
+    replayed = model.requests[-1].messages
+    roles = [m["role"] for m in replayed]
+    assert roles == ["user", "assistant"] * 3 + ["user"]  # question, answer — no gaps, no leftovers
+    texts = [m["content"][0]["text"] for m in replayed if m["role"] == "assistant"]
+    assert texts[0].startswith("На этот вопрос я не отвечу") and texts[1].startswith(
+        "Ответ получился слишком"
+    )
+    assert texts[2] == shown["text"] and "48" not in json.dumps(replayed, ensure_ascii=False)
+    assert all(b.get("type") != "tool_use" for m in replayed for b in m["content"])
+
+
+def test_two_questions_to_one_thread_at_once_are_kept_one_after_the_other(network: Network) -> None:
+    """Code review 28.10.2026, stage 5, p. 8: the thread row is locked while a question is appended."""
+    import threading
+
+    from app.ai import history
+    from app.tenancy.context import tool_session
+
+    with tool_session(network.a.users["director1@a.ru"], network.a.id) as (_, ctx):
+        pass
+    thread = history.start(ctx, title="?", finding_id=None)
+    barrier, errors = threading.Barrier(2), []
+
+    def ask(n: int) -> None:
+        barrier.wait()
+        try:
+            msgs = [
+                {"role": "user", "content": [{"type": "text", "text": f"q{n}"}]},
+                {"role": "assistant", "content": [{"type": "text", "text": f"a{n}"}]},
+            ]
+            history.append(ctx, thread, msgs, question=f"q{n}", answer=f"a{n}")
+        except Exception as exc:
+            errors.append(exc)
+
+    workers = [threading.Thread(target=ask, args=(n,)) for n in (1, 2)]
+    for w in workers:
+        w.start()
+    for w in workers:
+        w.join()
+    assert errors == [] and len(history.replay(ctx, thread)) == 4
+
+
+def test_a_tool_that_fails_is_an_answer_for_the_model(
+    client: TestClient, network: Network, model: FakeModel, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Code review 28.10.2026, stage 5, p. 9."""
+    from app.ai import tools
+
+    def broken(*_: Any) -> dict[str, Any]:
+        raise RuntimeError("db down")
+
+    monkeypatch.setitem(
+        tools.TOOLS, "get_tasks", tools.TOOLS["get_tasks"].__class__("get_tasks", "…", tools.NoArgs, broken)
+    )
+    model.replies += [tool_reply("get_tasks", {}), text_reply("Задачи сейчас не получить.")]
+    r = client.post("/api/chat", headers=login(client, "director1@a.ru"), json={"question": "Задачи?"})
+    assert r.status_code == 200 and r.json()["text"] == "Задачи сейчас не получить."
+    assert json.loads(model.requests[1].messages[-1]["content"][0]["content"]) == {
+        "error": "Не удалось получить данные"
+    }
+
+
+def test_no_connection_waits_in_a_transaction_while_the_model_thinks(
+    client: TestClient, network: Network, model: FakeModel, owner_engine: Any
+) -> None:
+    """Code review 28.10.2026, stage 5, p. 4: the request's transaction ends before the model is called."""
+    from sqlalchemy.pool import QueuePool
+
+    from app.core.db import get_engine
+
+    seen: list[int] = []
+
+    def probe(_: ModelRequest) -> Reply:
+        pool = get_engine().pool
+        assert isinstance(pool, QueuePool)
+        seen.append(
+            pool.checkedout()
+        )  # connections the application holds right now  # connections the application holds right now
+        return text_reply("Ответ")
+
+    headers = login(client, "director1@a.ru")
+    for path in ("/api/chat", "/api/chat/stream"):
+        model.replies.append(probe)
+        assert client.post(path, headers=headers, json={"question": "?"}).status_code == 200
+    assert seen == [0, 0]
+
+
+def test_the_budget_counts_once_per_question_and_a_started_question_is_finished(
+    client: TestClient, network: Network
+) -> None:
+    """Code review 28.10.2026, stage 5, p. 10: a question takes a few calls; it is not cut in the middle."""
+    fake = FakeModel([tool_reply("get_tasks", {}), text_reply("Задач нет."), text_reply("ещё")])
+    app.dependency_overrides[get_gateway] = lambda: Gateway(fake, per_user_day=1)
+    try:
+        headers = login(client, "director1@a.ru")
+        assert (
+            client.post("/api/chat", headers=headers, json={"question": "Задачи?"}).json()["text"]
+            == "Задач нет."
+        )
+        r = client.post("/api/chat", headers=headers, json={"question": "А ещё?"})
+        assert r.status_code == 429 and "полночь" in r.json()["detail"]
+    finally:
+        app.dependency_overrides.pop(get_gateway, None)

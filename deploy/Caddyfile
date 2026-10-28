@@ -1,6 +1,5 @@
 # HTTPS with an automatic Let's Encrypt certificate for $DOMAIN; the built frontend and the API behind it.
 {$DOMAIN} {
-	encode zstd gzip
 
 	header {
 		Strict-Transport-Security "max-age=31536000"
@@ -11,16 +10,27 @@
 	}
 
 	handle /api/* {
-		# The chat answers as a stream (SSE): pass every event at once, do not buffer.
+		# The chat answers as a stream (SSE): pass every event at once, do not buffer — and do not compress
+		# (an encoder holds small writes back), so `encode` is only on the static files.
 		reverse_proxy backend:8000 {
 			flush_interval -1
 		}
 	}
 
-	handle {
+	# Built chunks: their names change with every build, so they are cached for good; a missing one is 404,
+	# never index.html (an old tab then shows «Вышла новая версия», not a broken screen).
+	handle /assets/* {
+		encode zstd gzip
 		root * /srv
-		@assets path /assets/*
-		header @assets Cache-Control "public, max-age=31536000, immutable"
+		header Cache-Control "public, max-age=31536000, immutable"
+		file_server
+	}
+
+	# The page itself is revalidated every time, so after a deploy it names the new chunks.
+	handle {
+		encode zstd gzip
+		root * /srv
+		header Cache-Control "no-cache"
 		try_files {path} /index.html
 		file_server
 	}

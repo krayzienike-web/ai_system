@@ -35,8 +35,10 @@ class Line:
     at: datetime
 
 
-def _thread(session: Session, thread_id: UUID) -> ChatThread:
-    thread = session.get(ChatThread, thread_id)  # another person's thread: not visible, so not found
+def _thread(session: Session, thread_id: UUID, *, lock: bool = False) -> ChatThread:
+    # Another person's thread is not visible, so not found. `lock`: two questions to one thread at once
+    # (a double click, a second tab) append one after the other (code review 28.10.2026, stage 5, p. 8).
+    thread = session.get(ChatThread, thread_id, with_for_update=lock)
     if thread is None:
         raise NotFoundError("Разговор не найден")
     return thread
@@ -78,7 +80,7 @@ def append(
     shown to the person."""
     last_assistant = max((i for i, m in enumerate(messages) if m["role"] == "assistant"), default=None)
     with user_session(ctx) as s:
-        thread = _thread(s, thread_id)
+        thread = _thread(s, thread_id, lock=True)
         seq = s.execute(
             select(func.coalesce(func.max(ChatMessage.seq), 0)).where(ChatMessage.thread_id == thread_id)
         ).scalar_one()

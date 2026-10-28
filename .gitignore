@@ -9,3 +9,4 @@ dist/
 dist-demo/
 demo-data/
 eval-chat.json
+*.tsbuildinfo
