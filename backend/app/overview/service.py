@@ -447,6 +447,16 @@ class RestaurantWeek:
     results_answer: str
 
 
+def rank(items: list[FindingWork]) -> list[FindingWork]:
+    """Priced findings by «effect × confidence», the most valuable first (the week's and the digest's)."""
+    return _rank(items)
+
+
+def open_findings(session: Session, today: date, restaurant_id: UUID | None = None) -> list[FindingWork]:
+    """Open reviewed findings, as the screens list them (row-level security limits what a director gets)."""
+    return _open(session, today, restaurant_id)
+
+
 def _rank(items: list[FindingWork]) -> list[FindingWork]:
     priced = [fw for fw in items if fw.finding.effect_rub_month]
     return sorted(

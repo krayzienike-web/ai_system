@@ -35,9 +35,9 @@ def test_the_stand_lives_on_the_demos_today(settings_env: Env) -> None:
 
 
 def test_the_nightly_rebuild_is_scheduled_only_on_the_stand(settings_env: Env) -> None:
-    assert worker.cron_jobs() == []
+    assert [j.name for j in worker.cron_jobs()] == ["cron:weekly_digests"]
     settings_env(FAI_DEMO_RESET_NIGHTLY="true")
-    (job,) = worker.cron_jobs()
+    _, job = worker.cron_jobs()
     assert (job.hour, job.minute) == ({0}, {7})  # 03:07 Moscow
 
 

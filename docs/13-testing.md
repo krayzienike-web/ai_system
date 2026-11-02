@@ -291,6 +291,27 @@
 | TC-AN-48 | docs/09, «Адаптивный импорт»: профиль хранит соответствие колонок; правила шапки и итогов, форматы дат и чисел, поле `extra` для колонок вне модели — в бэклоге (документ поправлен 02.11.2026) | — | ⬜ бэклог |
 | TC-AN-49 | Черновик, повторяющий слово-множитель, которое есть в самих фактах («Больше половины списаний…» из флага кода), не отклоняется; слово не из фактов по-прежнему отмечается | `test_ai_assistant_pass.py::test_a_draft_may_quote_the_pre_checks_own_flag`; `test_ai_chat.py::test_small_figures_with_a_unit_are_checked_too` | ✅ |
 
+### Сводка (DG, этап 6, docs/08 часть 1)
+
+| ID | Требование | Тест | Статус |
+|----|------------|------|--------|
+| TC-DG-01 | Сводка — за прошлую полную неделю пн–вс (Q24) | `test_digests.py::test_week_before_is_the_last_full_monday_to_sunday` | ✅ |
+| TC-DG-02 | Индекс процесса 0–100 и статус по формуле docs/08 | `test_digests.py::test_index_and_status` | ✅ |
+| TC-DG-03 | Сводку собирает код: 8 процессов, 3–5 проблем, без дублей по объекту; тексты по правилам цитируют вход | `test_digests.py::test_a_digest_is_built_by_the_code_and_written_by_rules` | ✅ |
+| TC-DG-04 | Идемпотентность: одна сводка на неделю; следующая сравнивается с прошлой (KPI, тренд индексов) | `test_digests.py::test_building_again_replaces_and_the_next_week_compares` | ✅ |
+| TC-DG-05 | Тексты модели используются, если прошли; иначе — правила | `test_digests.py::test_a_model_writer_is_used_and_its_absence_falls_back` | ✅ |
+| TC-DG-06 | Изоляция: директор видит только сводку своего ресторана, без таблицы ресторанов; сводка сети и чужие — нет | `test_digests.py::test_a_director_sees_only_their_restaurants_digest` | ✅ |
+| TC-DG-07 | В сводке ресторана — только проверенные находки этого ресторана | `test_digests.py::test_a_restaurants_digest_holds_only_reviewed_findings_of_it` | ✅ |
+| TC-DG-08 | Тексты модели: каждое число — из входа сводки; неверное число — одна просьба исправить, затем правила (промпт `digest.v1`) | `test_digests.py::test_the_models_texts_quote_only_the_digests_numbers` | ✅ |
+| TC-DG-09 | Модель пишет тексты ровно для пунктов сводки, иначе — исправление, затем правила | `test_digests.py::test_the_model_must_write_exactly_the_digests_items` | ✅ |
+| TC-DG-10 | Модель недоступна или лимит исчерпан — сводка пишется по правилам | `test_digests.py::test_an_unreachable_model_leaves_the_rules` | ✅ |
+| TC-DG-11 | Модель для сводки ресторана не получает данных других ресторанов | `test_digests.py::test_a_directors_digest_tells_the_model_nothing_of_other_restaurants` | ✅ |
+| TC-DG-12 | Расписание: понедельник 08:31 МСК, о прошлой неделе (Q24) | `test_digests.py::test_the_digests_are_scheduled_on_monday_morning_in_moscow` | ✅ |
+| TC-DG-13 | Еженедельный прогон: каждая сеть, каждый ресторан и сеть; повтор не дублирует; вызовы модели фоновой работы — в журнале без человека, людям не видны (миграция 0023) | `test_digests.py::test_the_weekly_run_builds_every_restaurant_and_the_network` | ✅ |
+| TC-DG-14 | Без модели еженедельный прогон пишет по правилам | `test_digests.py::test_without_the_model_the_weekly_run_writes_by_rules` | ✅ |
+| TC-DG-15 | API: последняя сводка и архив недель; «Пересобрать» — директор только свой ресторан, сеть — только УК; чужое — 404 | `test_digests.py::test_the_digest_screens_read_what_was_built`; обход маршрутов `test_isolation_routes.py` | ✅ |
+| TC-DG-16 | «Пересобрать» при включенной модели — тексты модели | `test_digests.py::test_the_rebuild_button_writes_by_the_model_when_it_is_on` | ✅ |
+
 ### Интерфейс (UI)
 
 | ID | Требование (docs/10) | Тест | Статус |

@@ -232,6 +232,64 @@ export interface DecisionOut {
   status: string;
 }
 
+export interface DigestItemOut {
+  finding_id: string;
+  title: string;
+  process: string;
+  effect_per_month: string | null;
+  text: string;
+  causes: string[];
+  actions: string[];
+  taken: boolean;
+}
+
+export interface DigestKpisOut {
+  food_cost_actual: string | null;
+  food_cost_theory: string | null;
+  write_offs_share_of_revenue: string | null;
+  food_cost_period: string | null;
+  revenue: string | null;
+}
+
+export interface DigestOut {
+  id: string;
+  scope: string;
+  restaurant_id: string | null;
+  restaurant: string | null;
+  week_start: string;
+  week_end: string;
+  week: string;
+  source: string;
+  built_at: string;
+  headline: string;
+  kpis: DigestKpisOut | null;
+  kpis_previous_digest: DigestKpisOut | null;
+  network_average: DigestKpisOut | null;
+  processes: DigestProcessOut[];
+  problems: DigestItemOut[];
+  opportunities: DigestItemOut[];
+  risks: DigestItemOut[];
+  on_table: OnTableOut;
+  improved: ImprovedOut;
+  last_count: string | null;
+  restaurants_count: number | null;
+}
+
+export interface DigestProcessOut {
+  process: string;
+  title: string;
+  status: string;
+  index: number;
+  change: number | null;
+  losses_per_month: string | null;
+  open_problems: number;
+}
+
+export interface DigestWeekOut {
+  week_start: string;
+  week_end: string;
+}
+
 export interface DraftOut {
   finding_id: string;
   finding_title: string;
@@ -443,6 +501,13 @@ export interface IdeaOut {
   evidence_text: string[];
 }
 
+export interface ImprovedOut {
+  tasks_done: number;
+  tasks: string[];
+  confirmed_effect_per_month: string | null;
+  processes_better: string[];
+}
+
 export interface KindTotal {
   kind: string;
   count: number;
@@ -574,6 +639,12 @@ export interface NormsOut {
   product_categories: string[];
 }
 
+export interface OnTableOut {
+  losses: string | null;
+  potential: string | null;
+  total: string | null;
+}
+
 export interface OutcomeOut {
   verdict: "pending" | "confirmed" | "not_confirmed";
   effect_rub_month: string | null;
@@ -665,6 +736,10 @@ export interface ReasonIO {
   title: string;
   kind: "loss" | "planned" | "shortage";
   synonyms?: string[];
+}
+
+export interface RebuildIn {
+  restaurant_id?: string | null;
 }
 
 export interface RefreshRequest {

@@ -7,6 +7,7 @@ from sqlalchemy import create_engine
 import app.ai.models
 import app.analytics.runs
 import app.catalog.models
+import app.digests.models
 import app.experiments.models
 import app.imports.models
 import app.insights.models

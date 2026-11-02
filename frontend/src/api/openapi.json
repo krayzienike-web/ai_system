@@ -1503,6 +1503,387 @@
     "title": "DecisionOut",
     "type": "object"
    },
+   "DigestItemOut": {
+    "properties": {
+     "actions": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Actions",
+      "type": "array"
+     },
+     "causes": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Causes",
+      "type": "array"
+     },
+     "effect_per_month": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Effect Per Month"
+     },
+     "finding_id": {
+      "format": "uuid",
+      "title": "Finding Id",
+      "type": "string"
+     },
+     "process": {
+      "title": "Process",
+      "type": "string"
+     },
+     "taken": {
+      "title": "Taken",
+      "type": "boolean"
+     },
+     "text": {
+      "title": "Text",
+      "type": "string"
+     },
+     "title": {
+      "title": "Title",
+      "type": "string"
+     }
+    },
+    "required": [
+     "finding_id",
+     "title",
+     "process",
+     "effect_per_month",
+     "text",
+     "causes",
+     "actions",
+     "taken"
+    ],
+    "title": "DigestItemOut",
+    "type": "object"
+   },
+   "DigestKpisOut": {
+    "properties": {
+     "food_cost_actual": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Food Cost Actual"
+     },
+     "food_cost_period": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Food Cost Period"
+     },
+     "food_cost_theory": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Food Cost Theory"
+     },
+     "revenue": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Revenue"
+     },
+     "write_offs_share_of_revenue": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Write Offs Share Of Revenue"
+     }
+    },
+    "required": [
+     "food_cost_actual",
+     "food_cost_theory",
+     "write_offs_share_of_revenue",
+     "food_cost_period",
+     "revenue"
+    ],
+    "title": "DigestKpisOut",
+    "type": "object"
+   },
+   "DigestOut": {
+    "properties": {
+     "built_at": {
+      "format": "date-time",
+      "title": "Built At",
+      "type": "string"
+     },
+     "headline": {
+      "title": "Headline",
+      "type": "string"
+     },
+     "id": {
+      "format": "uuid",
+      "title": "Id",
+      "type": "string"
+     },
+     "improved": {
+      "$ref": "#/components/schemas/ImprovedOut"
+     },
+     "kpis": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/DigestKpisOut"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "kpis_previous_digest": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/DigestKpisOut"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "last_count": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Last Count"
+     },
+     "network_average": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/DigestKpisOut"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "on_table": {
+      "$ref": "#/components/schemas/OnTableOut"
+     },
+     "opportunities": {
+      "items": {
+       "$ref": "#/components/schemas/DigestItemOut"
+      },
+      "title": "Opportunities",
+      "type": "array"
+     },
+     "problems": {
+      "items": {
+       "$ref": "#/components/schemas/DigestItemOut"
+      },
+      "title": "Problems",
+      "type": "array"
+     },
+     "processes": {
+      "items": {
+       "$ref": "#/components/schemas/DigestProcessOut"
+      },
+      "title": "Processes",
+      "type": "array"
+     },
+     "restaurant": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Restaurant"
+     },
+     "restaurant_id": {
+      "anyOf": [
+       {
+        "format": "uuid",
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Restaurant Id"
+     },
+     "restaurants_count": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Restaurants Count"
+     },
+     "risks": {
+      "items": {
+       "$ref": "#/components/schemas/DigestItemOut"
+      },
+      "title": "Risks",
+      "type": "array"
+     },
+     "scope": {
+      "title": "Scope",
+      "type": "string"
+     },
+     "source": {
+      "title": "Source",
+      "type": "string"
+     },
+     "week": {
+      "title": "Week",
+      "type": "string"
+     },
+     "week_end": {
+      "format": "date",
+      "title": "Week End",
+      "type": "string"
+     },
+     "week_start": {
+      "format": "date",
+      "title": "Week Start",
+      "type": "string"
+     }
+    },
+    "required": [
+     "id",
+     "scope",
+     "restaurant_id",
+     "restaurant",
+     "week_start",
+     "week_end",
+     "week",
+     "source",
+     "built_at",
+     "headline",
+     "kpis",
+     "kpis_previous_digest",
+     "network_average",
+     "processes",
+     "problems",
+     "opportunities",
+     "risks",
+     "on_table",
+     "improved",
+     "last_count",
+     "restaurants_count"
+    ],
+    "title": "DigestOut",
+    "type": "object"
+   },
+   "DigestProcessOut": {
+    "properties": {
+     "change": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Change"
+     },
+     "index": {
+      "title": "Index",
+      "type": "integer"
+     },
+     "losses_per_month": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Losses Per Month"
+     },
+     "open_problems": {
+      "title": "Open Problems",
+      "type": "integer"
+     },
+     "process": {
+      "title": "Process",
+      "type": "string"
+     },
+     "status": {
+      "title": "Status",
+      "type": "string"
+     },
+     "title": {
+      "title": "Title",
+      "type": "string"
+     }
+    },
+    "required": [
+     "process",
+     "title",
+     "status",
+     "index",
+     "change",
+     "losses_per_month",
+     "open_problems"
+    ],
+    "title": "DigestProcessOut",
+    "type": "object"
+   },
+   "DigestWeekOut": {
+    "properties": {
+     "week_end": {
+      "format": "date",
+      "title": "Week End",
+      "type": "string"
+     },
+     "week_start": {
+      "format": "date",
+      "title": "Week Start",
+      "type": "string"
+     }
+    },
+    "required": [
+     "week_start",
+     "week_end"
+    ],
+    "title": "DigestWeekOut",
+    "type": "object"
+   },
    "DraftOut": {
     "properties": {
      "actions": {
@@ -2853,6 +3234,47 @@
     "title": "IdeaOut",
     "type": "object"
    },
+   "ImprovedOut": {
+    "properties": {
+     "confirmed_effect_per_month": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Confirmed Effect Per Month"
+     },
+     "processes_better": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Processes Better",
+      "type": "array"
+     },
+     "tasks": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Tasks",
+      "type": "array"
+     },
+     "tasks_done": {
+      "title": "Tasks Done",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "tasks_done",
+     "tasks",
+     "confirmed_effect_per_month",
+     "processes_better"
+    ],
+    "title": "ImprovedOut",
+    "type": "object"
+   },
    "KindTotal": {
     "properties": {
      "count": {
@@ -3604,6 +4026,50 @@
     "title": "NormsOut",
     "type": "object"
    },
+   "OnTableOut": {
+    "properties": {
+     "losses": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Losses"
+     },
+     "potential": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Potential"
+     },
+     "total": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Total"
+     }
+    },
+    "required": [
+     "losses",
+     "potential",
+     "total"
+    ],
+    "title": "OnTableOut",
+    "type": "object"
+   },
    "OutcomeOut": {
     "properties": {
      "effect_rub_month": {
@@ -4089,6 +4555,24 @@
      "kind"
     ],
     "title": "ReasonIO",
+    "type": "object"
+   },
+   "RebuildIn": {
+    "properties": {
+     "restaurant_id": {
+      "anyOf": [
+       {
+        "format": "uuid",
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Restaurant Id"
+     }
+    },
+    "title": "RebuildIn",
     "type": "object"
    },
    "RefreshRequest": {
@@ -6575,6 +7059,186 @@
     "summary": "Rollout Check",
     "tags": [
      "checks"
+    ]
+   }
+  },
+  "/api/digests/latest": {
+   "get": {
+    "description": "The latest digest (or of `week_start`) of the restaurant, or of the network without one (HQ).",
+    "operationId": "latest_api_digests_latest_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "restaurant_id",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "format": "uuid",
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Restaurant Id"
+      }
+     },
+     {
+      "in": "query",
+      "name": "week_start",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "format": "date",
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Week Start"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/DigestOut"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Latest",
+    "tags": [
+     "digests"
+    ]
+   }
+  },
+  "/api/digests/rebuild": {
+   "post": {
+    "description": "«Пересобрать»: the digest of the last full week again, from the findings as they are now; the texts by\nthe model when it is on (within the person's daily budget), by rules otherwise.",
+    "operationId": "rebuild_digest_api_digests_rebuild_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/RebuildIn"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/DigestOut"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Rebuild Digest",
+    "tags": [
+     "assistant"
+    ]
+   }
+  },
+  "/api/digests/weeks": {
+   "get": {
+    "description": "The archive: weeks with a digest, the latest first.",
+    "operationId": "weeks_api_digests_weeks_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "restaurant_id",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "format": "uuid",
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Restaurant Id"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "items": {
+          "$ref": "#/components/schemas/DigestWeekOut"
+         },
+         "title": "Response Weeks Api Digests Weeks Get",
+         "type": "array"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Weeks",
+    "tags": [
+     "digests"
     ]
    }
   },

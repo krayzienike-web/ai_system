@@ -11,6 +11,7 @@ from app.chat.api import router as chat_router
 from app.core.config import get_settings
 from app.core.deps import SessionDep
 from app.core.errors import RuleError
+from app.digests.api import router as digests_router
 from app.experiments.api import router as checks_router
 from app.imports.api import router as imports_router
 from app.insights.api import router as findings_router
@@ -57,6 +58,7 @@ def create_app() -> FastAPI:
     api.include_router(norms_router)
     api.include_router(analytics_router)
     api.include_router(overview_router)
+    api.include_router(digests_router)
     api.include_router(chat_router)
     api.include_router(assistant_router)
     app.include_router(api)

@@ -27,7 +27,7 @@ from app.ai.models import AiRun
 from app.ai.prompt import Prompt
 from app.core.config import get_settings
 from app.core.errors import RuleError
-from app.tenancy.context import AccessContext, user_session
+from app.tenancy.context import SYSTEM_USER, AccessContext, user_session
 
 log = logging.getLogger(__name__)
 
@@ -254,8 +254,9 @@ class Gateway:
             ) from exc
 
     def check_budget(self, ctx: AccessContext) -> None:
-        """The daily limit counts calls to the model (a question takes one to a few)."""
-        if used_today(ctx) >= self.per_user_day:
+        """The daily limit counts a person's calls to the model (a question takes one to a few). The network's
+        background work (the weekly digests: one per restaurant a week) has no person and no daily limit."""
+        if ctx.user_id != SYSTEM_USER and used_today(ctx) >= self.per_user_day:
             raise BudgetError("Лимит обращений к ассистенту на сегодня исчерпан, он обновится в полночь")
 
     def _log(
@@ -275,7 +276,7 @@ class Gateway:
             s.add(
                 AiRun(
                     tenant_id=ctx.tenant_id,
-                    user_id=ctx.user_id,
+                    user_id=None if ctx.user_id == SYSTEM_USER else ctx.user_id,  # migration 0023
                     task=task,
                     prompt=prompt.name,
                     prompt_version=prompt.version,

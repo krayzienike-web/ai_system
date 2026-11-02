@@ -9,14 +9,20 @@ from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.ai import discover, hypotheses, mapping, precheck, suggestions
+from app.ai import digest_writer, discover, hypotheses, mapping, precheck, suggestions
 from app.ai.gateway import Gateway, ModelUnavailableError, get_gateway
 from app.ai.suggestions import Proposal
 from app.core.deps import SessionDep, require
+from app.core.errors import NotFoundError
 from app.core.period import TodayDep
+from app.digests import api as digests_api
+from app.digests import builder as digest_builder
+from app.digests import service as digest_service
+from app.digests.models import Digest
 from app.imports.templates import TEMPLATES
 from app.insights.visible import visible_finding
 from app.tenancy.context import AccessContext, user_session
+from app.tenancy.models import Restaurant
 from app.tenancy.permissions import Permission
 
 router = APIRouter(tags=["assistant"])
@@ -272,3 +278,29 @@ def confirm_marking(suggestion_id: UUID, ctx: CanRead, today: TodayDep) -> Profi
 def _release(session: Session) -> None:
     """The model may think for a minute: the request's transaction ends first (code review 28.10, p. 4)."""
     session.rollback()
+
+
+class RebuildIn(BaseModel):
+    restaurant_id: UUID | None = None  # none: the director's restaurant, or the network for the HQ
+
+
+@router.post("/digests/rebuild", response_model=digests_api.DigestOut)
+def rebuild_digest(
+    body: RebuildIn, ctx: CanRead, gateway: GatewayDep, today: TodayDep
+) -> digests_api.DigestOut:
+    """«Пересобрать»: the digest of the last full week again, from the findings as they are now; the texts by
+    the model when it is on (within the person's daily budget), by rules otherwise."""
+    restaurant_id = digests_api.scope_of(ctx, body.restaurant_id)
+    if not ctx.role.is_hq and restaurant_id != ctx.restaurant_id:
+        raise NotFoundError("Сводки пока нет")  # another restaurant: the same answer as for a missing one
+    if restaurant_id is not None:
+        with user_session(ctx) as s:
+            if s.get(Restaurant, restaurant_id) is None:
+                raise NotFoundError("Ресторан не найден")
+    write = digest_writer.writer(gateway, ctx) if gateway is not None else None
+    week = digest_builder.Week.before(today)
+    digest_id = digest_service.publish(ctx, restaurant_id=restaurant_id, week=week, today=today, write=write)
+    with user_session(ctx) as s:
+        digest = s.get(Digest, digest_id)
+        assert digest is not None
+        return digests_api.digest_out(digest)

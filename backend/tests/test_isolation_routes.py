@@ -56,6 +56,7 @@ BODY_REFS = {
     "POST /api/checks": {"finding_id": "{finding_id}", "action": "x", "control_ids": [], "weeks": 4},
     "POST /api/chat": {"question": "Почему так получилось?", "finding_id": "{finding_id}"},
     "POST /api/chat/stream": {"question": "Почему так получилось?", "finding_id": "{finding_id}"},
+    "POST /api/digests/rebuild": {"restaurant_id": "{restaurant_id}"},
 }
 # Bodies that pass validation, so that a refusal is about access and not about the form (403 or 404 only).
 BODIES: dict[str, dict[str, Any]] = {
@@ -68,7 +69,10 @@ BODIES: dict[str, dict[str, Any]] = {
         "matches": [{"kind": "product", "key": "x", "target_id": "00000000-0000-0000-0000-000000000000"}]
     },
 }
-QUERIES = {"GET /api/checks/draft": "finding_id={finding_id}"}
+QUERIES = {
+    "GET /api/checks/draft": "finding_id={finding_id}",
+    "GET /api/digests/latest": "restaurant_id={restaurant_id}",
+}
 LISTS = {"kind": ["product", "menu_item", "supplier"]}  # path parameters that name a list, not an object
 
 

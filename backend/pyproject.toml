@@ -88,8 +88,8 @@ include_external_packages = true
 name = "Only the AI gateway talks to the model"
 type = "forbidden"
 source_modules = [
-    "app.analytics", "app.auth", "app.catalog", "app.chat", "app.core", "app.experiments", "app.imports",
-    "app.insights", "app.norms", "app.operations", "app.overview", "app.reports", "app.tasks", "app.tenancy",
+    "app.analytics", "app.auth", "app.catalog", "app.chat", "app.core", "app.digests", "app.experiments",
+    "app.imports", "app.insights", "app.norms", "app.operations", "app.overview", "app.reports", "app.tasks", "app.tenancy",
 ]
 forbidden_modules = ["anthropic"]
 allow_indirect_imports = true  # through app.ai is the point; directly — never
@@ -98,8 +98,8 @@ allow_indirect_imports = true  # through app.ai is the point; directly — never
 name = "Numbers do not depend on the assistant: domain modules import neither ai nor the chat"
 type = "forbidden"
 source_modules = [
-    "app.analytics", "app.auth", "app.catalog", "app.core", "app.experiments", "app.imports", "app.insights",
-    "app.norms", "app.operations", "app.overview", "app.reports", "app.tasks", "app.tenancy",
+    "app.analytics", "app.auth", "app.catalog", "app.core", "app.digests", "app.experiments", "app.imports",
+    "app.insights", "app.norms", "app.operations", "app.overview", "app.reports", "app.tasks", "app.tenancy",
 ]
 forbidden_modules = ["app.ai", "app.chat"]
 
@@ -107,8 +107,8 @@ forbidden_modules = ["app.ai", "app.chat"]
 name = "The demo is outside the product: only the CLI loads it"
 type = "forbidden"
 source_modules = [
-    "app.ai", "app.analytics", "app.auth", "app.catalog", "app.chat", "app.core", "app.experiments", "app.imports",
-    "app.insights", "app.main", "app.norms", "app.operations", "app.overview", "app.reports", "app.tasks",
+    "app.ai", "app.analytics", "app.auth", "app.catalog", "app.chat", "app.core", "app.digests", "app.experiments",
+    "app.imports", "app.insights", "app.main", "app.norms", "app.operations", "app.overview", "app.reports", "app.tasks",
     "app.tenancy", "app.worker",
 ]
 forbidden_modules = ["app.demo"]
@@ -118,6 +118,6 @@ name = "The kernel knows no domain: core and tenancy import nothing above them"
 type = "forbidden"
 source_modules = ["app.core", "app.tenancy"]
 forbidden_modules = [
-    "app.ai", "app.analytics", "app.auth", "app.catalog", "app.chat", "app.experiments", "app.imports", "app.insights",
-    "app.norms", "app.operations", "app.overview", "app.reports", "app.tasks",
+    "app.ai", "app.analytics", "app.auth", "app.catalog", "app.chat", "app.digests", "app.experiments", "app.imports",
+    "app.insights", "app.norms", "app.operations", "app.overview", "app.reports", "app.tasks",
 ]
