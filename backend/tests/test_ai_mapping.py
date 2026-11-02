@@ -84,11 +84,7 @@ def test_marked_once_confirmed_once_then_files_load_by_the_profile(
     assert _send(client, admin, "/api/imports", NEXT_MONTH, "suppliers").json()["status"] == "validated"
     assert len(model.requests) == 2
     # Confirmed once: a second confirmation of the same proposal is refused.
-    assert client.post(f"/api/imports/mapping/{marked['id']}/confirm", headers=admin).status_code in (
-        404,
-        409,
-        422,
-    )
+    assert client.post(f"/api/imports/mapping/{marked['id']}/confirm", headers=admin).status_code == 409
 
 
 def test_a_marking_that_breaks_most_rows_is_no_proposal(

@@ -1,7 +1,7 @@
 // The chat's stream (Server-Sent Events, docs/08): statuses while the assistant looks at the data, then the answer.
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ApiError, parseEvents, stream } from "./client";
+import { api, ApiError, parseEvents, stream } from "./client";
 
 function sse(chunks: (string | Uint8Array)[], status = 200): Response {
   const body = new ReadableStream<Uint8Array>({
@@ -113,5 +113,21 @@ describe("the chat stream", () => {
     }, controller.signal);
     await expect(asked).rejects.toMatchObject({ name: "AbortError" });
     expect(statuses).toEqual(["Смотрю находки"]);
+  });
+});
+
+describe("an error of the API", () => {
+  it("carries the server's code, so the screen acts on it and never reads the words (TC-AN-30)", async () => {
+    const answer = (body: unknown, status: number) => new Response(JSON.stringify(body), { status });
+    vi.stubGlobal("fetch", vi.fn(async () => answer({ detail: "Не узнали файл", code: "no_header" }, 422)));
+    await expect(api("/imports", { method: "POST", body: new FormData() })).rejects.toMatchObject({
+      status: 422,
+      message: "Не узнали файл",
+      code: "no_header",
+    });
+    vi.stubGlobal("fetch", vi.fn(async () => answer({ detail: "Нет доступа" }, 403)));
+    const error = await api("/imports").catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ApiError);
+    expect((error as ApiError).code).toBeUndefined();
   });
 });

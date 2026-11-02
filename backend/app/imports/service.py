@@ -152,6 +152,17 @@ def save_profile(
     scope = None if ctx.role.is_hq else restaurant_id
     known = profile_aliases(session, scope).get(t.name, {})
     clash = [h for c, h in normalized.items() if known.get(h, c) != c]
+    if scope is None:
+        # A network profile serves every restaurant: it may not read a header otherwise than a restaurant's
+        # own profile does (stage 5.5 test pass: it would change how that restaurant's files load).
+        own = session.execute(
+            select(SourceProfile.mapping).where(
+                SourceProfile.template == t.name, SourceProfile.restaurant_id.is_not(None)
+            )
+        ).scalars()
+        for mapping_of in own:
+            reads = {header: column for column, header in mapping_of.items()}
+            clash += [h for c, h in normalized.items() if reads.get(h, c) != c and h not in clash]
     if clash:
         raise ConflictError(f"Заголовки уже читаются по-другому в профиле: {', '.join(clash)}")
     profile = SourceProfile(
