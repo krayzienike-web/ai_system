@@ -36,6 +36,8 @@ class ClaudeModel:
         }
         if request.tools:
             params["tools"] = list(request.tools)
+        if request.output_schema is not None:
+            params["output_config"]["format"] = {"type": "json_schema", "schema": request.output_schema}
         if request.model != "claude-haiku-5-5":  # no server-side fallback for Haiku
             params["betas"] = [FALLBACK_BETA]
             params["fallbacks"] = "default"

@@ -20,6 +20,7 @@ import { Button, Card, cx, EASE, PageTitle, Pill, QuestionBlock, Reveal, type To
 import { plural } from "../lib/format";
 import { useViewer } from "../lib/useViewer";
 import { RecalcNote } from "./analytics/RecalcNote";
+import { MarkWithAi } from "./MarkWithAi";
 
 const NETWORK = "network";
 const KINDS = [
@@ -144,7 +145,17 @@ function Matching({ batch, onMatched }: { batch: ImportBatch; onMatched: (b: Imp
   );
 }
 
-function Report({ batch, onAgain }: { batch: ImportBatch; onAgain: () => void }) {
+const NO_HEADER = /строку заголовков|Не узнали файл/;
+
+function Report({
+  batch,
+  onAgain,
+  marking,
+}: {
+  batch: ImportBatch;
+  onAgain: () => void;
+  marking?: { file: File; restaurantId: string | null; template: string | null; templates: { name: string; title: string }[]; onConfirmed: () => void };
+}) {
   const names = useNames();
   const publish = useBatchAction("publish");
   const rollback = useBatchAction("rollback");
@@ -280,6 +291,7 @@ function Report({ batch, onAgain }: { batch: ImportBatch; onAgain: () => void })
           </motion.div>
         )}
         {current.status === "rolled_back" && <p className="text-sm text-ink-2">Загрузка отменена: строки этого файла удалены.</p>}
+        {marking && current.status === "failed" && current.errors.some((e) => NO_HEADER.test(e.message)) && <MarkWithAi {...marking} />}
         <Button variant="ghost" onClick={onAgain}>
           {current.status === "failed" ? "Загрузить исправленный файл" : "Загрузить другой файл"}
         </Button>
@@ -296,6 +308,7 @@ function Upload() {
   const [target, setTarget] = useState<string>("");
   const [template, setTemplate] = useState("");
   const [dragging, setDragging] = useState(false);
+  const [lastFile, setLastFile] = useState<File | null>(null);
   if (!viewer) return null;
 
   const restaurants = names.restaurants;
@@ -304,6 +317,7 @@ function Upload() {
   const kinds = names.templates.filter((t) => t.scope === (isNetwork ? "network" : "restaurant"));
   const send = (file: File | undefined) => {
     if (!file) return;
+    setLastFile(file);
     upload.mutate({ file, restaurantId: isNetwork ? null : where, template: template || null });
   };
   const onDrop = (e: DragEvent) => {
@@ -324,7 +338,23 @@ function Upload() {
           className="p-6"
         >
           {upload.data ? (
-            <Report key={upload.data.id} batch={upload.data} onAgain={() => upload.reset()} />
+            <Report
+              key={upload.data.id}
+              batch={upload.data}
+              onAgain={() => upload.reset()}
+              marking={
+                lastFile
+                  ? {
+                      file: lastFile,
+                      restaurantId: isNetwork ? null : where,
+                      template: template || null,
+                      templates: kinds,
+                      // The profile is saved: the same file now loads by it.
+                      onConfirmed: () => send(lastFile),
+                    }
+                  : undefined
+              }
+            />
           ) : (
             <div className="space-y-4">
               <div className="flex flex-wrap gap-3">

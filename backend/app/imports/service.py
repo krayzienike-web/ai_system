@@ -15,8 +15,8 @@ from app.catalog.recipes import Line, find_cycle, lines_on
 from app.core.errors import ConflictError, ForbiddenError, InvalidError, NotFoundError
 from app.core.period import last_full_week_end
 from app.imports.matching import normalize, suggest
-from app.imports.models import BatchStatus, ImportBatch
-from app.imports.reader import detect_template, read_table
+from app.imports.models import BatchStatus, ImportBatch, SourceProfile
+from app.imports.reader import detect_template, norm_header, read_table
 from app.imports.templates import TEMPLATES, Scope, Template
 from app.imports.validate import Lookups, Ref, Result, validate
 from app.norms.service import load_norms
@@ -110,6 +110,46 @@ def _unmatched_json(result: Result, lk: Lookups) -> list[dict[str, Any]]:
     ]
 
 
+def profile_aliases(session: Session) -> dict[str, dict[str, str]]:
+    """The network's confirmed source profiles as header aliases: template → {normalized header: column}."""
+    out: dict[str, dict[str, str]] = {}
+    for template, mapping in session.execute(select(SourceProfile.template, SourceProfile.mapping)).all():
+        out.setdefault(template, {}).update({header: column for column, header in mapping.items()})
+    return out
+
+
+def save_profile(
+    session: Session, ctx: AccessContext, *, template: str, title: str, mapping: dict[str, str]
+) -> SourceProfile:
+    """A mapping confirmed by a person (docs/09): later files with these headers load by it, through the whole
+    validation. Who may upload files may confirm one."""
+    if not ctx.can(Permission.DATA_UPLOAD):
+        raise ForbiddenError("Подтвердить разметку может тот, кто загружает данные")
+    t = _template(template)
+    unknown = [c for c in mapping if c not in {col.name for col in t.columns}]
+    if unknown:
+        raise InvalidError(f"В шаблоне «{t.title}» нет колонок: {', '.join(unknown)}")
+    profile = SourceProfile(
+        tenant_id=ctx.tenant_id,
+        template=template,
+        title=title[:200],
+        mapping={c: norm_header(h) for c, h in mapping.items()},
+        confirmed_by=ctx.user_id,
+    )
+    session.add(profile)
+    session.flush()
+    audit(
+        session,
+        tenant_id=ctx.tenant_id,
+        user_id=ctx.user_id,
+        action="import.profile",
+        entity="source_profile",
+        entity_id=profile.id,
+        payload={"template": template, "mapping": profile.mapping},
+    )
+    return profile
+
+
 def _template(name: str) -> Template:
     template = TEMPLATES.get(name)
     if template is None:
@@ -117,7 +157,7 @@ def _template(name: str) -> Template:
     return template
 
 
-def _check_access(
+def check_access(
     session: Session, ctx: AccessContext, template: Template, restaurant_id: UUID | None
 ) -> None:
     if template.scope is Scope.NETWORK:
@@ -143,7 +183,7 @@ def _run(
 ) -> tuple[Result | None, list[dict[str, Any]], dict[str, str], Lookups]:
     lk = load_lookups(session, restaurant_id)
     try:
-        table = read_table(raw, filename, template)
+        table = read_table(raw, filename, template, aliases=profile_aliases(session).get(template.name))
     except InvalidError as e:
         return None, [{"row": None, "column": None, "message": str(e)}], {}, lk
     column_map = {template.column(k).title: str(v + 1) for k, v in table.column_map.items()}
@@ -191,10 +231,12 @@ def upload(
     if template_name is None:
         # The file says what it is: restaurant facts when a restaurant is chosen, reference data otherwise.
         scope = Scope.RESTAURANT if restaurant_id is not None else Scope.NETWORK
-        template = detect_template(raw, filename, [t for t in TEMPLATES.values() if t.scope is scope])
+        template = detect_template(
+            raw, filename, [t for t in TEMPLATES.values() if t.scope is scope], profile_aliases(session)
+        )
     else:
         template = _template(template_name)
-    _check_access(session, ctx, template, restaurant_id)
+    check_access(session, ctx, template, restaurant_id)
     sha = hashlib.sha256(raw).hexdigest()
     duplicate = session.execute(
         select(ImportBatch.id).where(
@@ -334,7 +376,7 @@ def publish(session: Session, ctx: AccessContext, batch_id: UUID, *, today: date
     if batch is None:
         raise NotFoundError("Загрузка не найдена")
     template = _template(batch.template)
-    _check_access(session, ctx, template, batch.restaurant_id)
+    check_access(session, ctx, template, batch.restaurant_id)
     if batch.status != BatchStatus.VALIDATED:
         raise InvalidError("Опубликовать можно только проверенный файл без ошибок")
     _write(session, batch, template, today)
@@ -360,7 +402,7 @@ def reprocess(session: Session, ctx: AccessContext, batch_id: UUID, *, today: da
     if batch is None:
         raise NotFoundError("Загрузка не найдена")
     template = _template(batch.template)
-    _check_access(session, ctx, template, batch.restaurant_id)
+    check_access(session, ctx, template, batch.restaurant_id)
     if batch.status != BatchStatus.PUBLISHED:
         raise InvalidError("Пересчитать можно только загруженный файл")
     if template.scope is Scope.NETWORK:
@@ -471,7 +513,7 @@ def rollback(session: Session, ctx: AccessContext, batch_id: UUID, *, today: dat
     if batch is None:
         raise NotFoundError("Загрузка не найдена")
     template = _template(batch.template)
-    _check_access(session, ctx, template, batch.restaurant_id)
+    check_access(session, ctx, template, batch.restaurant_id)
     if batch.status != BatchStatus.PUBLISHED:
         raise InvalidError("Откатить можно только опубликованный файл")
     if template.scope is Scope.NETWORK:
@@ -536,7 +578,7 @@ def match(
     if batch is None:
         raise NotFoundError("Загрузка не найдена")
     template = _template(batch.template)
-    _check_access(session, ctx, template, batch.restaurant_id)
+    check_access(session, ctx, template, batch.restaurant_id)
     if batch.status != BatchStatus.NEEDS_MATCHING:
         raise InvalidError("В этом файле нечего сопоставлять")
     known = {(u["kind"], u["key"]): u for u in batch.unmatched}

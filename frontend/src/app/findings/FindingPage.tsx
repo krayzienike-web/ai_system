@@ -15,6 +15,7 @@ import { useViewer } from "../../lib/useViewer";
 import { useUi } from "../../state/ui";
 import { QuickSteps, TaskTrace } from "../tasks/trace";
 import { FindingConfidence, MoneyWords, ProcessChip, STAGE_INDEX, TakeToWorkDialog } from "./parts";
+import { AiHypotheses } from "./Hypotheses";
 import { ReviewTrace } from "./ReviewTrace";
 
 export function FindingPage() {
@@ -129,7 +130,13 @@ function FindingView({ f, isHq }: { f: FindingDetail; isHq: boolean }) {
           <QuestionBlock
             question="Почему так и что сделать?"
             answer="Вероятные причины"
-            source={<VerifiedNote>типовые причины для такой находки — проверьте на месте; объяснение ИИ по вашим данным появится с помощником аналитика</VerifiedNote>}
+            source={
+              <VerifiedNote>
+                {context.data?.assistant
+                  ? "типовые причины для такой находки; ниже — версии ИИ по вашим данным"
+                  : "типовые причины для такой находки — проверьте на месте"}
+              </VerifiedNote>
+            }
             className="h-full"
           >
             {!!view?.causes?.length && (
@@ -142,6 +149,7 @@ function FindingView({ f, isHq }: { f: FindingDetail; isHq: boolean }) {
                 ))}
               </ul>
             )}
+            {context.data?.assistant && <AiHypotheses findingId={f.id} />}
             <div className="mt-5">
               <QuickSteps f={f} tasks={f.tasks} />
             </div>

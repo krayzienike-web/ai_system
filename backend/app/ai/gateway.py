@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any, Literal, Protocol
 
+from pydantic import BaseModel, ValidationError
 from sqlalchemy import func, select
 
 from app.ai.models import AiRun
@@ -30,7 +31,7 @@ from app.tenancy.context import AccessContext, user_session
 
 log = logging.getLogger(__name__)
 
-Task = Literal["chat", "explain", "digest", "match"]
+Task = Literal["chat", "explain", "precheck", "discover", "mapping", "digest", "match"]
 Message = dict[str, Any]
 Tool = dict[str, Any]
 Block = dict[str, Any]
@@ -41,6 +42,25 @@ PRICES: dict[str, tuple[Decimal, Decimal, Decimal, Decimal]] = {
     "claude-opus-5-5": (Decimal("4"), Decimal("20"), Decimal("0.20"), Decimal("5")),
     "claude-haiku-5-5": (Decimal("0.10"), Decimal("0.50"), Decimal("0.01"), Decimal("0.125")),
 }
+
+
+class InvalidAnswerError(RuleError):
+    """The model answered, but not by the schema: there is no proposal to show."""
+
+    status_code = 502
+
+
+def strict_schema(schema: Any) -> Any:
+    """The JSON schema structured outputs accept: every object closed (`additionalProperties: false`) and
+    every property required (optional ones are nullable instead). Titles are dropped (noise for the model)."""
+    if isinstance(schema, dict):
+        schema = {k: strict_schema(v) for k, v in schema.items() if k != "title"}
+        if schema.get("type") == "object" and "properties" in schema:
+            schema["additionalProperties"] = False
+            schema["required"] = list(schema["properties"])
+    elif isinstance(schema, list):
+        return [strict_schema(v) for v in schema]
+    return schema
 
 
 class BudgetError(RuleError):
@@ -68,6 +88,7 @@ class ModelRequest:
     messages: Sequence[Message]
     tools: Sequence[Tool] = ()
     max_tokens: int = 8000  # a chat answer is short; thinking counts in it too
+    output_schema: dict[str, Any] | None = None  # a structured answer: JSON by this schema (ADR 0008)
 
 
 @dataclass(frozen=True)
@@ -167,12 +188,15 @@ class Gateway:
         messages: Sequence[Message],
         tools: Sequence[Tool] = (),
         check_budget: bool = True,
+        output_schema: dict[str, Any] | None = None,
     ) -> Reply:
         """One call to the model. A conversation checks the budget once per question (`check_budget`) and
         passes False for its later rounds, so a question once started is answered to the end."""
         if check_budget:
             self.check_budget(ctx)
-        request = ModelRequest(self.model_id, prompt.text, list(messages), list(tools))
+        request = ModelRequest(
+            self.model_id, prompt.text, list(messages), list(tools), output_schema=output_schema
+        )
         started = time.monotonic()
         try:
             reply = self.model.complete(request)
@@ -183,6 +207,22 @@ class Gateway:
             raise ModelUnavailableError("Ассистент сейчас недоступен, попробуйте позже") from exc
         self._log(ctx, task, prompt, request, reply, started)
         return reply
+
+    def structured[T: BaseModel](
+        self, ctx: AccessContext, *, task: Task, prompt: Prompt, messages: Sequence[Message], answer: type[T]
+    ) -> T:
+        """A structured answer (a proposal of ADR 0008): JSON by the schema of `answer`, validated here. An
+        answer that is refused, cut off or does not fit the schema is no proposal: `InvalidAnswerError`."""
+        schema = strict_schema(answer.model_json_schema())
+        reply = self.complete(ctx, task=task, prompt=prompt, messages=messages, output_schema=schema)
+        if reply.stop_reason in ("refusal", "max_tokens"):
+            raise InvalidAnswerError(f"the model stopped: {reply.stop_reason}")
+        try:
+            return answer.model_validate_json(reply.text)
+        except ValidationError as exc:
+            raise InvalidAnswerError(
+                f"the answer does not fit the schema: {exc.error_count()} errors"
+            ) from exc
 
     def check_budget(self, ctx: AccessContext) -> None:
         """The daily limit counts calls to the model (a question takes one to a few)."""

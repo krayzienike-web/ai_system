@@ -1,9 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
 
-import { api, stream } from "./client";
+import { api, DEMO, stream } from "./client";
 import type {
   LatestRun,
+  FindingIdea,
+  Marking,
+  Hypotheses,
+  Precheck,
+  PrecheckStats,
   AffectedFiles,
   CatalogOption,
   Freshness,
@@ -416,3 +421,88 @@ export const useAsk = (onStatus: (text: string) => void = () => {}) =>
     mutationFn: ({ signal, ...body }: { question: string; finding_id?: string; thread_id?: string; signal?: AbortSignal }) =>
       stream<ChatAnswer>("/chat/stream", body, onStatus, signal),
   });
+
+// The assistant's proposals (ADR 0008): «Почему так» on a finding, a person's decision.
+export const useHypotheses = (findingId: string, enabled: boolean) =>
+  useQuery({
+    queryKey: ["hypotheses", findingId],
+    queryFn: () => api<Hypotheses | null>(`/findings/${findingId}/hypotheses`),
+    enabled,
+  });
+
+export function useMakeHypotheses(findingId: string) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: () => api<Hypotheses>(`/findings/${findingId}/hypotheses`, { method: "POST" }),
+    onSuccess: (h) => client.setQueryData(["hypotheses", findingId], h),
+  });
+}
+
+export function useDecideSuggestion(findingId: string) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, accepted }: { id: string; accepted: boolean }) =>
+      api<{ id: string; status: string }>(`/ai/suggestions/${id}/decision`, {
+        method: "POST",
+        body: JSON.stringify({ accepted }),
+      }),
+    onSuccess: () => client.invalidateQueries({ queryKey: ["hypotheses", findingId] }),
+  });
+}
+
+// The analyst's pre-check: what to look at (code) and a draft verdict (the model). The prototype has none.
+export const usePrecheck = (findingId: string) =>
+  useQuery({
+    queryKey: ["precheck", findingId],
+    queryFn: () => api<Precheck>(`/findings/${findingId}/precheck`),
+    enabled: !DEMO,
+  });
+
+export function useMakePrecheck(findingId: string) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: () => api<Precheck>(`/findings/${findingId}/precheck`, { method: "POST" }),
+    onSuccess: (p) => client.setQueryData(["precheck", findingId], p),
+  });
+}
+
+export const usePrecheckStats = () =>
+  useQuery({ queryKey: ["precheck-stats"], queryFn: () => api<PrecheckStats>("/ai/precheck/stats"), enabled: !DEMO });
+
+// An unfamiliar file: the assistant marks its columns, a person confirms once (a source profile).
+export const useMarkFile = () =>
+  useMutation({
+    mutationFn: ({ file, restaurantId, template }: { file: File; restaurantId: string | null; template: string }) => {
+      const form = new FormData();
+      form.append("file", file);
+      form.append("template", template);
+      if (restaurantId) form.append("restaurant_id", restaurantId);
+      return api<Marking>("/imports/mapping", { method: "POST", body: form });
+    },
+  });
+
+export const useConfirmMarking = () =>
+  useMutation({
+    mutationFn: (id: string) => api<{ profile_id: string }>(`/imports/mapping/${id}/confirm`, { method: "POST" }),
+  });
+
+// Ideas of new findings from the assistant, for the HQ.
+export const useFindingIdeas = () =>
+  useQuery({ queryKey: ["finding-ideas"], queryFn: () => api<FindingIdea[]>("/ai/finding-ideas"), enabled: !DEMO });
+
+export function useMakeFindingIdeas() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: () => api<FindingIdea[]>("/ai/finding-ideas", { method: "POST" }),
+    onSuccess: () => client.invalidateQueries({ queryKey: ["finding-ideas"] }),
+  });
+}
+
+export function useDecideIdea() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, accepted }: { id: string; accepted: boolean }) =>
+      api<{ id: string; status: string }>(`/ai/suggestions/${id}/decision`, { method: "POST", body: JSON.stringify({ accepted }) }),
+    onSuccess: () => client.invalidateQueries({ queryKey: ["finding-ideas"] }),
+  });
+}

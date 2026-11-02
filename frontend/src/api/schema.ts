@@ -70,6 +70,12 @@ export interface BoardOut {
   max_effect: string;
 }
 
+export interface Body_make_marking_api_imports_mapping_post {
+  file: string;
+  template: string;
+  restaurant_id?: string | null;
+}
+
 export interface Body_upload_api_imports_post {
   file: string;
   template?: string | null;
@@ -172,6 +178,13 @@ export interface CheckRef {
   progress_text?: string | null;
 }
 
+export interface ColumnOut {
+  field: string;
+  title: string;
+  header: string;
+  why: string;
+}
+
 export interface CommonOut {
   key: string;
   process: string;
@@ -205,6 +218,17 @@ export interface ContextOut {
   next_count_on: string | null;
   due_options: DueOption[];
   periods: PeriodOption[];
+  assistant?: boolean;
+}
+
+export interface DecisionIn {
+  accepted: boolean;
+  note?: string | null;
+}
+
+export interface DecisionOut {
+  id: string;
+  status: string;
 }
 
 export interface DraftOut {
@@ -336,6 +360,12 @@ export interface FindingView {
   table?: TableView | null;
 }
 
+export interface FlagOut {
+  code: string;
+  title: string;
+  note: string;
+}
+
 export interface FreshnessOut {
   restaurant_id: string;
   template: string;
@@ -380,6 +410,35 @@ export interface HeadReportOut {
   checks: CheckOut[];
 }
 
+export interface HypothesesOut {
+  id: string;
+  status: string;
+  created_at: string;
+  hypotheses: HypothesisOut[];
+  steps: string[];
+  rules_note: string | null;
+  basis: Record<string, unknown>;
+}
+
+export interface HypothesisOut {
+  cause: string;
+  cause_title: string;
+  likelihood: string;
+  why: string;
+  check: string;
+}
+
+export interface IdeaOut {
+  id: string;
+  status: string;
+  created_at: string;
+  title: string;
+  pattern: string;
+  why_it_matters: string;
+  rule_sketch: string;
+  evidence: Record<string, unknown>[];
+}
+
 export interface KindTotal {
   kind: string;
   count: number;
@@ -416,6 +475,13 @@ export interface LineOut {
 export interface LoginRequest {
   email: string;
   password: string;
+}
+
+export interface MarkingOut {
+  id: string;
+  template: string;
+  columns: ColumnOut[];
+  preview: Record<string, unknown>;
 }
 
 export interface MatchIn {
@@ -526,6 +592,27 @@ export interface PlaceOut {
   name: string;
 }
 
+export interface PrecheckDraftOut {
+  id: string;
+  status: string;
+  created_at: string;
+  verdict: string;
+  reason: string | null;
+  rationale: string;
+  look_at: string[];
+}
+
+export interface PrecheckOut {
+  flags: FlagOut[];
+  draft: PrecheckDraftOut | null;
+}
+
+export interface PrecheckStatsOut {
+  drafts: number;
+  decided: number;
+  agreed: number;
+}
+
 export interface ProcessOut {
   process: string;
   title: string;
@@ -537,6 +624,17 @@ export interface ProcessTitleOut {
   process: string;
   title: string;
   short: string;
+}
+
+export interface ProfileOut {
+  id: string;
+  template: string;
+  title: string;
+  mapping: Record<string, string>;
+}
+
+export interface ProfileSavedOut {
+  profile_id: string;
 }
 
 export interface ProposeIn {

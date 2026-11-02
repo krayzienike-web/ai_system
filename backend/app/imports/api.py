@@ -13,7 +13,7 @@ from app.core.deps import SessionDep, require
 from app.core.errors import NotFoundError
 from app.core.period import TodayDep
 from app.imports import service
-from app.imports.models import ImportBatch
+from app.imports.models import ImportBatch, SourceProfile
 from app.imports.templates import TEMPLATES
 from app.tenancy.context import AccessContext
 from app.tenancy.permissions import Permission
@@ -93,6 +93,20 @@ class FreshnessOut(BaseModel):
 @router.get("/imports/freshness")
 def get_freshness(ctx: CanRead, session: SessionDep, today: TodayDep) -> list[FreshnessOut]:
     return [FreshnessOut(**row) for row in service.freshness(session, today=today)]
+
+
+class ProfileOut(BaseModel):
+    id: UUID
+    template: str
+    title: str
+    mapping: dict[str, str]
+
+
+@router.get("/imports/profiles")
+def source_profiles(ctx: CanRead, session: SessionDep) -> list[ProfileOut]:
+    """The network's confirmed source profiles (docs/09): the exports that load without a template."""
+    rows = session.execute(select(SourceProfile).order_by(SourceProfile.created_at.desc())).scalars()
+    return [ProfileOut(id=p.id, template=p.template, title=p.title, mapping=p.mapping) for p in rows]
 
 
 @router.get("/imports/{batch_id}")

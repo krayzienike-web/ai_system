@@ -207,3 +207,8 @@ export interface EngineParam {
   value: string;
   default: string;
 }
+export type Hypotheses = S.HypothesesOut;
+export type Precheck = S.PrecheckOut;
+export type PrecheckStats = S.PrecheckStatsOut;
+export type Marking = S.MarkingOut;
+export type FindingIdea = S.IdeaOut;

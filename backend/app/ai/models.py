@@ -72,3 +72,38 @@ class ChatMessage(IdMixin, TenantMixin, Base):
     content: Mapped[Any] = mapped_column(JSONB)
     text: Mapped[str | None] = mapped_column(Text)  # shown in the chat: the question or the checked answer
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+SUGGESTION_KINDS = ("hypotheses", "precheck", "finding_idea", "mapping")
+SUGGESTION_STATUSES = ("proposed", "accepted", "rejected", "superseded")
+
+
+class AiSuggestion(IdMixin, TenantMixin, Base):
+    """A proposal of the assistant (ADR 0008): the AI proposes, the code checks, a person decides.
+
+    `basis` is what the proposal was made from — the facts the code gathered — so the screen can show it
+    next to the proposal; `content` is the proposal itself, validated against its schema and with every number
+    checked against `basis`. Only a person sets `status` to accepted or rejected. A proposal about one
+    restaurant carries `restaurant_id` and is seen under that restaurant's row-level security; about the
+    network — by the HQ only (migration 0019)."""
+
+    __tablename__ = "ai_suggestions"
+    __table_args__ = (
+        CheckConstraint(f"kind IN {SUGGESTION_KINDS}", name="kind_valid"),
+        CheckConstraint(f"status IN {SUGGESTION_STATUSES}", name="status_valid"),
+        Index("ix_ai_suggestions_tenant_subject", "tenant_id", "kind", "subject_id"),
+    )
+
+    kind: Mapped[str] = mapped_column(String(20))
+    subject_id: Mapped[UUID | None]  # the finding, the import batch; none for the network's ideas
+    restaurant_id: Mapped[UUID | None] = mapped_column(ForeignKey("restaurants.id", ondelete="CASCADE"))
+    content: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    basis: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    prompt: Mapped[str] = mapped_column(String(60))
+    prompt_version: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(20), default="proposed")
+    created_by: Mapped[UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    decided_by: Mapped[UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    decision_note: Mapped[str | None] = mapped_column(Text)

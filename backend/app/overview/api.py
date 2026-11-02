@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.core.deps import SessionDep, require
 from app.core.period import PeriodError, PeriodPreset, TodayDep, resolve_period
 from app.insights.api import FindingOut, findings_out
@@ -56,6 +57,7 @@ class ContextOut(BaseModel):
     next_count_on: date | None
     due_options: list[DueOption]  # deadlines offered for a new task
     periods: list[PeriodOption]  # the period picker's presets, resolved for today
+    assistant: bool = False  # the model is on: the screens offer the assistant's proposals (ADR 0008)
 
 
 class TrendOut(BaseModel):
@@ -228,6 +230,7 @@ def get_context(ctx: CanRead, session: SessionDep, today: TodayDep) -> ContextOu
             for label, days in DUE_OPTIONS
         ],
         periods=_period_options(session, today),
+        assistant=get_settings().ai_provider != "off",
     )
 
 

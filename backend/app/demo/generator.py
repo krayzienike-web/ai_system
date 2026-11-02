@@ -191,6 +191,28 @@ def _period_of(day: date) -> int:
     return sum(1 for c in COUNT_DAYS if day > c)
 
 
+# The real cause of each planted anomaly, in the codes of the assistant's hypotheses (app/ai/hypotheses.py):
+# the answer key of the «почему так» eval (stage 5.5 criterion: the cause among the top three ≥ 80 %).
+PLANTED_CAUSES = {
+    "r01-mozzarella-overuse": "portioning",
+    "r03-salmon-yield": "yield",
+    "net-fries-recipe": "recipe_error",
+    "r02-beef-urgent-orders": "expensive_supplier",
+    "r05-cream-price": "supplier_overprice",
+    "net-salmon-price": "market_price",
+    "r01-greens-write-offs": "overordering",
+    "r01-pre-count-write-offs": "write_offs_before_count",
+    "r07-bread-weekdays": "weekday_demand",
+    "r09-receipts-gap": "export_gap",
+    "r11-mis-sort": "mis_sort",
+    "net-no-recipe": "missing_recipe",
+    "r04-pasta-shortage": "short_delivery",
+    "r10-missing-invoice": "export_gap",
+    "r12-paper-counts": "paper_count",
+    "r08-count-overdue": "count_skipped",
+}
+
+
 def generate(seed: int = 42, restaurants: int = 12, start: date = START, end: date = END) -> DemoNetwork:
     rnd = random.Random(seed)  # noqa: S311  (a simulation, not security)
     net = DemoNetwork()
@@ -201,7 +223,7 @@ def generate(seed: int = 42, restaurants: int = 12, start: date = START, end: da
     # ------------------------------------------------------------ planted anomalies (ground truth)
     def planted(**a: Any) -> None:
         if a.get("restaurant") in (None, *codes):
-            net.anomalies.append(a)
+            net.anomalies.append({**a, "cause": PLANTED_CAUSES[a["id"]]})
 
     planted(
         id="r01-mozzarella-overuse",

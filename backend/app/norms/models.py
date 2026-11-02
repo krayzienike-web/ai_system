@@ -24,6 +24,9 @@ class NormSettings(IdMixin, TenantMixin, TimestampMixin, Base):
     loss_by_category: Mapped[dict[str, str]] = mapped_column(JSONB, server_default=text("'{}'::jsonb"))
     # [{"code", "title", "kind", "synonyms"}]
     write_off_reasons: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, server_default=text("'[]'::jsonb"))
+    # The network's own rules in words that the assistant must respect when it proposes steps (ADR 0008):
+    # «цены в меню меняются только с новым меню, раз в полгода». Shown to the model, never computed with.
+    network_rules: Mapped[list[str]] = mapped_column(JSONB, server_default=text("'[]'::jsonb"))
     updated_by: Mapped[str | None] = mapped_column(String(64))
     # Engine findings wait for a manual check before directors see them (on while the engine is new).
     review_findings: Mapped[bool] = mapped_column(default=True, server_default=text("true"))

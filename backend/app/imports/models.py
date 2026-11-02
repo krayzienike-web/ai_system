@@ -58,3 +58,19 @@ class ImportBatch(IdMixin, TenantMixin, TimestampMixin, Base):
     )
     created_by: Mapped[UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class SourceProfile(IdMixin, TenantMixin, TimestampMixin, Base):
+    """How the columns of one kind of export map onto a template (docs/09, «Адаптивный импорт»): «iiko ·
+    склад» with its own headers. Confirmed by a person once, then applied to every file with those headers —
+    the file still goes through the whole validation of the import (ADR 0008: the AI may propose a profile,
+    never load)."""
+
+    __tablename__ = "source_profiles"
+    __table_args__ = (Index("ix_source_profiles_tenant_template", "tenant_id", "template"),)
+
+    template: Mapped[str] = mapped_column(String(50))
+    title: Mapped[str] = mapped_column(String(200))
+    # {column name of the template: the export's header, normalized}
+    mapping: Mapped[dict[str, str]] = mapped_column(JSONB)
+    confirmed_by: Mapped[UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))

@@ -26,7 +26,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
-from app.ai.models import ChatThread
+from app.ai.models import AiSuggestion, ChatThread
 from app.catalog.models import NameAlias, Product
 from app.core.period import get_today
 from app.experiments.models import Experiment
@@ -47,6 +47,8 @@ OWN_NETWORK = {
     "PUT /api/settings/engine",
     "POST /api/analytics/run",
     "POST /api/imports",
+    "POST /api/imports/mapping",  # a file of one's own network: like an upload, by the same access rules
+    "POST /api/ai/finding-ideas",  # the network's own aggregates, for its HQ
 }
 # Writes that name another object in the body: route → body, `{finding_id}` filled with the foreign id.
 BODY_REFS = {
@@ -61,6 +63,7 @@ BODIES: dict[str, dict[str, Any]] = {
     "POST /api/tasks/{task_id}/complete": {"report": "сделано"},
     "POST /api/tasks/{task_id}/checklist": {"index": 0, "done": True},
     "PUT /api/aliases/{alias_id}": {"target_id": "00000000-0000-0000-0000-000000000000"},
+    "POST /api/ai/suggestions/{suggestion_id}/decision": {"accepted": True},
     "POST /api/imports/{batch_id}/match": {
         "matches": [{"kind": "product", "key": "x", "target_id": "00000000-0000-0000-0000-000000000000"}]
     },
@@ -79,6 +82,7 @@ class Foreign:
     batch_id: UUID
     alias_id: UUID
     thread_id: UUID
+    suggestion_id: UUID
     restaurant_id: UUID
     code: str
     names: list[str]
@@ -147,7 +151,17 @@ def foreign(network: Network, owner_engine: Engine) -> Foreign:
             target_id=item.id,
         )
         thread = ChatThread(tenant_id=b.id, user_id=b.users["admin@b.ru"], title="Чужой разговор сети Б")
-        s.add_all([alias, thread])
+        proposal = AiSuggestion(
+            tenant_id=b.id,
+            kind="hypotheses",
+            subject_id=finding.id,
+            restaurant_id=b.restaurants["B1"],
+            content={"hypotheses": [], "steps": ["Чужое предложение сети Б"], "rules_note": None},
+            basis={},
+            prompt="hypotheses",
+            prompt_version=1,
+        )
+        s.add_all([alias, thread, proposal])
         s.flush()
         return Foreign(
             finding.id,
@@ -156,6 +170,7 @@ def foreign(network: Network, owner_engine: Engine) -> Foreign:
             batch.id,
             alias.id,
             thread.id,
+            proposal.id,
             b.restaurants["B1"],
             "B1",
             [
@@ -192,6 +207,7 @@ def _ids(f: Foreign) -> dict[str, str]:
         "batch_id": str(f.batch_id),
         "alias_id": str(f.alias_id),
         "thread_id": str(f.thread_id),
+        "suggestion_id": str(f.suggestion_id),
         "restaurant_id": str(f.restaurant_id),
         "code": f.code,
     }

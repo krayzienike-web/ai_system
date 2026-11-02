@@ -423,6 +423,37 @@
     "title": "BoardOut",
     "type": "object"
    },
+   "Body_make_marking_api_imports_mapping_post": {
+    "properties": {
+     "file": {
+      "contentMediaType": "application/octet-stream",
+      "title": "File",
+      "type": "string"
+     },
+     "restaurant_id": {
+      "anyOf": [
+       {
+        "format": "uuid",
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Restaurant Id"
+     },
+     "template": {
+      "title": "Template",
+      "type": "string"
+     }
+    },
+    "required": [
+     "file",
+     "template"
+    ],
+    "title": "Body_make_marking_api_imports_mapping_post",
+    "type": "object"
+   },
    "Body_upload_api_imports_post": {
     "properties": {
      "file": {
@@ -1195,6 +1226,34 @@
     "title": "CheckRef",
     "type": "object"
    },
+   "ColumnOut": {
+    "properties": {
+     "field": {
+      "title": "Field",
+      "type": "string"
+     },
+     "header": {
+      "title": "Header",
+      "type": "string"
+     },
+     "title": {
+      "title": "Title",
+      "type": "string"
+     },
+     "why": {
+      "title": "Why",
+      "type": "string"
+     }
+    },
+    "required": [
+     "field",
+     "title",
+     "header",
+     "why"
+    ],
+    "title": "ColumnOut",
+    "type": "object"
+   },
    "CommonOut": {
     "properties": {
      "finding_id": {
@@ -1337,6 +1396,11 @@
    },
    "ContextOut": {
     "properties": {
+     "assistant": {
+      "default": false,
+      "title": "Assistant",
+      "type": "boolean"
+     },
      "data_until": {
       "anyOf": [
        {
@@ -1389,6 +1453,49 @@
      "periods"
     ],
     "title": "ContextOut",
+    "type": "object"
+   },
+   "DecisionIn": {
+    "properties": {
+     "accepted": {
+      "title": "Accepted",
+      "type": "boolean"
+     },
+     "note": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Note"
+     }
+    },
+    "required": [
+     "accepted"
+    ],
+    "title": "DecisionIn",
+    "type": "object"
+   },
+   "DecisionOut": {
+    "properties": {
+     "id": {
+      "format": "uuid",
+      "title": "Id",
+      "type": "string"
+     },
+     "status": {
+      "title": "Status",
+      "type": "string"
+     }
+    },
+    "required": [
+     "id",
+     "status"
+    ],
+    "title": "DecisionOut",
     "type": "object"
    },
    "DraftOut": {
@@ -2337,6 +2444,29 @@
     "title": "FindingView",
     "type": "object"
    },
+   "FlagOut": {
+    "properties": {
+     "code": {
+      "title": "Code",
+      "type": "string"
+     },
+     "note": {
+      "title": "Note",
+      "type": "string"
+     },
+     "title": {
+      "title": "Title",
+      "type": "string"
+     }
+    },
+    "required": [
+     "code",
+     "title",
+     "note"
+    ],
+    "title": "FlagOut",
+    "type": "object"
+   },
    "FreshnessOut": {
     "properties": {
      "last_date": {
@@ -2549,6 +2679,152 @@
      "checks"
     ],
     "title": "HeadReportOut",
+    "type": "object"
+   },
+   "HypothesesOut": {
+    "properties": {
+     "basis": {
+      "additionalProperties": true,
+      "title": "Basis",
+      "type": "object"
+     },
+     "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+     },
+     "hypotheses": {
+      "items": {
+       "$ref": "#/components/schemas/HypothesisOut"
+      },
+      "title": "Hypotheses",
+      "type": "array"
+     },
+     "id": {
+      "format": "uuid",
+      "title": "Id",
+      "type": "string"
+     },
+     "rules_note": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Rules Note"
+     },
+     "status": {
+      "title": "Status",
+      "type": "string"
+     },
+     "steps": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Steps",
+      "type": "array"
+     }
+    },
+    "required": [
+     "id",
+     "status",
+     "created_at",
+     "hypotheses",
+     "steps",
+     "rules_note",
+     "basis"
+    ],
+    "title": "HypothesesOut",
+    "type": "object"
+   },
+   "HypothesisOut": {
+    "properties": {
+     "cause": {
+      "title": "Cause",
+      "type": "string"
+     },
+     "cause_title": {
+      "title": "Cause Title",
+      "type": "string"
+     },
+     "check": {
+      "title": "Check",
+      "type": "string"
+     },
+     "likelihood": {
+      "title": "Likelihood",
+      "type": "string"
+     },
+     "why": {
+      "title": "Why",
+      "type": "string"
+     }
+    },
+    "required": [
+     "cause",
+     "cause_title",
+     "likelihood",
+     "why",
+     "check"
+    ],
+    "title": "HypothesisOut",
+    "type": "object"
+   },
+   "IdeaOut": {
+    "properties": {
+     "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+     },
+     "evidence": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "title": "Evidence",
+      "type": "array"
+     },
+     "id": {
+      "format": "uuid",
+      "title": "Id",
+      "type": "string"
+     },
+     "pattern": {
+      "title": "Pattern",
+      "type": "string"
+     },
+     "rule_sketch": {
+      "title": "Rule Sketch",
+      "type": "string"
+     },
+     "status": {
+      "title": "Status",
+      "type": "string"
+     },
+     "title": {
+      "title": "Title",
+      "type": "string"
+     },
+     "why_it_matters": {
+      "title": "Why It Matters",
+      "type": "string"
+     }
+    },
+    "required": [
+     "id",
+     "status",
+     "created_at",
+     "title",
+     "pattern",
+     "why_it_matters",
+     "rule_sketch",
+     "evidence"
+    ],
+    "title": "IdeaOut",
     "type": "object"
    },
    "KindTotal": {
@@ -2795,6 +3071,39 @@
      "password"
     ],
     "title": "LoginRequest",
+    "type": "object"
+   },
+   "MarkingOut": {
+    "properties": {
+     "columns": {
+      "items": {
+       "$ref": "#/components/schemas/ColumnOut"
+      },
+      "title": "Columns",
+      "type": "array"
+     },
+     "id": {
+      "format": "uuid",
+      "title": "Id",
+      "type": "string"
+     },
+     "preview": {
+      "additionalProperties": true,
+      "title": "Preview",
+      "type": "object"
+     },
+     "template": {
+      "title": "Template",
+      "type": "string"
+     }
+    },
+    "required": [
+     "id",
+     "template",
+     "columns",
+     "preview"
+    ],
+    "title": "MarkingOut",
     "type": "object"
    },
    "MatchIn": {
@@ -3392,6 +3701,111 @@
     "title": "PlaceOut",
     "type": "object"
    },
+   "PrecheckDraftOut": {
+    "properties": {
+     "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+     },
+     "id": {
+      "format": "uuid",
+      "title": "Id",
+      "type": "string"
+     },
+     "look_at": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Look At",
+      "type": "array"
+     },
+     "rationale": {
+      "title": "Rationale",
+      "type": "string"
+     },
+     "reason": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Reason"
+     },
+     "status": {
+      "title": "Status",
+      "type": "string"
+     },
+     "verdict": {
+      "title": "Verdict",
+      "type": "string"
+     }
+    },
+    "required": [
+     "id",
+     "status",
+     "created_at",
+     "verdict",
+     "reason",
+     "rationale",
+     "look_at"
+    ],
+    "title": "PrecheckDraftOut",
+    "type": "object"
+   },
+   "PrecheckOut": {
+    "properties": {
+     "draft": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/PrecheckDraftOut"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "flags": {
+      "items": {
+       "$ref": "#/components/schemas/FlagOut"
+      },
+      "title": "Flags",
+      "type": "array"
+     }
+    },
+    "required": [
+     "flags",
+     "draft"
+    ],
+    "title": "PrecheckOut",
+    "type": "object"
+   },
+   "PrecheckStatsOut": {
+    "properties": {
+     "agreed": {
+      "title": "Agreed",
+      "type": "integer"
+     },
+     "decided": {
+      "title": "Decided",
+      "type": "integer"
+     },
+     "drafts": {
+      "title": "Drafts",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "drafts",
+     "decided",
+     "agreed"
+    ],
+    "title": "PrecheckStatsOut",
+    "type": "object"
+   },
    "ProcessOut": {
     "properties": {
      "findings": {
@@ -3444,6 +3858,52 @@
      "short"
     ],
     "title": "ProcessTitleOut",
+    "type": "object"
+   },
+   "ProfileOut": {
+    "properties": {
+     "id": {
+      "format": "uuid",
+      "title": "Id",
+      "type": "string"
+     },
+     "mapping": {
+      "additionalProperties": {
+       "type": "string"
+      },
+      "title": "Mapping",
+      "type": "object"
+     },
+     "template": {
+      "title": "Template",
+      "type": "string"
+     },
+     "title": {
+      "title": "Title",
+      "type": "string"
+     }
+    },
+    "required": [
+     "id",
+     "template",
+     "title",
+     "mapping"
+    ],
+    "title": "ProfileOut",
+    "type": "object"
+   },
+   "ProfileSavedOut": {
+    "properties": {
+     "profile_id": {
+      "format": "uuid",
+      "title": "Profile Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "profile_id"
+    ],
+    "title": "ProfileSavedOut",
     "type": "object"
    },
    "ProposeIn": {
@@ -5011,6 +5471,149 @@
  },
  "openapi": "3.1.0",
  "paths": {
+  "/api/ai/finding-ideas": {
+   "get": {
+    "operationId": "finding_ideas_api_ai_finding_ideas_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "items": {
+          "$ref": "#/components/schemas/IdeaOut"
+         },
+         "title": "Response Finding Ideas Api Ai Finding Ideas Get",
+         "type": "array"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Finding Ideas",
+    "tags": [
+     "assistant"
+    ]
+   },
+   "post": {
+    "operationId": "make_finding_ideas_api_ai_finding_ideas_post",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "items": {
+          "$ref": "#/components/schemas/IdeaOut"
+         },
+         "title": "Response Make Finding Ideas Api Ai Finding Ideas Post",
+         "type": "array"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Make Finding Ideas",
+    "tags": [
+     "assistant"
+    ]
+   }
+  },
+  "/api/ai/precheck/stats": {
+   "get": {
+    "description": "«ИИ предлагал / человек решил»: how often the draft matched the analyst's verdict.",
+    "operationId": "precheck_stats_api_ai_precheck_stats_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/PrecheckStatsOut"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Precheck Stats",
+    "tags": [
+     "assistant"
+    ]
+   }
+  },
+  "/api/ai/suggestions/{suggestion_id}/decision": {
+   "post": {
+    "operationId": "decide_api_ai_suggestions__suggestion_id__decision_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "suggestion_id",
+      "required": true,
+      "schema": {
+       "format": "uuid",
+       "title": "Suggestion Id",
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/DecisionIn"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/DecisionOut"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Decide",
+    "tags": [
+     "assistant"
+    ]
+   }
+  },
   "/api/aliases": {
    "get": {
     "operationId": "list_aliases_api_aliases_get",
@@ -6069,6 +6672,202 @@
     ]
    }
   },
+  "/api/findings/{finding_id}/hypotheses": {
+   "get": {
+    "operationId": "get_hypotheses_api_findings__finding_id__hypotheses_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "finding_id",
+      "required": true,
+      "schema": {
+       "format": "uuid",
+       "title": "Finding Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "anyOf": [
+          {
+           "$ref": "#/components/schemas/HypothesesOut"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "title": "Response Get Hypotheses Api Findings  Finding Id  Hypotheses Get"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Hypotheses",
+    "tags": [
+     "assistant"
+    ]
+   },
+   "post": {
+    "operationId": "make_hypotheses_api_findings__finding_id__hypotheses_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "finding_id",
+      "required": true,
+      "schema": {
+       "format": "uuid",
+       "title": "Finding Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HypothesesOut"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Make Hypotheses",
+    "tags": [
+     "assistant"
+    ]
+   }
+  },
+  "/api/findings/{finding_id}/precheck": {
+   "get": {
+    "operationId": "get_precheck_api_findings__finding_id__precheck_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "finding_id",
+      "required": true,
+      "schema": {
+       "format": "uuid",
+       "title": "Finding Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/PrecheckOut"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Precheck",
+    "tags": [
+     "assistant"
+    ]
+   },
+   "post": {
+    "operationId": "make_precheck_api_findings__finding_id__precheck_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "finding_id",
+      "required": true,
+      "schema": {
+       "format": "uuid",
+       "title": "Finding Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/PrecheckOut"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Make Precheck",
+    "tags": [
+     "assistant"
+    ]
+   }
+  },
   "/api/findings/{finding_id}/review": {
    "post": {
     "operationId": "review_finding_api_findings__finding_id__review_post",
@@ -6351,6 +7150,133 @@
      }
     ],
     "summary": "Get Freshness",
+    "tags": [
+     "imports"
+    ]
+   }
+  },
+  "/api/imports/mapping": {
+   "post": {
+    "description": "An unfamiliar file: the assistant marks its columns, the import checks the marking on the file.",
+    "operationId": "make_marking_api_imports_mapping_post",
+    "requestBody": {
+     "content": {
+      "multipart/form-data": {
+       "schema": {
+        "$ref": "#/components/schemas/Body_make_marking_api_imports_mapping_post"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/MarkingOut"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Make Marking",
+    "tags": [
+     "assistant"
+    ]
+   }
+  },
+  "/api/imports/mapping/{suggestion_id}/confirm": {
+   "post": {
+    "description": "Confirmed once: later files with these headers load by it, through the whole validation.",
+    "operationId": "confirm_marking_api_imports_mapping__suggestion_id__confirm_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "suggestion_id",
+      "required": true,
+      "schema": {
+       "format": "uuid",
+       "title": "Suggestion Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ProfileSavedOut"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Confirm Marking",
+    "tags": [
+     "assistant"
+    ]
+   }
+  },
+  "/api/imports/profiles": {
+   "get": {
+    "description": "The network's confirmed source profiles (docs/09): the exports that load without a template.",
+    "operationId": "source_profiles_api_imports_profiles_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "items": {
+          "$ref": "#/components/schemas/ProfileOut"
+         },
+         "title": "Response Source Profiles Api Imports Profiles Get",
+         "type": "array"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Source Profiles",
     "tags": [
      "imports"
     ]

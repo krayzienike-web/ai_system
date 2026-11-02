@@ -51,14 +51,26 @@ def read_rows(content: bytes, filename: str) -> list[list[str]]:
     return [row for row in csv.reader(io.StringIO(text), delimiter=delimiter)]
 
 
-def map_header(cells: list[str], template: Template) -> tuple[dict[str, int], list[str]]:
+def norm_header(text: str) -> str:
+    """A header as it is compared: spaces collapsed, case and a trailing colon dropped."""
+    return _norm(text)
+
+
+def map_header(
+    cells: list[str], template: Template, aliases: dict[str, str] | None = None
+) -> tuple[dict[str, int], list[str]]:
+    """Columns by the template's synonyms and by the network's confirmed profiles (`aliases`: a normalized
+    header → the template's column)."""
     found: dict[str, int] = {}
     unmapped = []
     for i, cell in enumerate(cells):
         name = _norm(cell)
         if not name:
             continue
-        column = next((c for c in template.columns if name in c.synonyms or name == c.name), None)
+        alias = (aliases or {}).get(name)
+        column = next(
+            (c for c in template.columns if c.name == alias or name in c.synonyms or name == c.name), None
+        )
         if column and column.name not in found:
             found[column.name] = i
         else:
@@ -72,12 +84,16 @@ def _complete(found: dict[str, int], template: Template) -> bool:
 
 
 def read_table(
-    content: bytes, filename: str, template: Template, rows: list[list[str]] | None = None
+    content: bytes,
+    filename: str,
+    template: Template,
+    rows: list[list[str]] | None = None,
+    aliases: dict[str, str] | None = None,
 ) -> Table:
     rows = read_rows(content, filename) if rows is None else rows
     best: tuple[int, dict[str, int], list[str]] | None = None
     for i, cells in enumerate(rows[:HEADER_SEARCH_ROWS]):
-        found, unmapped = map_header(cells, template)
+        found, unmapped = map_header(cells, template, aliases)
         if _complete(found, template):
             best = (i, found, unmapped)
             break
@@ -97,14 +113,19 @@ def read_table(
     return table
 
 
-def detect_template(content: bytes, filename: str, candidates: list[Template]) -> Template:
+def detect_template(
+    content: bytes,
+    filename: str,
+    candidates: list[Template],
+    aliases: dict[str, dict[str, str]] | None = None,
+) -> Template:
     """What is this file? The template whose header fits best: all its required columns are present,
     and among those the one that recognises the most columns. The user does not have to say it."""
     rows = read_rows(content, filename)
     best: tuple[int, Template] | None = None
     for template in candidates:
         try:
-            table = read_table(content, filename, template, rows)
+            table = read_table(content, filename, template, rows, (aliases or {}).get(template.name))
         except InvalidError:
             continue
         score = len(table.column_map)

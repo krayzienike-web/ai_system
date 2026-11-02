@@ -38,6 +38,8 @@ import { MODULE_TITLE, perMonth, plural } from "../../lib/format";
 import { useViewer } from "../../lib/useViewer";
 import { useUi } from "../../state/ui";
 import { RecalcNote } from "../analytics/RecalcNote";
+import { FindingIdeas } from "./Ideas";
+import { PrecheckPanel, PrecheckStatsLine } from "./Precheck";
 import { ReviewTrace } from "../findings/ReviewTrace";
 
 const TABS: { status: ReviewStatus; title: string }[] = [
@@ -137,6 +139,8 @@ export function ReviewPage() {
         }
       />
       <RecalcNote />
+      <PrecheckStatsLine />
+      <FindingIdeas />
       <div role="tablist" className="flex gap-1 border-b border-line">
         {TABS.map((t) => (
           <button
@@ -472,6 +476,7 @@ export function ReviewFindingPage() {
           </Link>
         )}
       </Card>
+      <PrecheckPanel findingId={f.id} />
       <VerdictForm f={f} />
 
       {!data?.supported ? (

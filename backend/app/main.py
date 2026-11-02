@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
+from app.ai.api import router as assistant_router
 from app.analytics.api import router as analytics_router
 from app.auth.api import router as auth_router
 from app.catalog.api import router as catalog_router
@@ -54,6 +55,7 @@ def create_app() -> FastAPI:
     api.include_router(analytics_router)
     api.include_router(overview_router)
     api.include_router(chat_router)
+    api.include_router(assistant_router)
     app.include_router(api)
     return app
 
