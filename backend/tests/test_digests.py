@@ -9,7 +9,7 @@ from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import Engine, func, select
+from sqlalchemy import Engine, delete, func, select, update
 from sqlalchemy.orm import Session
 
 from app import worker
@@ -344,3 +344,90 @@ def test_the_rebuild_button_writes_by_the_model_when_it_is_on(client: TestClient
     out = client.post("/api/digests/rebuild", json={}, headers=director).json()
     assert out["source"] == "model" and out["headline"] == "Главное от модели."
     assert {i["text"] for i in out["problems"]} == {"Текст пункта"}
+
+
+# ------------------------------------------------------------------ the director's reactions (step 5)
+
+
+def _first_item(client: TestClient, headers: dict[str, str]) -> tuple[dict[str, Any], dict[str, Any]]:
+    digest = client.post("/api/digests/rebuild", json={}, headers=headers).json()
+    return digest, (digest["problems"] + digest["opportunities"])[0]
+
+
+@pytest.mark.usefixtures("demo")
+def test_take_it_on_is_a_task_to_oneself_shown_in_the_digest(
+    client: TestClient, owner_engine: Engine
+) -> None:
+    from app.insights.models import Finding
+    from app.tasks.models import Task
+
+    director = login(client, "r01@a.ru")
+    _, item = _first_item(client, director)
+    with Session(owner_engine) as s, s.begin():  # the demo took it already: free it, as on a new week
+        s.execute(delete(Task).where(Task.finding_id == UUID(item["finding_id"])))
+        s.execute(update(Finding).where(Finding.id == UUID(item["finding_id"])).values(status="new"))
+    digest, item = _first_item(client, director)
+    assert not item["taken"]
+    due = str(TODAY + timedelta(days=7))
+    made = client.post(
+        "/api/tasks",
+        json={"title": item["title"], "due_on": due, "finding_id": item["finding_id"]},
+        headers=director,
+    )
+    assert made.status_code == 201, made.text
+    assert made.json()[0]["restaurant_id"] == digest["restaurant_id"]  # for their own restaurant
+    again = client.get("/api/digests/latest", headers=director).json()
+    assert next(
+        i for i in again["problems"] + again["opportunities"] if i["finding_id"] == item["finding_id"]
+    )["taken"]
+
+
+@pytest.mark.usefixtures("demo")
+def test_disagree_with_a_reason_reaches_the_hq(client: TestClient) -> None:
+    admin, director = login(client, "admin@a.ru"), login(client, "r01@a.ru")
+    digest, item = _first_item(client, director)
+    url = f"/api/findings/{item['finding_id']}/disagree"
+    reasons = client.get("/api/digests/disagree-reasons", headers=director).json()
+    assert {r["reason"] for r in reasons} == {"wrong_data", "explained", "already_fixed", "other"}
+    assert client.post(url, json={"reason": "other"}, headers=director).status_code == 422  # say what
+    assert client.post(url, json={"reason": "nope"}, headers=director).status_code == 422
+    body = {"reason": "explained", "comment": "Был банкет", "digest_id": digest["id"]}
+    assert client.post(url, json=body, headers=director).status_code == 204
+    assert client.post(url, json={**body, "comment": "Банкет 30.10"}, headers=director).status_code == 204
+    shown = client.get("/api/digests/latest", headers=director).json()
+    assert (
+        next(i for i in shown["problems"] + shown["opportunities"] if i["finding_id"] == item["finding_id"])[
+            "disagreed"
+        ]
+        == "explained"
+    )
+    (row,) = client.get("/api/digests/disagreements", headers=admin).json()  # replaced, not added
+    assert row["comment"] == "Банкет 30.10" and row["restaurant"].startswith("R01")
+    assert row["reason_title"].startswith("Есть объяснение")
+    assert client.get("/api/digests/disagreements", headers=director).status_code == 403
+    assert (
+        client.post(url, json=body, headers=admin).status_code == 403
+    )  # the HQ reviews, it does not disagree
+    assert client.delete(url, headers=director).status_code == 204
+    assert client.delete(url, headers=director).status_code == 404
+    assert client.get("/api/digests/disagreements", headers=admin).json() == []
+
+
+@pytest.mark.usefixtures("demo")
+def test_a_director_cannot_disagree_with_another_restaurants_finding(
+    client: TestClient, network: Network, owner_engine: Engine
+) -> None:
+    from app.insights.models import Finding
+
+    r02 = _r(owner_engine, network, "R02")
+    with Session(owner_engine) as s:
+        other = s.execute(select(Finding.id).where(Finding.restaurant_id == r02).limit(1)).scalar_one()
+        pending = s.execute(
+            select(Finding.id)
+            .where(Finding.tenant_id == network.a.id, Finding.review_status == "pending")
+            .limit(1)
+        ).scalar_one()
+    director = login(client, "r01@a.ru")
+    for fid in (other, pending):
+        r = client.post(f"/api/findings/{fid}/disagree", json={"reason": "wrong_data"}, headers=director)
+        assert r.status_code == 404, r.text

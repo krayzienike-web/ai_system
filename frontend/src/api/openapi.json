@@ -1519,6 +1519,17 @@
       "title": "Causes",
       "type": "array"
      },
+     "disagreed": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Disagreed"
+     },
      "effect_per_month": {
       "anyOf": [
        {
@@ -1560,7 +1571,8 @@
      "text",
      "causes",
      "actions",
-     "taken"
+     "taken",
+     "disagreed"
     ],
     "title": "DigestItemOut",
     "type": "object"
@@ -1882,6 +1894,107 @@
      "week_end"
     ],
     "title": "DigestWeekOut",
+    "type": "object"
+   },
+   "DisagreeIn": {
+    "properties": {
+     "comment": {
+      "anyOf": [
+       {
+        "maxLength": 1000,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Comment"
+     },
+     "digest_id": {
+      "anyOf": [
+       {
+        "format": "uuid",
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Digest Id"
+     },
+     "reason": {
+      "enum": [
+       "wrong_data",
+       "explained",
+       "already_fixed",
+       "other"
+      ],
+      "title": "Reason",
+      "type": "string"
+     }
+    },
+    "required": [
+     "reason"
+    ],
+    "title": "DisagreeIn",
+    "type": "object"
+   },
+   "DisagreementOut": {
+    "properties": {
+     "comment": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Comment"
+     },
+     "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+     },
+     "finding_id": {
+      "format": "uuid",
+      "title": "Finding Id",
+      "type": "string"
+     },
+     "finding_title": {
+      "title": "Finding Title",
+      "type": "string"
+     },
+     "id": {
+      "format": "uuid",
+      "title": "Id",
+      "type": "string"
+     },
+     "reason": {
+      "title": "Reason",
+      "type": "string"
+     },
+     "reason_title": {
+      "title": "Reason Title",
+      "type": "string"
+     },
+     "restaurant": {
+      "title": "Restaurant",
+      "type": "string"
+     }
+    },
+    "required": [
+     "id",
+     "finding_id",
+     "finding_title",
+     "restaurant",
+     "reason",
+     "reason_title",
+     "comment",
+     "created_at"
+    ],
+    "title": "DisagreementOut",
     "type": "object"
    },
    "DraftOut": {
@@ -4557,6 +4670,24 @@
     "title": "ReasonIO",
     "type": "object"
    },
+   "ReasonOut": {
+    "properties": {
+     "reason": {
+      "title": "Reason",
+      "type": "string"
+     },
+     "title": {
+      "title": "Title",
+      "type": "string"
+     }
+    },
+    "required": [
+     "reason",
+     "title"
+    ],
+    "title": "ReasonOut",
+    "type": "object"
+   },
    "RebuildIn": {
     "properties": {
      "restaurant_id": {
@@ -7062,6 +7193,68 @@
     ]
    }
   },
+  "/api/digests/disagree-reasons": {
+   "get": {
+    "description": "The form's choices, named by the server.",
+    "operationId": "disagree_reasons_api_digests_disagree_reasons_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "items": {
+          "$ref": "#/components/schemas/ReasonOut"
+         },
+         "title": "Response Disagree Reasons Api Digests Disagree Reasons Get",
+         "type": "array"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Disagree Reasons",
+    "tags": [
+     "digests"
+    ]
+   }
+  },
+  "/api/digests/disagreements": {
+   "get": {
+    "description": "The HQ's list of directors' disagreements, the latest first.",
+    "operationId": "disagreements_api_digests_disagreements_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "items": {
+          "$ref": "#/components/schemas/DisagreementOut"
+         },
+         "title": "Response Disagreements Api Digests Disagreements Get",
+         "type": "array"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Disagreements",
+    "tags": [
+     "digests"
+    ]
+   }
+  },
   "/api/digests/latest": {
    "get": {
     "description": "The latest digest (or of `week_start`) of the restaurant, or of the network without one (HQ).",
@@ -7390,6 +7583,97 @@
     "summary": "Get Finding",
     "tags": [
      "findings"
+    ]
+   }
+  },
+  "/api/findings/{finding_id}/disagree": {
+   "delete": {
+    "operationId": "withdraw_api_findings__finding_id__disagree_delete",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "finding_id",
+      "required": true,
+      "schema": {
+       "format": "uuid",
+       "title": "Finding Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "204": {
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Withdraw",
+    "tags": [
+     "digests"
+    ]
+   },
+   "post": {
+    "description": "«Не согласен» — a director's reason, for the HQ; again replaces it.",
+    "operationId": "disagree_api_findings__finding_id__disagree_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "finding_id",
+      "required": true,
+      "schema": {
+       "format": "uuid",
+       "title": "Finding Id",
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/DisagreeIn"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "204": {
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Disagree",
+    "tags": [
+     "digests"
     ]
    }
   },

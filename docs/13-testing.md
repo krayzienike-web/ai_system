@@ -311,6 +311,10 @@
 | TC-DG-14 | Без модели еженедельный прогон пишет по правилам | `test_digests.py::test_without_the_model_the_weekly_run_writes_by_rules` | ✅ |
 | TC-DG-15 | API: последняя сводка и архив недель; «Пересобрать» — директор только свой ресторан, сеть — только УК; чужое — 404 | `test_digests.py::test_the_digest_screens_read_what_was_built`; обход маршрутов `test_isolation_routes.py` | ✅ |
 | TC-DG-16 | «Пересобрать» при включенной модели — тексты модели | `test_digests.py::test_the_rebuild_button_writes_by_the_model_when_it_is_on` | ✅ |
+| TC-DG-17 | «Беру в работу» — задача директора себе по пункту (`POST /tasks` с находкой), в сводке пункт сразу «в работе» | `test_digests.py::test_take_it_on_is_a_task_to_oneself_shown_in_the_digest` | ✅ |
+| TC-DG-18 | «Не согласен» — причина из списка (для «Другое» — комментарий), повтор заменяет, можно отозвать; УК видит список; УК сама не «не согласна» | `test_digests.py::test_disagree_with_a_reason_reaches_the_hq` | ✅ |
+| TC-DG-19 | «Не согласен» с находкой чужого ресторана или не прошедшей проверку — 404; обход маршрутов | `test_digests.py::test_a_director_cannot_disagree_with_another_restaurants_finding`; `test_isolation_routes.py` | ✅ |
+| TC-DG-20 | «Обсудить с ИИ» — чат с находкой пункта (`finding_id`), без нового API | `test_ai_chat.py` (вопрос с находкой) | ✅ |
 
 ### Интерфейс (UI)
 

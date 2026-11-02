@@ -2,7 +2,17 @@ from datetime import date, datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import CheckConstraint, Date, DateTime, ForeignKey, Integer, String, func
+from sqlalchemy import (
+    CheckConstraint,
+    Date,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -29,3 +39,26 @@ class Digest(IdMixin, TenantMixin, Base):
     source: Mapped[str] = mapped_column(String(10))
     prompt_version: Mapped[int | None] = mapped_column(Integer)
     built_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+REASONS = ("wrong_data", "explained", "already_fixed", "other")
+
+
+class Disagreement(IdMixin, TenantMixin, Base):
+    """A director's «Не согласен» with a finding of their restaurant (docs/08 part 1, stage 6): the reason
+    and a comment, for the HQ to read. Not a dispute of a task (ADR 0006): the finding's facts are questioned,
+    and the HQ decides. One per person and finding: saying it again replaces it."""
+
+    __tablename__ = "disagreements"
+    __table_args__ = (
+        CheckConstraint(f"reason IN {REASONS}", name="reason_valid"),
+        UniqueConstraint("finding_id", "user_id"),
+    )
+
+    restaurant_id: Mapped[UUID] = mapped_column(ForeignKey("restaurants.id", ondelete="CASCADE"))
+    finding_id: Mapped[UUID] = mapped_column(ForeignKey("findings.id", ondelete="CASCADE"))
+    digest_id: Mapped[UUID | None] = mapped_column(ForeignKey("digests.id", ondelete="SET NULL"))
+    user_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    reason: Mapped[str] = mapped_column(String(20))
+    comment: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

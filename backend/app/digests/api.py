@@ -6,14 +6,16 @@ security). Building again — the assistant's API (`POST /digests/rebuild`), as 
 """
 
 from datetime import date, datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
 
 from app.core.deps import SessionDep, require
-from app.digests import service
+from app.core.period import TodayDep
+from app.digests import reactions, service
 from app.digests.models import Digest
 from app.tenancy.context import AccessContext
 from app.tenancy.permissions import Permission
@@ -31,7 +33,8 @@ class DigestItemOut(BaseModel):
     text: str  # the model's or the rules'
     causes: list[str]
     actions: list[str]
-    taken: bool
+    taken: bool  # a task on it: «Беру в работу» was pressed (or the HQ assigned one)
+    disagreed: str | None  # the reader's «Не согласен»: its reason
 
 
 class DigestProcessOut(BaseModel):
@@ -94,7 +97,7 @@ class DigestWeekOut(BaseModel):
     week_end: date
 
 
-def _items(items: list[dict[str, Any]], texts: dict[str, str]) -> list[DigestItemOut]:
+def _items(items: list[dict[str, Any]], texts: dict[str, str], now: reactions.Live) -> list[DigestItemOut]:
     return [
         DigestItemOut(
             finding_id=i["finding_id"],
@@ -104,14 +107,17 @@ def _items(items: list[dict[str, Any]], texts: dict[str, str]) -> list[DigestIte
             text=texts.get(i["finding_id"]) or i["title"],
             causes=i["causes"],
             actions=i["actions"],
-            taken=i["taken"],
+            taken=i["taken"] or UUID(i["finding_id"]) in now.taken,
+            disagreed=now.mine.get(UUID(i["finding_id"])),
         )
         for i in items
     ]
 
 
-def digest_out(d: Digest) -> DigestOut:
+def digest_out(session: Session, ctx: AccessContext, d: Digest) -> DigestOut:
     data, out = d.input, d.output
+    ids = [UUID(i["finding_id"]) for i in data["problems"] + data["opportunities"] + data["risks"]]
+    now = reactions.live(session, ctx, ids, d.restaurant_id)
     place = data.get("restaurant")
     texts = out.get("items") or {}
     return DigestOut(
@@ -129,9 +135,9 @@ def digest_out(d: Digest) -> DigestOut:
         kpis_previous_digest=data["kpis_previous_digest"],
         network_average=data["network_average"],
         processes=data["processes"],
-        problems=_items(data["problems"], texts),
-        opportunities=_items(data["opportunities"], texts),
-        risks=_items(data["risks"], texts),
+        problems=_items(data["problems"], texts, now),
+        opportunities=_items(data["opportunities"], texts, now),
+        risks=_items(data["risks"], texts, now),
         on_table=data["on_table"],
         improved=data["improved"],
         last_count=data["last_count"],
@@ -152,7 +158,7 @@ def latest(
     week_start: Annotated[date | None, Query()] = None,
 ) -> DigestOut:
     """The latest digest (or of `week_start`) of the restaurant, or of the network without one (HQ)."""
-    return digest_out(service.latest(session, scope_of(ctx, restaurant_id), week_start))
+    return digest_out(session, ctx, service.latest(session, scope_of(ctx, restaurant_id), week_start))
 
 
 @router.get("/digests/weeks", response_model=list[DigestWeekOut])
@@ -162,3 +168,58 @@ def weeks(ctx: CanRead, session: SessionDep, restaurant_id: UUID | None = None) 
         DigestWeekOut(week_start=a, week_end=b)
         for a, b in service.weeks(session, scope_of(ctx, restaurant_id))
     ]
+
+
+class DisagreeIn(BaseModel):
+    reason: Literal["wrong_data", "explained", "already_fixed", "other"]
+    comment: str | None = Field(default=None, max_length=1000)
+    digest_id: UUID | None = None
+
+
+class DisagreementOut(BaseModel):
+    id: UUID
+    finding_id: UUID
+    finding_title: str
+    restaurant: str
+    reason: str
+    reason_title: str
+    comment: str | None
+    created_at: datetime
+
+
+class ReasonOut(BaseModel):
+    reason: str
+    title: str
+
+
+@router.get("/digests/disagree-reasons", response_model=list[ReasonOut])
+def disagree_reasons(ctx: CanRead) -> list[ReasonOut]:
+    """The form's choices, named by the server."""
+    return [ReasonOut(reason=k, title=v) for k, v in reactions.REASON_TITLE.items()]
+
+
+@router.post("/findings/{finding_id}/disagree", status_code=204)
+def disagree(finding_id: UUID, body: DisagreeIn, ctx: CanRead, session: SessionDep, today: TodayDep) -> None:
+    """«Не согласен» — a director's reason, for the HQ; again replaces it."""
+    reactions.disagree(
+        session,
+        ctx,
+        finding_id,
+        reason=body.reason,
+        comment=body.comment,
+        digest_id=body.digest_id,
+        today=today,
+    )
+    session.commit()
+
+
+@router.delete("/findings/{finding_id}/disagree", status_code=204)
+def withdraw(finding_id: UUID, ctx: CanRead, session: SessionDep) -> None:
+    reactions.withdraw(session, ctx, finding_id)
+    session.commit()
+
+
+@router.get("/digests/disagreements", response_model=list[DisagreementOut])
+def disagreements(ctx: CanRead, session: SessionDep) -> list[DisagreementOut]:
+    """The HQ's list of directors' disagreements, the latest first."""
+    return [DisagreementOut(**r.__dict__) for r in reactions.for_hq(session, ctx)]

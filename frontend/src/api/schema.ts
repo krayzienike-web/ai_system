@@ -241,6 +241,7 @@ export interface DigestItemOut {
   causes: string[];
   actions: string[];
   taken: boolean;
+  disagreed: string | null;
 }
 
 export interface DigestKpisOut {
@@ -288,6 +289,23 @@ export interface DigestProcessOut {
 export interface DigestWeekOut {
   week_start: string;
   week_end: string;
+}
+
+export interface DisagreeIn {
+  reason: "wrong_data" | "explained" | "already_fixed" | "other";
+  comment?: string | null;
+  digest_id?: string | null;
+}
+
+export interface DisagreementOut {
+  id: string;
+  finding_id: string;
+  finding_title: string;
+  restaurant: string;
+  reason: string;
+  reason_title: string;
+  comment: string | null;
+  created_at: string;
 }
 
 export interface DraftOut {
@@ -736,6 +754,11 @@ export interface ReasonIO {
   title: string;
   kind: "loss" | "planned" | "shortage";
   synonyms?: string[];
+}
+
+export interface ReasonOut {
+  reason: string;
+  title: string;
 }
 
 export interface RebuildIn {

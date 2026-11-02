@@ -303,4 +303,4 @@ def rebuild_digest(
     with user_session(ctx) as s:
         digest = s.get(Digest, digest_id)
         assert digest is not None
-        return digests_api.digest_out(digest)
+        return digests_api.digest_out(s, ctx, digest)
