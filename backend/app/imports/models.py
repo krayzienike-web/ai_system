@@ -70,6 +70,8 @@ class SourceProfile(IdMixin, TenantMixin, TimestampMixin, Base):
     __table_args__ = (Index("ix_source_profiles_tenant_template", "tenant_id", "template"),)
 
     template: Mapped[str] = mapped_column(String(50))
+    # Whom it serves: one restaurant (a director's export), or the whole network (none; the HQ's).
+    restaurant_id: Mapped[UUID | None] = mapped_column(ForeignKey("restaurants.id", ondelete="CASCADE"))
     title: Mapped[str] = mapped_column(String(200))
     # {column name of the template: the export's header, normalized}
     mapping: Mapped[dict[str, str]] = mapped_column(JSONB)

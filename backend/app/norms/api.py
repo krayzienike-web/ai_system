@@ -29,6 +29,8 @@ class NormsIn(BaseModel):
     loss_by_category: dict[str, Decimal] = Field(default_factory=dict)
     write_off_reasons: list[ReasonIO] = Field(default_factory=list, max_length=100)
     review_findings: bool = True  # engine findings are checked by HQ before directors see them
+    # Rules the assistant respects when it proposes steps (ADR 0008; code review 02.11.2026, p. 14).
+    network_rules: list[Annotated[str, Field(max_length=300)]] = Field(default_factory=list, max_length=20)
 
 
 class NormsOut(NormsIn):
@@ -48,6 +50,7 @@ def _out(norms: Norms, session: SessionDep) -> NormsOut:
             for r in norms.reasons
         ],
         review_findings=norms.review_findings,
+        network_rules=norms.network_rules,
         menu_categories=menu,
         product_categories=products,
     )

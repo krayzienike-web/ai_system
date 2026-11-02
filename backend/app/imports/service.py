@@ -5,7 +5,7 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import delete, func, insert, select, text
+from sqlalchemy import ColumnElement, delete, func, insert, or_, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -110,30 +110,56 @@ def _unmatched_json(result: Result, lk: Lookups) -> list[dict[str, Any]]:
     ]
 
 
-def profile_aliases(session: Session) -> dict[str, dict[str, str]]:
-    """The network's confirmed source profiles as header aliases: template → {normalized header: column}."""
+def profile_aliases(session: Session, restaurant_id: UUID | None = None) -> dict[str, dict[str, str]]:
+    """The confirmed source profiles that serve this file, as header aliases: template → {normalized header:
+    column} — the network's profiles and the restaurant's own (code review 02.11.2026, p. 6)."""
+    serves: ColumnElement[bool] = SourceProfile.restaurant_id.is_(None)
+    if restaurant_id is not None:
+        serves = or_(serves, SourceProfile.restaurant_id == restaurant_id)
     out: dict[str, dict[str, str]] = {}
-    for template, mapping in session.execute(select(SourceProfile.template, SourceProfile.mapping)).all():
+    rows = session.execute(
+        select(SourceProfile.template, SourceProfile.mapping).where(serves).order_by(SourceProfile.created_at)
+    ).all()
+    for template, mapping in rows:
         out.setdefault(template, {}).update({header: column for column, header in mapping.items()})
     return out
 
 
 def save_profile(
-    session: Session, ctx: AccessContext, *, template: str, title: str, mapping: dict[str, str]
+    session: Session,
+    ctx: AccessContext,
+    *,
+    template: str,
+    title: str,
+    mapping: dict[str, str],
+    restaurant_id: UUID | None,
 ) -> SourceProfile:
     """A mapping confirmed by a person (docs/09): later files with these headers load by it, through the whole
-    validation. Who may upload files may confirm one."""
+    validation. The network's reference files and profiles for the whole network are the HQ's; a director's
+    profile serves their restaurant (code review 02.11.2026, p. 6). Refused: a header given to two columns,
+    or a header another profile of the same files already reads as another column (p. 5)."""
     if not ctx.can(Permission.DATA_UPLOAD):
         raise ForbiddenError("Подтвердить разметку может тот, кто загружает данные")
     t = _template(template)
+    check_access(session, ctx, t, restaurant_id)
     unknown = [c for c in mapping if c not in {col.name for col in t.columns}]
     if unknown:
         raise InvalidError(f"В шаблоне «{t.title}» нет колонок: {', '.join(unknown)}")
+    normalized = {c: norm_header(h) for c, h in mapping.items()}
+    if len(set(normalized.values())) != len(normalized):
+        raise InvalidError("Один заголовок файла отдан двум колонкам")
+    # HQ confirms for the whole network; anyone else — for the restaurant the file is from.
+    scope = None if ctx.role.is_hq else restaurant_id
+    known = profile_aliases(session, scope).get(t.name, {})
+    clash = [h for c, h in normalized.items() if known.get(h, c) != c]
+    if clash:
+        raise ConflictError(f"Заголовки уже читаются по-другому в профиле: {', '.join(clash)}")
     profile = SourceProfile(
         tenant_id=ctx.tenant_id,
         template=template,
+        restaurant_id=scope,
         title=title[:200],
-        mapping={c: norm_header(h) for c, h in mapping.items()},
+        mapping=normalized,
         confirmed_by=ctx.user_id,
     )
     session.add(profile)
@@ -145,9 +171,32 @@ def save_profile(
         action="import.profile",
         entity="source_profile",
         entity_id=profile.id,
-        payload={"template": template, "mapping": profile.mapping},
+        payload={
+            "template": template,
+            "mapping": profile.mapping,
+            "restaurant_id": str(scope) if scope else None,
+        },
     )
     return profile
+
+
+def delete_profile(session: Session, ctx: AccessContext, profile_id: UUID) -> None:
+    """A profile that reads files wrongly is removed; files load by the template's words again."""
+    if not ctx.can(Permission.DATA_UPLOAD):
+        raise ForbiddenError("Удалить профиль может тот, кто загружает данные")
+    profile = session.get(SourceProfile, profile_id)  # another network's: not visible
+    if profile is None or (profile.restaurant_id is None and not ctx.role.is_hq):
+        raise NotFoundError("Профиль не найден")
+    session.delete(profile)
+    audit(
+        session,
+        tenant_id=ctx.tenant_id,
+        user_id=ctx.user_id,
+        action="import.profile_deleted",
+        entity="source_profile",
+        entity_id=profile_id,
+        payload={"template": profile.template},
+    )
 
 
 def _template(name: str) -> Template:
@@ -183,9 +232,11 @@ def _run(
 ) -> tuple[Result | None, list[dict[str, Any]], dict[str, str], Lookups]:
     lk = load_lookups(session, restaurant_id)
     try:
-        table = read_table(raw, filename, template, aliases=profile_aliases(session).get(template.name))
+        table = read_table(
+            raw, filename, template, aliases=profile_aliases(session, restaurant_id).get(template.name)
+        )
     except InvalidError as e:
-        return None, [{"row": None, "column": None, "message": str(e)}], {}, lk
+        return None, [{"row": None, "column": None, "message": str(e), "code": e.code}], {}, lk
     column_map = {template.column(k).title: str(v + 1) for k, v in table.column_map.items()}
     return validate(template, table, lk, today=today), [], column_map, lk
 
@@ -232,7 +283,10 @@ def upload(
         # The file says what it is: restaurant facts when a restaurant is chosen, reference data otherwise.
         scope = Scope.RESTAURANT if restaurant_id is not None else Scope.NETWORK
         template = detect_template(
-            raw, filename, [t for t in TEMPLATES.values() if t.scope is scope], profile_aliases(session)
+            raw,
+            filename,
+            [t for t in TEMPLATES.values() if t.scope is scope],
+            profile_aliases(session, restaurant_id),
         )
     else:
         template = _template(template_name)

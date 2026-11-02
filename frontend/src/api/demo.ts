@@ -472,7 +472,7 @@ export function demoRequest(path: string, init: RequestInit, token: string | nul
       const chat = v.user.chat;
       return clone(chat[`${String(body.finding_id ?? "")}|${q}`] ?? chat[q] ?? chat["Что еще?"]);
     }
-    throw new ApiError(404, `Demo mode: ${path} is not available`);
+    throw new ApiError(404, "В прототипе это действие недоступно");
   }
 
   // Reads.
@@ -524,6 +524,8 @@ export function demoRequest(path: string, init: RequestInit, token: string | nul
   // «Документы» follow the card: a director's finding sent back to the check takes its documents with it.
   const sourcesOf = /^\/findings\/([^/?]+)\/sources$/.exec(path);
   if (sourcesOf && !v.hq && !findingsOf(v).some((f) => f.id === sourcesOf[1])) throw new ApiError(404, "Finding not found");
+  // The prototype has no assistant (ADR 0007): its blocks stay hidden whatever a recording says.
+  if (path === "/overview/context") return { ...(overlay(v, clone(answers[path])) as object), assistant: false };
   if (path in answers) return overlay(v, clone(answers[path]));
   // Answers that depend on the viewer: forbidden for a director, missing otherwise.
   // (another restaurant's page is «not found», as on the server).

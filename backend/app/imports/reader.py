@@ -67,10 +67,11 @@ def map_header(
         name = _norm(cell)
         if not name:
             continue
-        alias = (aliases or {}).get(name)
-        column = next(
-            (c for c in template.columns if c.name == alias or name in c.synonyms or name == c.name), None
-        )
+        # The template's own words first: a profile adds headers, it never takes a synonym away
+        # (code review 02.11.2026, p. 5: «Сумма» stays the amount whatever a profile says).
+        column = next((c for c in template.columns if name in c.synonyms or name == c.name), None)
+        if column is None and (alias := (aliases or {}).get(name)):
+            column = next((c for c in template.columns if c.name == alias), None)
         if column and column.name not in found:
             found[column.name] = i
         else:
@@ -100,7 +101,9 @@ def read_table(
     if best is None:
         required = [c.title for c in template.columns if c.required]
         groups = [" или ".join(template.column(n).title for n in g) for g in template.one_of]
-        raise InvalidError("Не нашли строку заголовков. Нужны колонки: " + ", ".join(required + groups))
+        raise InvalidError(
+            "Не нашли строку заголовков. Нужны колонки: " + ", ".join(required + groups), code="no_header"
+        )
     index, found, unmapped = best
     table = Table(header_row=index + 1, column_map=found, unmapped=unmapped)
     for number, cells in enumerate(rows[index + 1 :], start=index + 2):
@@ -133,5 +136,7 @@ def detect_template(
             best = (score, template)
     if best is None:
         titles = ", ".join(t.title.lower() for t in candidates)
-        raise InvalidError(f"Не узнали файл. Ожидали один из: {titles}. Проверьте строку заголовков")
+        raise InvalidError(
+            f"Не узнали файл. Ожидали один из: {titles}. Проверьте строку заголовков", code="no_header"
+        )
     return best[1]

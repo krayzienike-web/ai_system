@@ -271,6 +271,11 @@
       "title": "Id",
       "type": "string"
      },
+     "markable": {
+      "default": false,
+      "title": "Markable",
+      "type": "boolean"
+     },
      "period_from": {
       "anyOf": [
        {
@@ -2688,10 +2693,21 @@
       "title": "Basis",
       "type": "object"
      },
+     "basis_words": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Basis Words",
+      "type": "array"
+     },
      "created_at": {
       "format": "date-time",
       "title": "Created At",
       "type": "string"
+     },
+     "decided_by_me": {
+      "title": "Decided By Me",
+      "type": "boolean"
      },
      "hypotheses": {
       "items": {
@@ -2735,7 +2751,9 @@
      "hypotheses",
      "steps",
      "rules_note",
-     "basis"
+     "basis",
+     "basis_words",
+     "decided_by_me"
     ],
     "title": "HypothesesOut",
     "type": "object"
@@ -2788,6 +2806,13 @@
       "title": "Evidence",
       "type": "array"
      },
+     "evidence_text": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Evidence Text",
+      "type": "array"
+     },
      "id": {
       "format": "uuid",
       "title": "Id",
@@ -2822,7 +2847,8 @@
      "pattern",
      "why_it_matters",
      "rule_sketch",
-     "evidence"
+     "evidence",
+     "evidence_text"
     ],
     "title": "IdeaOut",
     "type": "object"
@@ -3478,6 +3504,15 @@
       ],
       "title": "Loss Default Pct"
      },
+     "network_rules": {
+      "items": {
+       "maxLength": 300,
+       "type": "string"
+      },
+      "maxItems": 20,
+      "title": "Network Rules",
+      "type": "array"
+     },
      "review_findings": {
       "default": true,
       "title": "Review Findings",
@@ -3528,6 +3563,15 @@
        "type": "string"
       },
       "title": "Menu Categories",
+      "type": "array"
+     },
+     "network_rules": {
+      "items": {
+       "maxLength": 300,
+       "type": "string"
+      },
+      "maxItems": 20,
+      "title": "Network Rules",
       "type": "array"
      },
      "product_categories": {
@@ -3874,6 +3918,18 @@
       "title": "Mapping",
       "type": "object"
      },
+     "restaurant_id": {
+      "anyOf": [
+       {
+        "format": "uuid",
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Restaurant Id"
+     },
      "template": {
       "title": "Template",
       "type": "string"
@@ -3886,6 +3942,7 @@
     "required": [
      "id",
      "template",
+     "restaurant_id",
      "title",
      "mapping"
     ],
@@ -7277,6 +7334,48 @@
      }
     ],
     "summary": "Source Profiles",
+    "tags": [
+     "imports"
+    ]
+   }
+  },
+  "/api/imports/profiles/{profile_id}": {
+   "delete": {
+    "description": "A profile that reads files wrongly is removed (code review 02.11.2026, p. 5).",
+    "operationId": "delete_source_profile_api_imports_profiles__profile_id__delete",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "profile_id",
+      "required": true,
+      "schema": {
+       "format": "uuid",
+       "title": "Profile Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "204": {
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Delete Source Profile",
     "tags": [
      "imports"
     ]

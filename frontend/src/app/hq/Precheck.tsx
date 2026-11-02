@@ -3,17 +3,12 @@ import { Eye, Sparkles } from "lucide-react";
 import { useAppContext, useMakePrecheck, usePrecheck, usePrecheckStats } from "../../api/hooks";
 import { AiBadge } from "../../ds/ai";
 import { Button, Card, ErrorText } from "../../ds/primitives";
+import { REASON_TITLE } from "./reasons";
 
 const VERDICT: Record<string, string> = {
   confirm: "Подтвердить",
   reject: "Отклонить",
   look_closer: "Посмотреть внимательнее",
-};
-const REASON: Record<string, string> = {
-  data: "данные неверны или неполные",
-  logic: "правило не подходит к этому случаю",
-  false_alarm: "цифры верны, но это не проблема",
-  other: "другое",
 };
 
 /** Before the verdict: what the code says to look at, and the assistant's draft verdict (ADR 0008). */
@@ -44,10 +39,14 @@ export function PrecheckPanel({ findingId }: { findingId: string }) {
       )}
 
       {draft && (
-        <div className="mt-4 rounded-[12px] bg-paper/60 p-3 text-sm" aria-label="Черновик вердикта ИИ">
+        <section aria-label="Черновик вердикта ИИ" className="mt-4 rounded-[12px] bg-paper/60 p-3 text-sm">
           <div className="flex items-center gap-2 font-semibold">
             Черновик ИИ: {VERDICT[draft.verdict] ?? draft.verdict}
-            {draft.reason && <span className="font-normal text-ink-3">— {REASON[draft.reason] ?? draft.reason}</span>}
+            {draft.reason && (
+              <span className="font-normal text-ink-3">
+                — {REASON_TITLE[draft.reason as keyof typeof REASON_TITLE] ?? draft.reason}
+              </span>
+            )}
             <AiBadge basis="Черновик по фактам находки и флагам выше. Вердикт ставите вы." />
           </div>
           <p className="mt-1 text-ink-2">{draft.rationale}</p>
@@ -58,7 +57,7 @@ export function PrecheckPanel({ findingId }: { findingId: string }) {
               ))}
             </ul>
           )}
-        </div>
+        </section>
       )}
 
       {assistant && (

@@ -55,9 +55,13 @@ class BatchOut(BaseModel):
     created_at: datetime
     published_at: datetime | None
 
+    # The file's columns were not recognised: the screen offers «Разметить с ИИ» (stage 5.5).
+    markable: bool = False
+
     @classmethod
     def of(cls, b: ImportBatch) -> "BatchOut":
-        return cls(**{name: getattr(b, name) for name in cls.model_fields})
+        fields = {name: getattr(b, name) for name in cls.model_fields if name != "markable"}
+        return cls(**fields, markable=any(e.get("code") == "no_header" for e in b.errors or []))
 
 
 @router.get("/imports/templates")
@@ -98,6 +102,7 @@ def get_freshness(ctx: CanRead, session: SessionDep, today: TodayDep) -> list[Fr
 class ProfileOut(BaseModel):
     id: UUID
     template: str
+    restaurant_id: UUID | None  # none: the whole network
     title: str
     mapping: dict[str, str]
 
@@ -106,7 +111,19 @@ class ProfileOut(BaseModel):
 def source_profiles(ctx: CanRead, session: SessionDep) -> list[ProfileOut]:
     """The network's confirmed source profiles (docs/09): the exports that load without a template."""
     rows = session.execute(select(SourceProfile).order_by(SourceProfile.created_at.desc())).scalars()
-    return [ProfileOut(id=p.id, template=p.template, title=p.title, mapping=p.mapping) for p in rows]
+    return [
+        ProfileOut(
+            id=p.id, template=p.template, restaurant_id=p.restaurant_id, title=p.title, mapping=p.mapping
+        )
+        for p in rows
+    ]
+
+
+@router.delete("/imports/profiles/{profile_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_source_profile(profile_id: UUID, ctx: CanRead, session: SessionDep) -> None:
+    """A profile that reads files wrongly is removed (code review 02.11.2026, p. 5)."""
+    service.delete_profile(session, ctx, profile_id)
+    session.commit()
 
 
 @router.get("/imports/{batch_id}")

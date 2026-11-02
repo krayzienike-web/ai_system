@@ -8,17 +8,18 @@ can; only the rest goes to the model, with the headers and a few sample rows. A 
 proposal.
 """
 
+import hashlib
 import re
 from datetime import date
 from typing import Any
-from uuid import UUID
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.ai.gateway import Gateway
 from app.ai.suggestions import Proposal, ask, deciding, keep
-from app.core.errors import ConflictError, InvalidError
+from app.core.errors import ForbiddenError, InvalidError
 from app.imports import service as imports
 from app.imports.reader import HEADER_SEARCH_ROWS, map_header, norm_header, read_rows, read_table
 from app.imports.templates import TEMPLATES, Template
@@ -82,6 +83,29 @@ def _try(
     }
 
 
+MAX_BYTES = 20 * 1024 * 1024
+
+
+def allowed(ctx: AccessContext, template_name: str, restaurant_id: UUID | None) -> Template:
+    """Who may mark this file: whoever may upload it (code review 02.11.2026, p. 10) — checked before the
+    model is even asked."""
+    if not ctx.can(Permission.DATA_UPLOAD):
+        raise ForbiddenError("Размечать файлы может тот, кто загружает данные")
+    t = TEMPLATES.get(template_name)
+    if t is None:
+        raise InvalidError(f"Неизвестный шаблон: {template_name}")
+    with user_session(ctx) as session:
+        imports.check_access(session, ctx, t, restaurant_id)
+    return t
+
+
+def file_subject(template: str, raw: bytes, restaurant_id: UUID | None) -> UUID:
+    """The subject of a marking: this file for this restaurant. A new marking replaces only an undecided
+    marking of the same file, not another person's of another file (code review 02.11.2026, p. 7)."""
+    digest = hashlib.sha256(raw).hexdigest()
+    return uuid5(NAMESPACE_URL, f"souschef:mapping:{template}:{restaurant_id}:{digest}")
+
+
 def propose_marking(
     gateway: Gateway,
     ctx: AccessContext,
@@ -92,17 +116,14 @@ def propose_marking(
     raw: bytes,
     today: date,
 ) -> tuple[Proposal, dict[str, Any]]:
-    if not ctx.can(Permission.DATA_UPLOAD):
-        raise InvalidError("Размечать файлы может тот, кто загружает данные")
-    t = TEMPLATES.get(template_name)
-    if t is None:
-        raise InvalidError(f"Неизвестный шаблон: {template_name}")
+    if len(raw) > MAX_BYTES:
+        raise InvalidError("Файл больше 20 МБ — разбейте выгрузку на несколько периодов")
+    t = allowed(ctx, template_name, restaurant_id)
     rows = read_rows(raw, filename)
     index = guess_header(rows)
     headers = [c.strip() for c in rows[index] if c.strip()]
     with user_session(ctx) as session:
-        imports.check_access(session, ctx, t, restaurant_id)
-        aliases = imports.profile_aliases(session).get(t.name, {})
+        aliases = imports.profile_aliases(session, restaurant_id).get(t.name, {})
         known, _ = map_header(rows[index], t, aliases)
     already = {name: rows[index][i].strip() for name, i in known.items()}
     basis = {
@@ -118,6 +139,13 @@ def propose_marking(
         names = {c.name for c in t.columns}
         problems = [f"нет колонки шаблона {c.field}" for c in m.columns if c.field not in names]
         problems += [f"нет заголовка «{c.header}» в файле" for c in m.columns if c.header not in headers]
+        # What the dictionary mapped stays: the model marks only the rest (code review 02.11.2026, p. 4).
+        problems += [f"колонка {c.field} уже сопоставлена словарем" for c in m.columns if c.field in already]
+        problems += [
+            f"заголовок «{c.header}» уже сопоставлен словарем"
+            for c in m.columns
+            if c.header in already.values()
+        ]
         chosen = {**already, **{c.field: c.header for c in m.columns}}
         if len(set(chosen.values())) != len(chosen):
             problems.append("один заголовок отдан двум колонкам")
@@ -147,12 +175,12 @@ def propose_marking(
         gateway, ctx, task="mapping", prompt_name="mapping", basis=basis, answer=Marking, check=check
     )
     columns = [{"field": f, "header": h, "why": "по словарю синонимов"} for f, h in already.items()]
-    columns += [c.model_dump() for c in result.columns if c.field not in already]
+    columns += [c.model_dump() for c in result.columns]  # exactly the marking the import read above
     content = {"template": t.name, "filename": filename[:300], "columns": columns, "preview": preview}
     (kept,) = keep(
         ctx,
         kind="mapping",
-        subject_id=None,
+        subject_id=file_subject(t.name, raw, restaurant_id),
         restaurant_id=restaurant_id,
         contents=[content],
         basis=basis,
@@ -162,12 +190,11 @@ def propose_marking(
 
 
 def confirm(ctx: AccessContext, suggestion_id: UUID, *, today: date) -> UUID:
-    """The person confirms the marking: it becomes the network's source profile, in the same transaction."""
+    """The person confirms the marking: it becomes a source profile in the same transaction — for the network
+    when the HQ confirms, for the file's restaurant when a director does (imports.save_profile)."""
     with deciding(ctx, suggestion_id, today=today) as (session, row):
         if row.kind != "mapping":
             raise InvalidError("Это не разметка файла")
-        if row.status != "proposed":
-            raise ConflictError("Эта разметка уже подтверждена или отклонена")
         content = row.content
         profile = imports.save_profile(
             session,
@@ -175,6 +202,7 @@ def confirm(ctx: AccessContext, suggestion_id: UUID, *, today: date) -> UUID:
             template=content["template"],
             title=f"Профиль файла «{content['filename']}»",
             mapping={c["field"]: c["header"] for c in content["columns"]},
+            restaurant_id=row.restaurant_id,
         )
         row.status, row.decision_note = "accepted", "разметка подтверждена"
         return profile.id

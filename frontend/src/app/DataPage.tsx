@@ -145,8 +145,6 @@ function Matching({ batch, onMatched }: { batch: ImportBatch; onMatched: (b: Imp
   );
 }
 
-const NO_HEADER = /строку заголовков|Не узнали файл/;
-
 function Report({
   batch,
   onAgain,
@@ -291,7 +289,7 @@ function Report({
           </motion.div>
         )}
         {current.status === "rolled_back" && <p className="text-sm text-ink-2">Загрузка отменена: строки этого файла удалены.</p>}
-        {marking && current.status === "failed" && current.errors.some((e) => NO_HEADER.test(e.message)) && <MarkWithAi {...marking} />}
+        {marking && current.status === "failed" && current.markable && <MarkWithAi {...marking} />}
         <Button variant="ghost" onClick={onAgain}>
           {current.status === "failed" ? "Загрузить исправленный файл" : "Загрузить другой файл"}
         </Button>
@@ -428,6 +426,16 @@ function Upload() {
               />
               {upload.error && (
                 <p className="text-sm text-loss">{upload.error instanceof ApiError ? upload.error.message : "Не получилось загрузить файл"}</p>
+              )}
+              {/* The type was guessed and the file was not recognised: the assistant can mark it (the server says so). */}
+              {lastFile && upload.error instanceof ApiError && upload.error.code === "no_header" && (
+                <MarkWithAi
+                  file={lastFile}
+                  restaurantId={isNetwork ? null : where}
+                  template={template || null}
+                  templates={kinds}
+                  onConfirmed={() => send(lastFile)}
+                />
               )}
             </div>
           )}

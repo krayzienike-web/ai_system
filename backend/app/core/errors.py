@@ -4,6 +4,12 @@
 class RuleError(Exception):
     status_code = 422
 
+    def __init__(self, message: str = "", *, code: str | None = None) -> None:
+        """`code`: what the screen may act on, so it never reads the words (ADR 0007) — «no_header»: the file
+        can be marked with the assistant."""
+        super().__init__(message)
+        self.code = code
+
 
 class NotFoundError(RuleError):
     """Missing or outside the caller's scope: the two look the same, so nothing leaks."""

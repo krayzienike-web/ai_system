@@ -52,6 +52,24 @@ describe("demo replays the server", () => {
   });
 });
 
+describe("the prototype has no assistant (ADR 0007; code review 02.11.2026, front p. 2)", () => {
+  it("says so for every viewer, whatever a recording holds", () => {
+    for (const email of Object.keys(users)) {
+      expect(get<{ assistant?: boolean }>("/overview/context", email).assistant, email).toBe(false);
+    }
+  });
+
+  it("answers an action it has not recorded in Russian", () => {
+    try {
+      send("/findings/x/hypotheses", ADMIN, "POST");
+      throw new Error("no error");
+    } catch (e) {
+      expect(e).toBeInstanceOf(ApiError);
+      expect((e as ApiError).message).toBe("В прототипе это действие недоступно");
+    }
+  });
+});
+
 describe("demo isolation", () => {
   it("shows a director only their restaurant", () => {
     expect(get<Restaurant[]>("/restaurants", DIRECTOR).map((r) => r.code)).toEqual(["R01"]);

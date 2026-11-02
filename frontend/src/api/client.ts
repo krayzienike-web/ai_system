@@ -35,6 +35,8 @@ export class ApiError extends Error {
   constructor(
     public status: number,
     message: string,
+    /** What the screen may act on (the server's `code`, e.g. «no_header»), so it never reads the words. */
+    public code?: string,
   ) {
     super(message);
   }
@@ -100,7 +102,7 @@ export async function api<T>(
     const body = await response.json().catch(() => ({}));
     const detail =
       typeof body.detail === "string" ? body.detail : response.statusText;
-    throw new ApiError(response.status, detail);
+    throw new ApiError(response.status, detail, typeof body.code === "string" ? body.code : undefined);
   }
   return response.json() as Promise<T>;
 }

@@ -42,15 +42,23 @@ class HypothesesOut(BaseModel):
     hypotheses: list[HypothesisOut]
     steps: list[str]
     rules_note: str | None
-    basis: dict[str, Any]  # what it was made from: shown next to the proposal
+    basis: dict[str, Any]  # what it was made from
+    basis_words: list[
+        str
+    ]  # the same in words, for «Почему я это вижу» (ADR 0007: the screen computes nothing)
+    decided_by_me: (
+        bool  # a decision is shared: the screen says whose it is (code review 02.11.2026, front p. 3)
+    )
 
     @classmethod
-    def of(cls, p: Proposal) -> "HypothesesOut":
+    def of(cls, p: Proposal, ctx: AccessContext) -> "HypothesesOut":
         c = p.content
         return cls(
             id=p.id,
             status=p.status,
             created_at=p.created_at,
+            basis_words=hypotheses.basis_words(p.basis),
+            decided_by_me=p.decided_by == ctx.user_id,
             hypotheses=[
                 HypothesisOut(**h, cause_title=hypotheses.CAUSES.get(h["cause"], h["cause"]))
                 for h in c["hypotheses"]
@@ -81,7 +89,7 @@ def _visible(ctx: AccessContext, finding_id: UUID, today: Any) -> None:
 def get_hypotheses(finding_id: UUID, ctx: CanRead, today: TodayDep) -> HypothesesOut | None:
     _visible(ctx, finding_id, today)
     p = suggestions.latest(ctx, "hypotheses", finding_id)
-    return HypothesesOut.of(p) if p else None
+    return HypothesesOut.of(p, ctx) if p else None
 
 
 @router.post("/findings/{finding_id}/hypotheses")
@@ -92,7 +100,7 @@ def make_hypotheses(
     _visible(ctx, finding_id, today)  # access first: another's finding is «not found», model or not
     if gateway is None:
         raise ModelUnavailableError("Ассистент пока не подключен")
-    return HypothesesOut.of(hypotheses.propose_for_finding(gateway, ctx, finding_id, today))
+    return HypothesesOut.of(hypotheses.propose_for_finding(gateway, ctx, finding_id, today), ctx)
 
 
 @router.post("/ai/suggestions/{suggestion_id}/decision")
@@ -169,6 +177,7 @@ class IdeaOut(BaseModel):
     why_it_matters: str
     rule_sketch: str
     evidence: list[dict[str, Any]]  # the aggregate rows the idea rests on, as the code computed them
+    evidence_text: list[str]  # the same rows in words
 
 
 def _idea(p: Proposal) -> IdeaOut:
@@ -182,6 +191,7 @@ def _idea(p: Proposal) -> IdeaOut:
         why_it_matters=c["why_it_matters"],
         rule_sketch=c["rule_sketch"],
         evidence=c["evidence"],
+        evidence_text=[row.get("text", "") for row in c["evidence"]],
     )
 
 
@@ -218,9 +228,6 @@ class ProfileSavedOut(BaseModel):
     profile_id: UUID
 
 
-MAX_BYTES = 20 * 1024 * 1024
-
-
 @router.post("/imports/mapping")
 async def make_marking(
     ctx: CanRead,
@@ -233,9 +240,10 @@ async def make_marking(
 ) -> MarkingOut:
     """An unfamiliar file: the assistant marks its columns, the import checks the marking on the file."""
     _release(session)
+    await run_in_threadpool(mapping.allowed, ctx, template, restaurant_id)  # access first, model or not
     if gateway is None:
         raise ModelUnavailableError("Ассистент пока не подключен")
-    raw = await file.read(MAX_BYTES + 1)
+    raw = await file.read(mapping.MAX_BYTES + 1)
     p, _ = await run_in_threadpool(
         mapping.propose_marking,
         gateway,

@@ -1,10 +1,11 @@
 import { Sparkles } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useAppContext, useConfirmMarking, useMarkFile } from "../api/hooks";
 import { AiBadge } from "../ds/ai";
 import { Button, ErrorText } from "../ds/primitives";
 import { plural } from "../lib/format";
+import { useViewer } from "../lib/useViewer";
 
 /**
  * A file the import did not understand: the assistant marks which column is which, the import checks the
@@ -24,18 +25,27 @@ export function MarkWithAi({
   onConfirmed: () => void;
 }) {
   const context = useAppContext();
+  const viewer = useViewer();
   const mark = useMarkFile();
   const confirm = useConfirmMarking();
   const [template, setTemplate] = useState(chosen ?? templates[0]?.name ?? "");
+  // The button goes away with the result: focus moves to the result, not to the page (review 02.11, front p. 9).
+  const resultRef = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    if (mark.data) resultRef.current?.focus();
+  }, [mark.data]);
   if (!context.data?.assistant) return null;
   const m = mark.data;
 
   return (
-    <div className="rounded-[14px] border border-dashed border-line-strong p-4 text-sm">
+    <section aria-label="Разметка файла с ИИ" className="rounded-[14px] border border-dashed border-line-strong p-4 text-sm">
       {!m ? (
         <>
           <div className="font-medium">Незнакомый формат файла</div>
-          <p className="mt-1 text-ink-2">ИИ подскажет, какая колонка что значит. Разметку проверим на этом файле, а вы подтвердите ее один раз.</p>
+          <p className="mt-1 text-ink-2">
+            ИИ подскажет, какая колонка что значит. Разметку проверим на этом файле, а вы подтвердите ее один раз:{" "}
+            {viewer?.isHq ? "дальше такие файлы будут загружаться сами во всей сети" : "дальше такие файлы вашего ресторана будут загружаться сами"}.
+          </p>
           <div className="mt-3 flex flex-wrap items-end gap-2">
             {!chosen && (
               <label>
@@ -60,9 +70,9 @@ export function MarkWithAi({
         </>
       ) : (
         <>
-          <div className="flex items-center gap-2 font-medium">
+          <h3 ref={resultRef} tabIndex={-1} className="flex items-center gap-2 font-medium outline-none">
             Разметка ИИ <AiBadge basis="По заголовкам и первым строкам файла. Разметку уже проверил импорт на этом файле." />
-          </div>
+          </h3>
           <table className="mt-2 w-full text-left">
             <thead className="text-ink-3">
               <tr>
@@ -91,6 +101,6 @@ export function MarkWithAi({
         </>
       )}
       <ErrorText error={mark.error ?? confirm.error} className="mt-2" />
-    </div>
+    </section>
   );
 }

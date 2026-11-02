@@ -23,7 +23,7 @@ from app.ai.gateway import Gateway, InvalidAnswerError, Task
 from app.ai.models import AiSuggestion
 from app.ai.prompt import Prompt
 from app.ai.verify import unsupported
-from app.core.errors import ForbiddenError, NotFoundError
+from app.core.errors import ConflictError, ForbiddenError, InvalidError, NotFoundError
 from app.insights.visible import visible_finding
 from app.tenancy.context import AccessContext, user_session
 from app.tenancy.permissions import Permission
@@ -53,6 +53,7 @@ class Proposal:
     status: str
     prompt_version: int
     created_at: datetime
+    decided_by: UUID | None = None
 
 
 def _texts(value: Any) -> str:
@@ -68,16 +69,21 @@ def ask[P: BaseModel](
     basis: dict[str, Any],
     answer: type[P],
     check: Callable[[P], list[str]] | None = None,
+    facts_of: Callable[[P], Any] | None = None,
 ) -> tuple[P, Prompt]:
-    """Ask the model by the schema of `answer`; every number must be in `basis`, and `check` (the kind's own
-    rules) must pass. One request to correct, then `InvalidAnswerError`: no proposal."""
+    """Ask the model by the schema of `answer`; every number must be in `basis` (of `facts_of(answer)`, if
+    given), and `check` (the kind's own rules) must pass. One request to correct, then `InvalidAnswerError`:
+    no proposal."""
     chat = prompts.load(prompt_name)
     messages: list[dict[str, Any]] = [
         {"role": "user", "content": [{"type": "text", "text": f"Факты (посчитаны кодом):\n{_texts(basis)}"}]}
     ]
     for attempt in range(2):
         result = gateway.structured(ctx, task=task, prompt=chat, messages=messages, answer=answer)
-        problems = unsupported(_texts(result.model_dump(mode="json")), [basis])
+        # Every number is checked; `facts_of` names the part that states facts, when a field is a proposal
+        # by nature (a threshold for a future rule).
+        stated = facts_of(result) if facts_of is not None else result.model_dump(mode="json")
+        problems = unsupported(_texts(stated), [basis])
         if check is not None:
             problems += check(result)
         if not problems:
@@ -104,17 +110,20 @@ def keep(
     basis: dict[str, Any],
     chat: Prompt,
 ) -> list[Proposal]:
-    """Store proposals; those still undecided on the same subject become `superseded`."""
+    """Store proposals; those still undecided on the same subject become `superseded`. Proposals without a
+    subject (ideas of new findings) replace nothing: an idea nobody decided on yet stays (code review
+    02.11.2026, p. 7)."""
     with user_session(ctx) as s:
-        s.execute(
-            update(AiSuggestion)
-            .where(
-                AiSuggestion.kind == kind,
-                AiSuggestion.subject_id == subject_id,
-                AiSuggestion.status == "proposed",
+        if subject_id is not None:
+            s.execute(
+                update(AiSuggestion)
+                .where(
+                    AiSuggestion.kind == kind,
+                    AiSuggestion.subject_id == subject_id,
+                    AiSuggestion.status == "proposed",
+                )
+                .values(status="superseded")
             )
-            .values(status="superseded")
-        )
         rows = [
             AiSuggestion(
                 tenant_id=ctx.tenant_id,
@@ -174,6 +183,7 @@ def out(row: AiSuggestion) -> Proposal:
         row.status,
         row.prompt_version,
         row.created_at,
+        row.decided_by,
     )
 
 
@@ -200,11 +210,14 @@ def latest(ctx: AccessContext, kind: str, subject_id: UUID | None) -> Proposal |
 def deciding(
     ctx: AccessContext, suggestion_id: UUID, *, today: date
 ) -> Iterator[tuple[Session, AiSuggestion]]:
-    """A proposal locked for a decision, if the caller may see it and decide on it."""
+    """A proposal locked for a decision, if the caller may see it and decide on it. One decision per
+    proposal: a decided one is not decided again (code review 02.11.2026, p. 8)."""
     with user_session(ctx) as s:
         row = s.get(AiSuggestion, suggestion_id, with_for_update=True)  # another restaurant's: not visible
         if row is None or row.status == "superseded":
             raise NotFoundError("Предложение не найдено")
+        if row.status != "proposed":
+            raise ConflictError("По этому предложению уже приняли решение")
         if row.kind in FINDING_KINDS and row.subject_id is not None:
             visible_finding(
                 s, ctx, row.subject_id, today=today
@@ -221,6 +234,9 @@ def decide(
     ctx: AccessContext, suggestion_id: UUID, *, accepted: bool, note: str | None, today: date
 ) -> Proposal:
     with deciding(ctx, suggestion_id, today=today) as (_, row):
+        if row.kind == "mapping" and accepted:
+            # A marking is accepted only by confirming it, which saves the source profile (mapping.confirm).
+            raise InvalidError("Разметку файла подтверждают кнопкой «Подтвердить и загрузить»")
         row.status = "accepted" if accepted else "rejected"
         row.decision_note = note
     return out(row)

@@ -30,7 +30,7 @@ from app.ai.models import AiSuggestion, ChatThread
 from app.catalog.models import NameAlias, Product
 from app.core.period import get_today
 from app.experiments.models import Experiment
-from app.imports.models import ImportBatch
+from app.imports.models import ImportBatch, SourceProfile
 from app.insights.models import Finding
 from app.main import app
 from app.tasks.models import Task
@@ -83,6 +83,7 @@ class Foreign:
     alias_id: UUID
     thread_id: UUID
     suggestion_id: UUID
+    profile_id: UUID
     restaurant_id: UUID
     code: str
     names: list[str]
@@ -161,7 +162,13 @@ def foreign(network: Network, owner_engine: Engine) -> Foreign:
             prompt="hypotheses",
             prompt_version=1,
         )
-        s.add_all([alias, thread, proposal])
+        profile = SourceProfile(
+            tenant_id=b.id,
+            template="receipts",
+            title="Чужой профиль сети Б",
+            mapping={"amount": "чужая сумма"},
+        )
+        s.add_all([alias, thread, proposal, profile])
         s.flush()
         return Foreign(
             finding.id,
@@ -171,6 +178,7 @@ def foreign(network: Network, owner_engine: Engine) -> Foreign:
             alias.id,
             thread.id,
             proposal.id,
+            profile.id,
             b.restaurants["B1"],
             "B1",
             [
@@ -208,6 +216,7 @@ def _ids(f: Foreign) -> dict[str, str]:
         "alias_id": str(f.alias_id),
         "thread_id": str(f.thread_id),
         "suggestion_id": str(f.suggestion_id),
+        "profile_id": str(f.profile_id),
         "restaurant_id": str(f.restaurant_id),
         "code": f.code,
     }

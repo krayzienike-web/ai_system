@@ -7,14 +7,14 @@ gets them for their own findings, the HQ for any.
 """
 
 from datetime import date
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
 
 from app.ai import finding_context
 from app.ai.gateway import Gateway
-from app.ai.suggestions import Proposal, propose
+from app.ai.suggestions import Proposal, ask, propose
 from app.insights.models import Finding
 from app.tenancy.context import AccessContext, user_session
 
@@ -85,12 +85,52 @@ def _at_most_three(h: Hypotheses) -> list[str]:
     return problems
 
 
-def propose_for_finding(gateway: Gateway, ctx: AccessContext, finding_id: UUID, today: date) -> Proposal:
+BASIS_WORDS = {
+    "suppliers_by_month": "поставщики и цены по месяцам",
+    "write_off_reasons": "причины списаний",
+    "inventory_count_days": "даты инвентаризаций",
+    "data_problems": "проблемы с данными ресторана",
+    "checks_of_similar_findings": "итоги похожих проверок в сети",
+}
+
+
+def basis_words(basis: dict[str, Any]) -> list[str]:
+    """What the hypotheses rest on, in words: only the facts there were (empty ones are dropped when the
+    context is built; code review 02.11.2026, front p. 6)."""
+    out = [words for key, words in BASIS_WORDS.items() if basis.get(key)]
+    rules = basis.get("network_rules") or []
+    if rules:
+        out.append("правила сети: " + "; ".join(rules))
+    return out or ["данные находки"]
+
+
+def _facts(ctx: AccessContext, finding_id: UUID, today: date) -> tuple[dict[str, Any], UUID | None]:
     with user_session(ctx) as session:
         basis = finding_context.build(session, ctx, finding_id, today)  # not visible → NotFoundError
         row = session.get(Finding, finding_id)
         restaurant_id = row.restaurant_id if row else None
     basis["causes_to_choose_from"] = CAUSES
+    return basis, restaurant_id
+
+
+def ask_for_finding(gateway: Gateway, ctx: AccessContext, finding_id: UUID, today: date) -> Hypotheses:
+    """The hypotheses without keeping them: the eval measures, it does not replace what people see (code
+    review 02.11.2026, p. 14)."""
+    basis, _ = _facts(ctx, finding_id, today)
+    result, _ = ask(
+        gateway,
+        ctx,
+        task="explain",
+        prompt_name="hypotheses",
+        basis=basis,
+        answer=Hypotheses,
+        check=_at_most_three,
+    )
+    return result
+
+
+def propose_for_finding(gateway: Gateway, ctx: AccessContext, finding_id: UUID, today: date) -> Proposal:
+    basis, restaurant_id = _facts(ctx, finding_id, today)
     return propose(
         gateway,
         ctx,

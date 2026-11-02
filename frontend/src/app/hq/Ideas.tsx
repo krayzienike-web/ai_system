@@ -35,18 +35,11 @@ export function FindingIdeas() {
             <li key={i.id} className="rounded-[12px] border border-line p-3 text-sm">
               <div className="flex items-center gap-2 font-medium">
                 {i.title}
-                <AiBadge
-                  basis={
-                    <>
-                      Строки итогов, на которых держится идея:{" "}
-                      {i.evidence.map((e) => Object.values(e).filter((v) => typeof v === "string" && !/^a\d+$/.test(v)).join(", ")).join("; ")}
-                    </>
-                  }
-                />
+                <AiBadge basis={<>Итоги, на которых держится идея: {i.evidence_text.join("; ")}.</>} />
               </div>
               <p className="mt-1 text-ink-2">{i.pattern}</p>
               <p className="mt-1 text-ink-3">Чем грозит: {i.why_it_matters}</p>
-              <p className="mt-1 text-ink-3">Как проверять кодом: {i.rule_sketch}</p>
+              <p className="mt-1 text-ink-3">Набросок правила (пороги — предложение ИИ, не факт): {i.rule_sketch}</p>
               <div className="mt-2 flex gap-2">
                 {DECIDED[i.status] ? (
                   <span className="text-ink-3">{DECIDED[i.status]}</span>

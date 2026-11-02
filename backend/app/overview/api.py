@@ -230,7 +230,8 @@ def get_context(ctx: CanRead, session: SessionDep, today: TodayDep) -> ContextOu
             for label, days in DUE_OPTIONS
         ],
         periods=_period_options(session, today),
-        assistant=get_settings().ai_provider != "off",
+        assistant=get_settings().ai_provider
+        == "claude",  # the provider get_model() knows (review 02.11, p. 14)
     )
 
 

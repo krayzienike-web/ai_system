@@ -39,6 +39,7 @@ import { useViewer } from "../../lib/useViewer";
 import { useUi } from "../../state/ui";
 import { RecalcNote } from "../analytics/RecalcNote";
 import { FindingIdeas } from "./Ideas";
+import { REASONS, REASON_TITLE } from "./reasons";
 import { PrecheckPanel, PrecheckStatsLine } from "./Precheck";
 import { ReviewTrace } from "../findings/ReviewTrace";
 
@@ -48,27 +49,7 @@ const TABS: { status: ReviewStatus; title: string }[] = [
   { status: "rejected", title: "Отклонены" },
 ];
 
-const REASONS: { reason: RejectReason; title: string; hint: string }[] = [
-  {
-    reason: "data",
-    title: "Ошибка в данных",
-    hint: "файл неполный, не та инвентаризация, перепутаны единицы",
-  },
-  {
-    reason: "logic",
-    title: "Ошибка в логике расчета",
-    hint: "формула или правило не подходят — опишите, что не так",
-  },
-  {
-    reason: "false_alarm",
-    title: "Не проблема",
-    hint: "цифры верны, но это известно, согласовано или сезонно",
-  },
-  { reason: "other", title: "Другое", hint: "опишите" },
-];
-const REASON_TITLE = Object.fromEntries(
-  REASONS.map((r) => [r.reason, r.title]),
-) as Record<RejectReason, string>;
+
 
 
 /** "617.65" → "617,65", "2026-08-04" → "04.08.2026": numbers and dates as people read them. */

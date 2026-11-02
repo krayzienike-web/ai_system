@@ -14,7 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.ai.gateway import Gateway, InvalidAnswerError
-from app.ai.hypotheses import propose_for_finding
+from app.ai.hypotheses import ask_for_finding
 from app.insights.models import Finding
 from app.tenancy.context import AccessContext
 
@@ -95,8 +95,8 @@ def run(gateway: Gateway, ctx: AccessContext, today: date, all_cases: list[Case]
             o.problem = "движок не нашел находку"
         else:
             try:
-                p = propose_for_finding(gateway, ctx, c.finding_id, today)
-                o.proposed = [h["cause"] for h in p.content["hypotheses"]]
+                h = ask_for_finding(gateway, ctx, c.finding_id, today)  # measured, not kept
+                o.proposed = [x.cause for x in h.hypotheses]
             except InvalidAnswerError as exc:
                 o.problem = str(exc)
         outcomes.append(o)

@@ -52,15 +52,24 @@ class InvalidAnswerError(RuleError):
 
 def strict_schema(schema: Any) -> Any:
     """The JSON schema structured outputs accept: every object closed (`additionalProperties: false`) and
-    every property required (optional ones are nullable instead). Titles are dropped (noise for the model)."""
-    if isinstance(schema, dict):
-        schema = {k: strict_schema(v) for k, v in schema.items() if k != "title"}
-        if schema.get("type") == "object" and "properties" in schema:
-            schema["additionalProperties"] = False
-            schema["required"] = list(schema["properties"])
-    elif isinstance(schema, list):
+    every property required (optional ones are nullable instead). Titles — the annotations, not a property
+    that happens to be called «title» — are dropped (noise for the model; code review 02.11.2026, p. 1)."""
+    if isinstance(schema, list):
         return [strict_schema(v) for v in schema]
-    return schema
+    if not isinstance(schema, dict):
+        return schema
+    out: dict[str, Any] = {}
+    for key, value in schema.items():
+        if key == "title":
+            continue
+        if key in ("properties", "$defs"):  # names of fields and definitions: kept, their schemas made strict
+            out[key] = {name: strict_schema(v) for name, v in value.items()}
+        else:
+            out[key] = strict_schema(value)
+    if out.get("type") == "object" and "properties" in out:
+        out["additionalProperties"] = False
+        out["required"] = list(out["properties"])
+    return out
 
 
 class BudgetError(RuleError):
@@ -124,7 +133,27 @@ class FakeModel:
         if not self.replies:
             raise ModelUnavailableError("FakeModel: no reply scripted")
         reply = self.replies.pop(0)
-        return reply(request) if callable(reply) else reply
+        out = reply(request) if callable(reply) else reply
+        if request.output_schema is not None and out.stop_reason == "end_turn":
+            _fits(out.text, request.output_schema)
+        return out
+
+
+def _fits(text: str, schema: dict[str, Any]) -> None:
+    """The real model is held to the schema (constrained decoding): a scripted answer must fit it too, or a
+    test would pass on an answer the model can never give (code review 02.11.2026, p. 1)."""
+    import json
+
+    import jsonschema
+
+    try:
+        answer = json.loads(text)
+    except ValueError:
+        return  # not JSON at all: the gateway's own check turns it away
+    try:
+        jsonschema.validate(answer, schema)
+    except jsonschema.ValidationError as exc:
+        raise AssertionError(f"the scripted answer does not fit the schema sent to the model: {exc}") from exc
 
 
 def text_reply(text: str, *, usage: Usage = Usage(input_tokens=100, output_tokens=20)) -> Reply:
@@ -202,7 +231,7 @@ class Gateway:
             reply = self.model.complete(request)
         except Exception as exc:
             self._log(ctx, task, prompt, request, None, started, error=f"{type(exc).__name__}: {exc}")
-            if isinstance(exc, RuleError):
+            if isinstance(exc, RuleError | AssertionError):  # a test's broken script must fail the test
                 raise
             raise ModelUnavailableError("Ассистент сейчас недоступен, попробуйте позже") from exc
         self._log(ctx, task, prompt, request, reply, started)

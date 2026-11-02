@@ -37,6 +37,8 @@ class Norms:
         default_factory=lambda: [Reason(c, t, k, tuple(s)) for c, t, k, s in defaults.WRITE_OFF_REASONS]
     )
     review_findings: bool = True  # engine findings wait for a manual check before directors see them
+    # The network's rules in words the assistant respects (ADR 0008): «цены меняются только с новым меню».
+    network_rules: list[str] = field(default_factory=list)
 
     def food_cost_target(self, menu_category: str | None) -> Decimal:
         return self.food_cost_by_category.get(menu_category or "", self.food_cost_target_pct)
@@ -69,6 +71,7 @@ def load_norms(session: Session) -> Norms:
         ]
         or Norms().reasons,
         review_findings=row.review_findings,
+        network_rules=list(row.network_rules or []),
     )
 
 
@@ -121,6 +124,7 @@ def save_norms(session: Session, ctx: AccessContext, body: dict[str, Any]) -> No
     row.loss_by_category = {k: str(v) for k, v in loss_by.items()}
     row.write_off_reasons = reasons
     row.review_findings = bool(body.get("review_findings", True))
+    row.network_rules = [r.strip() for r in body.get("network_rules", []) if r and r.strip()]
     row.updated_by = str(ctx.user_id)
     session.flush()
     audit(

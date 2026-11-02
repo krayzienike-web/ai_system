@@ -34,7 +34,10 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(RuleError)
     def rule_error(request: Request, exc: RuleError) -> JSONResponse:
-        return JSONResponse(status_code=exc.status_code, content={"detail": str(exc)})
+        content: dict[str, str] = {"detail": str(exc)}
+        if exc.code:
+            content["code"] = exc.code
+        return JSONResponse(status_code=exc.status_code, content=content)
 
     api = APIRouter(prefix="/api")
 

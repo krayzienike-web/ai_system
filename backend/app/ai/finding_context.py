@@ -94,8 +94,12 @@ def _count_days(session: Session, restaurant_id: UUID, since: date) -> list[str]
     return [d for d in (day(x) for x in days) if d]
 
 
+SHOWN = Finding.review_status.is_(None) | (Finding.review_status == "confirmed")
+
+
 def _data_problems(session: Session, restaurant_id: UUID, finding_id: UUID) -> list[str]:
-    """Open data-quality findings (M7) of the same restaurant: a figure may be wrong because the data is."""
+    """Open data-quality findings (M7) of the same restaurant — only those a director may see (none under
+    review or rejected: code review 02.11.2026, p. 2): a figure may be wrong because the data is."""
     return list(
         session.execute(
             select(Finding.title).where(
@@ -103,34 +107,42 @@ def _data_problems(session: Session, restaurant_id: UUID, finding_id: UUID) -> l
                 Finding.module == "M7",
                 Finding.status != "dismissed",
                 Finding.id != finding_id,
+                SHOWN,
             )
         ).scalars()
     )
 
 
-def _checks_of_similar(session: Session, finding: VisibleFinding) -> list[dict[str, Any]]:
-    """Checks of changes made for findings of the same kind before, anywhere in the network, without names:
-    what worked and what did not."""
-    rows = session.execute(
+def _checks_of_similar(session: Session, finding: VisibleFinding) -> dict[str, Any] | list[dict[str, Any]]:
+    """Checks of changes made before for findings of the same kind: what worked.
+
+    A restaurant's finding gets only counts for the network («из N проверок сработало K») — the checks
+    themselves are the HQ's (a director sees no experiments) and their sums are other restaurants' (code
+    review 02.11.2026, p. 3). A network finding, seen by the HQ only, gets the checks."""
+    query = (
         select(Experiment)
         .join(Finding, Finding.id == Experiment.finding_id)
         .where(Finding.module == finding.module, Finding.id != finding.id, Experiment.status == "completed")
-        .order_by(Experiment.completed_on.desc())
-        .limit(5)
-    ).scalars()
-    out = []
-    for c in rows:
-        # The words of a check in another restaurant may name it: then only its outcome is told.
-        here = finding.restaurant_id is None or finding.restaurant_id in c.test_restaurant_ids
-        out.append(
-            {
-                "check": c.title if here else "проверка в другом ресторане сети",
-                "verdict": c.verdict,
-                "effect_per_month": money(c.effect_rub_month),
-                "result": c.result_text if here else None,
-            }
-        )
-    return out
+    )
+    if finding.restaurant_id is not None:
+        verdicts = [c.verdict for c in session.execute(query).scalars()]
+        if not verdicts:
+            return {}
+        return {
+            "checks_in_network": len(verdicts),
+            "worked": sum(1 for v in verdicts if v == "confirmed"),
+            "did_not_work": sum(1 for v in verdicts if v == "rejected"),
+        }
+    rows = session.execute(query.order_by(Experiment.completed_on.desc()).limit(5)).scalars()
+    return [
+        {
+            "check": c.title,
+            "verdict": c.verdict,
+            "effect_per_month": money(c.effect_rub_month),
+            "result": c.result_text,
+        }
+        for c in rows
+    ]
 
 
 def build(session: Session, ctx: AccessContext, finding_id: UUID, today: date) -> dict[str, Any]:

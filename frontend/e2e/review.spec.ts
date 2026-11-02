@@ -2,7 +2,7 @@
 // and the path stays traceable on both ends.
 import { expect, test } from "@playwright/test";
 
-import { open, signIn } from "./helpers";
+import { open, signIn, signInAs } from "./helpers";
 
 const PENDING = "Закончится до поставки: Паста спагетти"; // found today in the demo network, waits for review
 
@@ -43,4 +43,15 @@ test("TC-REV-03: the director sees neither the review nor unchecked findings", a
   await open(page, /находки$/i);
   await expect(page.getByRole("link").filter({ hasText: /./ }).first()).toBeVisible();
   await expect(page.getByText(PENDING)).toHaveCount(0);
+});
+
+test("TC-UI-17: the prototype shows none of the assistant's proposals (ADR 0007)", async ({ page }) => {
+  await signInAs(page, "admin@demo.local");
+  await open(page, /Проверка находок/);
+  await expect(page.getByText("Идеи новых находок")).toHaveCount(0);
+  await page.getByRole("link").filter({ hasText: /Закончится до поставки/ }).first().click();
+  await expect(page.getByText("На что посмотреть")).toHaveCount(0);
+  await open(page, /^Находки$/);
+  await page.getByRole("link", { name: /Говядина вырезка/ }).first().click();
+  await expect(page.getByRole("button", { name: /Разобрать с ИИ/ })).toHaveCount(0);
 });

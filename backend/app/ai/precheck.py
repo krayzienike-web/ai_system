@@ -47,7 +47,7 @@ class Flag:
 
 def _spike(
     session: Session, model: Any, product_id: UUID, restaurant_id: UUID, start: date, end: date
-) -> str | None:
+) -> date | None:
     by_day = session.execute(
         select(model.day, func.sum(model.qty))
         .where(
@@ -61,13 +61,15 @@ def _spike(
     if not total or len(by_day) < 3:
         return None
     top_day, top = max(by_day, key=lambda r: r[1])
-    return f"{top_day:%d.%m.%Y}" if top / total >= SPIKE_SHARE else None
+    return top_day if top / total >= SPIKE_SHARE else None
 
 
 def flags(session: Session, finding: Finding, today: date) -> list[Flag]:
-    """What the analyst should look at before confirming — facts, not opinions."""
+    """What the analyst should look at before confirming — facts, not opinions (code review 02.11.2026,
+    p. 12: only what can explain this finding, so the list does not cry wolf)."""
     out: list[Flag] = []
-    start, end = finding.period_from or today - timedelta(days=28), finding.period_to or today
+    end = finding.period_to or today
+    start = min(finding.period_from or end - timedelta(days=28), end)
     if finding.restaurant_id is not None:
         problems = (
             session.execute(
@@ -75,6 +77,9 @@ def flags(session: Session, finding: Finding, today: date) -> list[Flag]:
                     Finding.restaurant_id == finding.restaurant_id,
                     Finding.module == "M7",
                     Finding.status != "dismissed",
+                    Finding.review_status.is_distinct_from(
+                        "rejected"
+                    ),  # rejected as false: not a data problem
                     Finding.id != finding.id,
                 )
             )
@@ -83,6 +88,7 @@ def flags(session: Session, finding: Finding, today: date) -> list[Flag]:
         )
         if problems:
             out.append(Flag("data_problems", "Проблемы с данными ресторана", "; ".join(problems)))
+    spike_days: list[date] = []
     product_code, _ = finding_context.subject_of_key(finding.module, finding.key)
     product = (
         session.execute(select(Product).where(Product.code == product_code)).scalar()
@@ -93,26 +99,49 @@ def flags(session: Session, finding: Finding, today: date) -> list[Flag]:
         for model, what in ((WriteOff, "списаний"), (Receipt, "закупок")):
             day = _spike(session, model, product.id, finding.restaurant_id, start, end)
             if day:
+                spike_days.append(day)
                 out.append(
-                    Flag("one_off", "Разовый всплеск", f"Больше половины {what} товара за период — {day}")
+                    Flag(
+                        "one_off",
+                        "Разовый всплеск",
+                        f"Больше половины {what} товара за период — {day:%d.%m.%Y}",
+                    )
                 )
-        suppliers = session.execute(
-            select(func.count(func.distinct(Receipt.supplier_id))).where(
-                Receipt.product_id == product.id,
-                Receipt.restaurant_id == finding.restaurant_id,
-                Receipt.day.between(start - timedelta(days=60), end),
+
+        # A change of supplier: one appears in the period that did not sell the product in the 60 days before.
+        def suppliers(a: date, b: date) -> set[UUID | None]:
+            return set(
+                session.execute(
+                    select(Receipt.supplier_id)
+                    .distinct()
+                    .where(
+                        Receipt.product_id == product.id,
+                        Receipt.restaurant_id == finding.restaurant_id,
+                        Receipt.supplier_id.is_not(None),
+                        Receipt.day.between(a, b),
+                    )
+                ).scalars()
             )
-        ).scalar_one()
-        if suppliers > 1:
+
+        before = suppliers(start - timedelta(days=60), start - timedelta(days=1))
+        if before and suppliers(start, end) - before:
             out.append(
-                Flag("supplier_change", "Менялся поставщик", "Товар брали у разных поставщиков за период")
+                Flag(
+                    "supplier_change",
+                    "Сменился поставщик",
+                    "В периоде появился поставщик, у которого товар раньше не брали",
+                )
             )
+    # Holidays explain a deviation only on the day it happened, or in a short period.
     days = (end - start).days + 1
     holidays = sorted(
-        {f"{d:%d.%m}" for d in (start + timedelta(n) for n in range(days)) if (d.month, d.day) in HOLIDAYS}
+        {d for d in (start + timedelta(n) for n in range(days)) if (d.month, d.day) in HOLIDAYS}
     )
-    if holidays:
-        out.append(Flag("holidays", "Праздники в периоде", ", ".join(holidays)))
+    near = [d for d in holidays if any(abs((d - s).days) <= 1 for s in spike_days)] or (
+        holidays if days <= 31 else []
+    )
+    if near:
+        out.append(Flag("holidays", "Праздники в периоде", ", ".join(f"{d:%d.%m}" for d in near)))
     if days < FEW_DAYS:
         out.append(Flag("few_data", "Мало данных", f"Период — {days} дн."))
     failed = [c["check"] for c in verify(session, finding).get("checks") or [] if not c.get("ok")]
@@ -157,6 +186,8 @@ def propose_draft(gateway: Gateway, ctx: AccessContext, finding_id: UUID, today:
         finding = session.get(Finding, finding_id)
         assert finding is not None
         basis["flags"] = [f.__dict__ for f in flags(session, finding, today)]
+        # Whether the finding still waited for its verdict: only such a draft can be compared with it.
+        basis["review_status_when_drafted"] = finding.review_status
         restaurant_id = finding.restaurant_id
     return propose(
         gateway,
@@ -180,15 +211,22 @@ class Stats:
 
 
 def stats(ctx: AccessContext) -> Stats:
-    """«ИИ предлагал / человек решил»: the latest draft of each reviewed finding against its verdict."""
+    """«ИИ предлагал / человек решил»: per finding, the last draft made while it waited for review, against
+    the verdict (code review 02.11.2026, p. 13: one draft per finding; one after the verdict counts not)."""
     _may_review(ctx)
     match = {"confirm": "confirmed", "reject": "rejected"}
     with user_session(ctx) as session:
         rows = session.execute(
-            select(AiSuggestion.content, Finding.review_status)
+            select(AiSuggestion.subject_id, AiSuggestion.content, AiSuggestion.basis, Finding.review_status)
             .join(Finding, Finding.id == AiSuggestion.subject_id)
-            .where(AiSuggestion.kind == "precheck", AiSuggestion.status != "superseded")
+            .where(AiSuggestion.kind == "precheck")
+            .order_by(AiSuggestion.created_at)
         ).all()
-    decided = [(c, s) for c, s in rows if s in ("confirmed", "rejected")]
-    agreed = sum(1 for c, s in decided if match.get(c["verdict"]) == s)
-    return Stats(len(rows), len(decided), agreed)
+    last: dict[UUID, tuple[dict[str, Any], str | None]] = {}
+    for subject, content, basis, status in rows:
+        if basis.get("review_status_when_drafted") != "pending":
+            continue  # made after the verdict
+        last[subject] = (content, status if status in ("confirmed", "rejected") else None)
+    verdicts = [(c, s) for c, s in last.values() if s is not None]
+    agreed = sum(1 for c, s in verdicts if match.get(c["verdict"]) == s)
+    return Stats(len(last), len(verdicts), agreed)

@@ -29,6 +29,8 @@ dev = [
     "mypy",
     "pytest-cov>=7.1.0",
     "import-linter>=2.15",
+    "jsonschema>=4.26.0",
+    "types-jsonschema>=4.26.0.20261006",
 ]
 
 [tool.uv]

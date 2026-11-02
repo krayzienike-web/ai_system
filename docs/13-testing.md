@@ -258,6 +258,20 @@
 | TC-AN-15 | Разметка подтверждается один раз и становится профилем источника: тот же файл и файл следующего месяца загружаются без шаблона и без модели; повторное подтверждение отклоняется | `test_marked_once_confirmed_once_then_files_load_by_the_profile` | ✅ |
 | TC-AN-16 | Разметку справочников сети делает и подтверждает УК; чужая сеть не видит и не подтверждает, профилей чужой сети не видно | `test_who_may_mark_and_confirm` | ✅ |
 | TC-AN-17 | Новые маршруты помощника — в обходе изоляции всех маршрутов (предложения по id чужой сети — 404) | `test_isolation_routes.py` (TC-ISO-19) | ✅ |
+| TC-AN-18 | Схема ответа требует ровно поля модели, поле `title` сохраняется (все четыре схемы); ответ заглушки сверяется со схемой, и неподходящий роняет тест, а не превращается в 503 | `test_ai_review_55.py::test_every_answer_schema_requires_exactly_its_fields`, `test_a_scripted_answer_that_does_not_fit_the_schema_fails_the_test` | ✅ |
+| TC-AN-19 | Основание гипотез директора: нет находок на проверке и отклоненных, нет чужих проверок изменений (только счет по сети) | `test_the_basis_holds_no_finding_under_review_and_no_other_restaurants_checks` | ✅ |
+| TC-AN-20 | Модель не переназначает сопоставленное словарем; сохраняется ровно проверенная импортом разметка | `test_the_model_cannot_remap_what_the_dictionary_mapped_and_the_preview_is_what_is_confirmed` | ✅ |
+| TC-AN-21 | Профиль директора действует в его ресторане, профиль УК — в сети; синонимы шаблона важнее профиля | `test_a_directors_profile_serves_their_restaurant_and_synonyms_win_over_profiles` | ✅ |
+| TC-AN-22 | Заголовок, который уже читается по-другому, и заголовок двум колонкам — отказ; профиль удаляет УК (сетевой) | `test_a_header_read_two_ways_is_refused_and_a_profile_can_be_removed` | ✅ |
+| TC-AN-23 | Разметка вытесняет только разметку того же файла; новые идеи не прячут нерешенные | `test_a_marking_replaces_only_a_marking_of_the_same_file_and_new_ideas_keep_undecided_ones`, `test_a_threshold_in_the_rules_sketch_is_a_proposal_but_a_figure_in_the_pattern_is_checked` | ✅ |
+| TC-AN-24 | Решение по предложению одно (повтор — 409), «кто решил» видно; разметка принимается только подтверждением | `test_a_proposal_is_decided_once_and_a_marking_only_by_confirming` | ✅ |
+| TC-AN-25 | Пороги в наброске правила — предложение, не сверяются; числа закономерности — сверяются | `test_a_threshold_in_the_rules_sketch_is_a_proposal_but_a_figure_in_the_pattern_is_checked` | ✅ |
+| TC-AN-26 | Разметка: права раньше модели (403, затем 503), файл больше 20 МБ — отказ | `test_access_comes_before_the_model_and_a_big_file_is_refused` | ✅ |
+| TC-AN-27 | Отклоненная проблема данных не флаг; кривой период не роняет; черновик после вердикта не в статистике | `test_a_rejected_data_problem_flags_nothing_and_a_draft_after_the_verdict_is_not_counted` | ✅ |
+| TC-AN-28 | Признак ассистента — только для провайдера, который знает сервер; правила сети задаются в нормах | `test_the_assistant_flag_follows_the_provider_the_server_knows`, `test_the_networks_rules_are_set_with_the_norms` | ✅ |
+| TC-AN-29 | Прогон «почему так» измеряет, не перезаписывая предложения | `test_the_eval_measures_without_replacing_what_people_see` | ✅ |
+| TC-AN-30 | Нераспознанный файл: код `no_header` при определении по файлу, `markable` у загрузки с выбранным шаблоном | `test_an_unrecognised_file_says_it_can_be_marked` | ✅ |
+| TC-AN-31 | Поведение блоков ИИ в интерфейсе (загрузка, ошибка, решение, разметка и повторная загрузка) | — | ⬜ нужны компонентные тесты (jsdom + Testing Library), сейчас — серверные тесты и TC-UI-17 |
 
 ### Интерфейс (UI)
 
@@ -279,6 +293,7 @@
 | TC-UI-14 | Фильтры «ресторан» и «процесс» на «Находках» живут в адресе: ссылка «Находки» в меню их сбрасывает | `e2e/review-fixes.spec.ts` | ✅ |
 | TC-UI-15 | «Спросить су-шефа» из находки: чат говорит о ней («Говорим о: …»), вопрос-подсказка получает ответ со ссылкой «Открыть находку», ответ озвучивается областью `role="status"`, «Закрыть» закрывает чат | `e2e/chat.spec.ts` TC-UI-15 | ✅ |
 | TC-UI-16 | Чат директора: приветствие про его ресторан, вопросы-подсказки с сервера, поле вопроса ограничено 1000 символами, подсказка получает ответ | `e2e/chat.spec.ts` TC-UI-16 | ✅ |
+| TC-UI-17 | В прототипе нет блоков ИИ (версии, предпроверка, идеи, разметка): демо отвечает «ассистента нет», незаписанное действие — по-русски | e2e `review.spec.ts` TC-UI-17; `demo.test.ts` «the prototype has no assistant» | ✅ |
 
 ### Демо-сеть (DEMO)
 

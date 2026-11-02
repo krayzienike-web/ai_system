@@ -59,6 +59,7 @@ export interface BatchOut {
   aliases_used: string[];
   created_at: string;
   published_at: string | null;
+  markable?: boolean;
 }
 
 export interface BoardOut {
@@ -418,6 +419,8 @@ export interface HypothesesOut {
   steps: string[];
   rules_note: string | null;
   basis: Record<string, unknown>;
+  basis_words: string[];
+  decided_by_me: boolean;
 }
 
 export interface HypothesisOut {
@@ -437,6 +440,7 @@ export interface IdeaOut {
   why_it_matters: string;
   rule_sketch: string;
   evidence: Record<string, unknown>[];
+  evidence_text: string[];
 }
 
 export interface KindTotal {
@@ -555,6 +559,7 @@ export interface NormsIn {
   loss_by_category?: Record<string, number | string>;
   write_off_reasons?: ReasonIO[];
   review_findings?: boolean;
+  network_rules?: string[];
 }
 
 export interface NormsOut {
@@ -564,6 +569,7 @@ export interface NormsOut {
   loss_by_category?: Record<string, string>;
   write_off_reasons?: ReasonIO[];
   review_findings?: boolean;
+  network_rules?: string[];
   menu_categories: string[];
   product_categories: string[];
 }
@@ -629,6 +635,7 @@ export interface ProcessTitleOut {
 export interface ProfileOut {
   id: string;
   template: string;
+  restaurant_id: string | null;
   title: string;
   mapping: Record<string, string>;
 }

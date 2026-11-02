@@ -58,6 +58,8 @@ export interface ImportBatch {
   unmatched: UnmatchedName[];
   created_at: string;
   published_at: string | null;
+  /** The file's columns were not recognised: «Разметить с ИИ» is offered (the server decides). */
+  markable?: boolean;
 }
 
 export type MatchKind = "product" | "menu_item" | "supplier";

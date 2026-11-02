@@ -24,6 +24,7 @@ from app.ai.suggestions import Proposal, ask, keep, out
 from app.ai.tools import pct
 from app.ai.verify import unsupported
 from app.catalog.models import Product
+from app.core import words
 from app.core.errors import ForbiddenError
 from app.operations.models import Sale, WriteOff
 from app.tenancy.context import AccessContext, user_session
@@ -35,6 +36,7 @@ WEEKDAYS = ["понедельник", "вторник", "среда", "четв�
 WEEKDAY_SHARE = Decimal("0.25")  # one weekday holds a quarter of a week's write-offs (even: 14,3 %)
 ABOVE_NETWORK = Decimal("1.5")  # write-offs per revenue 1,5 times the network's
 MAX_ROWS = 40
+MIN_DAYS = 4  # days with write-offs of a product in the period: fewer is noise
 
 
 class Idea(BaseModel):
@@ -55,60 +57,82 @@ def _may(ctx: AccessContext) -> None:
 
 
 def aggregates(session: Session, today: date) -> dict[str, list[dict[str, Any]]]:
-    """Where write-offs pile up: by weekday within a restaurant and category, and against the network."""
+    """Where write-offs pile up: by weekday within a restaurant and product, and against the network. By
+    product, not category: a category mixes kilos and pieces (code review 02.11.2026, p. 11). Rows are
+    sorted by the strength of the signal before the list is cut, each carries its words for the screen."""
     since = today - timedelta(weeks=WEEKS)
     codes = {rid: code for rid, code in session.execute(select(Restaurant.id, Restaurant.code)).all()}
     weekday = extract("isodow", WriteOff.day)
     rows = session.execute(
-        select(WriteOff.restaurant_id, Product.category, weekday, func.sum(WriteOff.qty))
+        select(
+            WriteOff.restaurant_id,
+            Product.name,
+            weekday,
+            func.sum(WriteOff.qty),
+            func.count(func.distinct(WriteOff.day)),
+        )
         .join(Product, Product.id == WriteOff.product_id)
         .where(WriteOff.day > since, WriteOff.day <= today)
-        .group_by(WriteOff.restaurant_id, Product.category, weekday)
+        .group_by(WriteOff.restaurant_id, Product.name, weekday)
     ).all()
     week: dict[tuple[UUID, str], dict[int, Decimal]] = defaultdict(dict)
-    for rid, category, dow, qty in rows:
-        week[(rid, category or "без категории")][int(dow)] = qty
-    by_weekday = []
-    for (rid, category), days in sorted(week.items(), key=lambda kv: (codes.get(kv[0][0], ""), kv[0][1])):
+    days_with: dict[tuple[UUID, str], int] = defaultdict(int)
+    for rid, product, dow, qty, n in rows:
+        week[(rid, product)][int(dow)] = qty
+        days_with[(rid, product)] += n
+    strong: list[tuple[Decimal, dict[str, Any]]] = []
+    for (rid, product), days in week.items():
         total = sum(days.values(), Decimal(0))
-        if not total:
-            continue
+        if not total or days_with[(rid, product)] < MIN_DAYS:
+            continue  # a few write-offs make any weekday look special
         dow, qty = max(days.items(), key=lambda kv: kv[1])
         if qty / total >= WEEKDAY_SHARE:
-            by_weekday.append(
-                {
-                    "restaurant": codes.get(rid),
-                    "category": category,
-                    "weekday": WEEKDAYS[dow - 1],
-                    "share_of_week": pct(qty / total),
-                }
+            code, share = codes.get(rid), pct(qty / total)
+            strong.append(
+                (
+                    qty / total,
+                    {
+                        "restaurant": code,
+                        "product": product,
+                        "weekday": WEEKDAYS[dow - 1],
+                        "share_of_week": share,
+                        "text": f"{code} · {product}: {share} списаний недели — {WEEKDAYS[dow - 1]}",
+                    },
+                )
             )
+    by_weekday = [row for _, row in sorted(strong, key=lambda x: -x[0])]
 
     sold = select(Sale.restaurant_id, func.sum(Sale.revenue)).where(Sale.day > since, Sale.day <= today)
     revenue = {rid: total for rid, total in session.execute(sold.group_by(Sale.restaurant_id)).all()}
-    per_cat: dict[str, dict[UUID, Decimal]] = defaultdict(dict)
-    for (rid, category), days in week.items():
+    per_product: dict[str, dict[UUID, Decimal]] = defaultdict(dict)
+    for (rid, product), days in week.items():
         if revenue.get(rid):
-            per_cat[category][rid] = sum(days.values(), Decimal(0)) / revenue[rid] * 1000
-    vs_network = []
-    for category, places in sorted(per_cat.items()):
+            per_product[product][rid] = sum(days.values(), Decimal(0)) / revenue[rid] * 1000
+    above: list[tuple[Decimal, dict[str, Any]]] = []
+    for product, places in per_product.items():
         if len(places) < 3:
             continue
         mean = sum(places.values(), Decimal(0)) / len(places)
-        for rid, value in sorted(places.items(), key=lambda kv: codes.get(kv[0], "")):
+        for rid, value in places.items():
             if mean and value / mean >= ABOVE_NETWORK:
-                vs_network.append(
-                    {
-                        "restaurant": codes.get(rid),
-                        "category": category,
-                        "write_offs_per_1000_rub": f"{value:.2f}".replace(".", ","),
-                        "network_average": f"{mean:.2f}".replace(".", ","),
-                    }
+                mine, net = words.number(value, 2), words.number(mean, 2)
+                above.append(
+                    (
+                        value / mean,
+                        {
+                            "restaurant": codes.get(rid),
+                            "product": product,
+                            "write_offs_per_1000_rub_revenue": mine,
+                            "network_average": net,
+                            "text": f"{codes.get(rid)} · {product}: списания {mine} на 1000 ₽ выручки, "
+                            f"в среднем по сети {net}",
+                        },
+                    )
                 )
-    table = {"write_offs_by_weekday": by_weekday, "write_offs_vs_network": vs_network}
+    vs_network = [row for _, row in sorted(above, key=lambda x: -x[0])]
+    table = {"write_offs_by_weekday": by_weekday[:MAX_ROWS], "write_offs_vs_network": vs_network[:MAX_ROWS]}
     n = 0
     for name, items in table.items():
-        del items[MAX_ROWS:]
         for item in items:
             n += 1
             item["id"] = f"a{n}"
@@ -128,8 +152,10 @@ def _rows_and_numbers(table: dict[str, list[dict[str, Any]]]) -> Any:
             if not idea.rows or missing:
                 problems.append(f"«{idea.title}»: нет строк {', '.join(missing) or '—'}")
                 continue
-            # Every number of an idea must be in the rows it points at, not just somewhere in the table.
-            text = " ".join([idea.title, idea.pattern, idea.why_it_matters, idea.rule_sketch])
+            # Every number of an idea must be in the rows it points at, not just somewhere in the table. The
+            # rule's sketch proposes thresholds for a developer — a proposal, not a fact (code review
+            # 02.11.2026, p. 9); the screen says so.
+            text = " ".join([idea.title, idea.pattern, idea.why_it_matters])
             problems += [f"«{idea.title}»: {n}" for n in unsupported(text, [by_id[r] for r in idea.rows])]
         return problems
 
@@ -149,6 +175,7 @@ def propose_ideas(gateway: Gateway, ctx: AccessContext, today: date) -> list[Pro
         basis=basis,
         answer=Ideas,
         check=_rows_and_numbers(table),
+        facts_of=lambda r: [i.model_dump(exclude={"rule_sketch"}) for i in r.ideas],
     )
     # One row per idea: the analyst decides on each. The rows an idea rests on are kept with it.
     by_id = {row["id"]: row for items in table.values() for row in items}
