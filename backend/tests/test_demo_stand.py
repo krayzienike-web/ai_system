@@ -2,6 +2,7 @@
 
 from collections.abc import Callable, Iterator
 from datetime import date
+from pathlib import Path
 
 import pytest
 from sqlalchemy import Engine, func, select
@@ -80,3 +81,44 @@ def test_the_rebuild_brings_the_demo_network_back_as_on_the_first_day(owner_engi
         assert s.execute(select(func.count()).select_from(User)).scalar_one() == 5
         assert s.execute(select(func.count()).select_from(Finding)).scalar_one() == findings > 0
         assert not s.execute(select(Finding).where(Finding.title == "изменил посетитель")).first()
+
+
+DEPLOY = Path(__file__).resolve().parents[2] / "deploy"
+
+
+def _caddy_block(caddyfile: str, matcher: str) -> str:
+    """The body of `handle <matcher> { … }` (braces counted)."""
+    start = caddyfile.index(f"handle {matcher}".rstrip() + " {")
+    depth, i = 0, caddyfile.index("{", start)
+    for j in range(i, len(caddyfile)):
+        depth += {"{": 1, "}": -1}.get(caddyfile[j], 0)
+        if depth == 0:
+            return caddyfile[i + 1 : j]
+    raise AssertionError(f"unclosed handle {matcher}")
+
+
+def test_the_stand_streams_the_chat_and_never_serves_a_missing_chunk_as_the_page() -> None:
+    """Code review 28.10.2026, stage 5: the API is not compressed and not buffered (the chat's SSE events pass
+    at once, p. 17); a missing chunk is 404, not index.html cached for a year (frontend p. 1); the page is
+    revalidated."""
+    caddy = (DEPLOY / "Caddyfile").read_text(encoding="utf-8")
+    code = "\n".join(line.split("#")[0] for line in caddy.splitlines())  # without the comments
+    api, assets, page = _caddy_block(code, "/api/*"), _caddy_block(code, "/assets/*"), _caddy_block(code, "")
+    assert "encode" not in api and "flush_interval -1" in api
+    assert "try_files" not in assets and "immutable" in assets
+    assert "try_files {path} /index.html" in page and 'Cache-Control "no-cache"' in page
+
+
+def test_only_the_api_gets_the_models_key() -> None:
+    """Code review 28.10.2026, stage 5, p. 16: not `migrate`, not `worker`."""
+    compose = (DEPLOY / "compose.yml").read_text(encoding="utf-8")
+    services: dict[str, str] = {}
+    name = ""
+    for line in compose.split("\nvolumes:")[0].splitlines():
+        if line.startswith("  ") and not line.startswith("   ") and line.strip().endswith(":"):
+            name = line.strip().rstrip(":")
+        elif name:
+            services[name] = services.get(name, "") + line + "\n"
+    assert {"migrate", "backend", "worker"} <= set(services)
+    assert [s for s, body in services.items() if "ANTHROPIC_API_KEY" in body] == ["backend"]
+    assert "ANTHROPIC_API_KEY" not in compose.split("environment: &backend-env")[1].split("command:")[0]

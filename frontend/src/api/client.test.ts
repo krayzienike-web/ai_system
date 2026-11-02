@@ -79,4 +79,39 @@ describe("the chat stream", () => {
     );
     await expect(stream("/chat/stream", {}, () => {}, controller.signal)).rejects.toMatchObject({ name: "AbortError" });
   });
+  it("rejects with 500 when the server fails inside the stream", async () => {
+    // backend: test_the_stream_ends_with_an_error_event_when_something_breaks_inside
+    const failed = 'event: status\ndata: {"text":"Смотрю задачи"}\n\nevent: error\ndata: {"detail":"Не получилось ответить. Попробуйте еще раз.","status":500}\n\n';
+    vi.stubGlobal("fetch", vi.fn(async () => sse([failed])));
+    const statuses: string[] = [];
+    await expect(stream("/chat/stream", {}, (s) => statuses.push(s))).rejects.toMatchObject({
+      status: 500,
+      message: "Не получилось ответить. Попробуйте еще раз.",
+    });
+    expect(statuses).toEqual(["Смотрю задачи"]);
+  });
+
+  it("stops in the middle of an answer when the chat is closed", async () => {
+    const controller = new AbortController();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_: string, init: RequestInit) => {
+        // As a real fetch does: aborting the signal errors the body being read.
+        const body = new ReadableStream<Uint8Array>({
+          start(c) {
+            c.enqueue(new TextEncoder().encode('event: status\ndata: {"text":"Смотрю находки"}\n\n'));
+            init.signal?.addEventListener("abort", () => c.error(new DOMException("aborted", "AbortError")));
+          },
+        });
+        return new Response(body, { status: 200, headers: { "Content-Type": "text/event-stream" } });
+      }),
+    );
+    const statuses: string[] = [];
+    const asked = stream("/chat/stream", {}, (s) => {
+      statuses.push(s);
+      controller.abort(); // the person closes the chat while the assistant looks at the findings
+    }, controller.signal);
+    await expect(asked).rejects.toMatchObject({ name: "AbortError" });
+    expect(statuses).toEqual(["Смотрю находки"]);
+  });
 });

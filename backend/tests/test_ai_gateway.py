@@ -146,7 +146,7 @@ def test_the_log_is_append_only_and_each_person_sees_their_own(network: Network)
             s.execute(text(statement))
 
 
-def test_costs_follow_the_price_list_and_unknown_models_cost_nothing() -> None:
+def test_costs_follow_the_price_list_and_an_unknown_model_has_no_cost() -> None:
     assert cost_usd("claude-haiku-5-5", Usage(1_000_000, 1_000_000, 1_000_000, 1_000_000)) == Decimal(
         "0.735000"
     )
@@ -261,3 +261,65 @@ def test_claude_api_errors_become_model_unavailable() -> None:
     for error in errors:
         with pytest.raises(ModelUnavailableError):
             ClaudeModel(_client(error)).complete(ModelRequest("claude-opus-5-5", "s", []))
+
+
+def test_a_model_without_a_price_is_logged_with_an_empty_cost(network: Network, owner_engine: Engine) -> None:
+    """Code review 28.10.2026, stage 5, p. 12: the model that answered (a fallback, say) is logged; with no
+    price its cost is unknown — empty, not 0."""
+    reply = Reply([{"type": "text", "text": "Ответ"}], "end_turn", Usage(100, 20), model="claude-fallback-x")
+    Gateway(FakeModel([reply])).complete(
+        _ctx(network), task="chat", prompt=prompts.load("chat"), messages=[{"role": "user", "content": "?"}]
+    )
+    (run,) = _runs(owner_engine)
+    assert (run.model, run.cost_usd, run.input_tokens, run.output_tokens) == (
+        "claude-fallback-x",
+        None,
+        100,
+        20,
+    )
+
+
+def test_the_budgets_day_starts_at_midnight_in_moscow(network: Network, owner_engine: Engine) -> None:
+    """docs/08, «Как отвечает», p. 6: a minute before Moscow's midnight is yesterday, a minute after is today
+    (Moscow is UTC+3, so this differs from the UTC day at any hour)."""
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+
+    from app.ai.gateway import used_today
+
+    ctx = _ctx(network)
+    gateway = Gateway(FakeModel([text_reply("1"), text_reply("2")]))
+    chat = prompts.load("chat")
+    for label in ("before", "after"):
+        gateway.complete(ctx, task="chat", prompt=chat, messages=[{"role": "user", "content": label}])
+    midnight = datetime.now(ZoneInfo("Europe/Moscow")).replace(hour=0, minute=0, second=0, microsecond=0)
+    with owner_engine.begin() as conn:
+        for label, at in (
+            ("before", midnight - timedelta(minutes=1)),
+            ("after", midnight + timedelta(minutes=1)),
+        ):
+            conn.execute(
+                text(
+                    "UPDATE ai_runs SET created_at = :at WHERE request -> 'messages' -> 0 ->> 'content' = :l"
+                ),
+                {"at": at, "l": label},
+            )
+    assert used_today(ctx) == 1
+
+
+def test_the_claude_client_waits_two_minutes_retries_once_and_asks_for_a_short_answer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Code review 28.10.2026, stage 5, p. 19: a slow answer is not paid three times; docs/08, p. 6: 100
+    calls a day by default."""
+    from app.core.config import get_settings
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    get_settings.cache_clear()
+    try:
+        client = ClaudeModel().client
+        assert (client.timeout, client.max_retries) == (120.0, 1)
+        assert get_settings().ai_requests_per_user_day == 100
+    finally:
+        get_settings.cache_clear()
+    assert ClaudeModel(_client(None)).params(ModelRequest("claude-opus-5-5", "s", []))["max_tokens"] == 8000

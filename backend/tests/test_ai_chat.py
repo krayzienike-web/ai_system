@@ -381,3 +381,176 @@ def test_the_budget_counts_once_per_question_and_a_started_question_is_finished(
         assert r.status_code == 429 and "полночь" in r.json()["detail"]
     finally:
         app.dependency_overrides.pop(get_gateway, None)
+
+
+def _finding(owner_engine: Any, network: Network, *, review_status: str | None = None) -> UUID:
+    from sqlalchemy.orm import Session
+
+    from app.insights.models import Finding
+
+    with Session(owner_engine) as s, s.begin():
+        f = Finding(
+            tenant_id=network.a.id,
+            restaurant_id=network.a.restaurants["A1"],  # director1@a.ru's restaurant
+            kind="problem",
+            process="production",
+            title="Находка A1",
+            effect_rub_month=Decimal("1000.00"),
+            actions=["Шаг"],
+            found_on=TODAY,
+            review_status=review_status,
+        )
+        s.add(f)
+        s.flush()
+        return f.id
+
+
+def test_a_finding_the_person_sees_goes_to_the_model_first_and_is_the_answers_source(
+    client: TestClient, network: Network, model: FakeModel, owner_engine: Any
+) -> None:
+    """docs/08, «Как отвечает», p. 1 and «откуда цифра»: from a finding the model gets its id with the
+    question; the answer links to it and the conversation remembers it. A finding found by `explain_finding`
+    is the source too."""
+    own = _finding(owner_engine, network)
+    headers = login(client, "director1@a.ru")
+    model.replies.append(text_reply("Разберем находку."))
+    r = client.post("/api/chat", headers=headers, json={"question": "Почему?", "finding_id": str(own)}).json()
+    first = model.requests[0].messages[0]["content"][0]["text"]
+    assert first == f"[Вопрос задан из находки {own}]\nПочему?"
+    assert r["source"] == CHECKED and r["source_finding_id"] == str(own)
+    assert [t["finding_id"] for t in client.get("/api/chat/threads", headers=headers).json()] == [str(own)]
+
+    model.replies += [tool_reply("explain_finding", {"finding_id": str(own)}), text_reply("Вот что нашлось.")]
+    r = client.post("/api/chat", headers=headers, json={"question": "Что с сыром?"}).json()
+    assert r["source"] == CHECKED and r["source_finding_id"] == str(own)
+
+
+def test_a_finding_under_review_is_not_given_to_the_model_as_context(
+    client: TestClient, network: Network, model: FakeModel, owner_engine: Any
+) -> None:
+    """Like the answer by rules and `explain_finding` (TC-AI-11): a finding waiting for the HQ's check is not
+    discussed — the model is not told the question comes from it, and the answer does not link to it."""
+    pending = _finding(owner_engine, network, review_status="pending")
+    for email in ("director1@a.ru", "admin@a.ru"):  # the HQ sees it on the review page, still not discussed
+        model.replies.append(text_reply("Ответ"))
+        r = client.post(
+            "/api/chat",
+            headers=login(client, email),
+            json={"question": "Почему?", "finding_id": str(pending)},
+        ).json()
+        assert str(pending) not in json.dumps(model.requests[-1].messages, ensure_ascii=False), email
+        assert r["source_finding_id"] is None, email
+
+
+def test_a_model_that_keeps_calling_tools_is_stopped_after_six_rounds(
+    client: TestClient, network: Network, model: FakeModel
+) -> None:
+    """docs/08, «Как отвечает», p. 2: up to 6 steps; then the answer by rules, and the conversation stays
+    valid — every tool call kept has its result, the question ends with the shown answer."""
+    from app.ai.chat import MAX_ROUNDS
+
+    assert MAX_ROUNDS == 6
+    headers = login(client, "director1@a.ru")
+    model.replies += [tool_reply("get_tasks", {}, call_id=f"c{i}") for i in range(10)]
+    r = client.post("/api/chat", headers=headers, json={"question": "Задачи?"}).json()
+    assert len(model.requests) == MAX_ROUNDS and r["source"] != CHECKED and r["thread_id"]
+
+    model.replies[:] = [text_reply("Хорошо.")]
+    client.post("/api/chat", headers=headers, json={"question": "Спасибо", "thread_id": r["thread_id"]})
+    replayed = model.requests[-1].messages
+    calls = [b["id"] for m in replayed for b in m["content"] if b.get("type") == "tool_use"]
+    results = [b["tool_use_id"] for m in replayed for b in m["content"] if b.get("type") == "tool_result"]
+    assert calls == results == [f"c{i}" for i in range(MAX_ROUNDS)]
+    assert replayed[-2] == {"role": "assistant", "content": [{"type": "text", "text": r["text"]}]}
+
+
+def test_the_stream_ends_with_an_error_event_when_something_breaks_inside(
+    client: TestClient, network: Network, model: FakeModel, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Code review 28.10.2026, stage 5, p. 8: whatever fails inside, the stream ends with `error` (status
+    500 and a text for the person), never breaks off without an event."""
+    from app.ai import history
+
+    def broken(*_: Any, **__: Any) -> UUID:
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(history, "start", broken)
+    model.replies += [tool_reply("get_tasks", {}), text_reply("Задач нет.")]
+    body = client.post(
+        "/api/chat/stream", headers=login(client, "director1@a.ru"), json={"question": "Задачи?"}
+    ).text
+    blocks = body.strip().split("\n\n")
+    assert blocks[0].startswith("event: status")
+    event, data = blocks[-1].split("\n")
+    assert event == "event: error"
+    assert json.loads(data.removeprefix("data: ")) == {
+        "detail": "Не получилось ответить. Попробуйте еще раз.",
+        "status": 500,
+    }
+    assert "db down" not in body
+
+
+def test_a_long_conversation_is_replayed_from_a_question(network: Network) -> None:
+    """history.KEEP: of a long conversation the model gets the last messages, starting at a question — never
+    at a tool result whose call was cut off."""
+    from app.ai import history
+    from app.tenancy.context import tool_session
+
+    assert history.KEEP == 40
+    with tool_session(network.a.users["director1@a.ru"], network.a.id) as (_, ctx):
+        pass
+    thread = history.start(ctx, title="?", finding_id=None)
+    # 11 questions of 4 messages (question, tool call, tool result, answer) and one of 2: 46 messages.
+    for n in range(11):
+        history.append(
+            ctx,
+            thread,
+            [
+                {"role": "user", "content": [{"type": "text", "text": f"q{n}"}]},
+                {
+                    "role": "assistant",
+                    "content": [{"type": "tool_use", "id": f"c{n}", "name": "x", "input": {}}],
+                },
+                {
+                    "role": "user",
+                    "content": [{"type": "tool_result", "tool_use_id": f"c{n}", "content": "{}"}],
+                },
+                {"role": "assistant", "content": [{"type": "text", "text": f"a{n}"}]},
+            ],
+            question=f"q{n}",
+            answer=f"a{n}",
+        )
+    last = [
+        {"role": "user", "content": [{"type": "text", "text": "q11"}]},
+        {"role": "assistant", "content": [{"type": "text", "text": "a11"}]},
+    ]
+    history.append(ctx, thread, last, question="q11", answer="a11")
+    replayed = history.replay(ctx, thread)
+    # The last 40 of 46 start at message 6 — the tool result of q1 (messages 4–7); the cut moves on to the
+    # next question, q2 at message 8: 38 messages.
+    assert len(replayed) == 38
+    assert replayed[0] == {"role": "user", "content": [{"type": "text", "text": "q2"}]}
+    assert replayed[-2:] == last
+
+
+def test_access_revoked_during_a_question_stops_the_next_tool_call(
+    client: TestClient, network: Network, model: FakeModel, owner_engine: Any
+) -> None:
+    """`tool_session` reads the role again on every call: a director switched off while the model thinks gets
+    no more data, even inside the question already started."""
+    from sqlalchemy import text
+
+    def switch_off(_: ModelRequest) -> Reply:
+        with owner_engine.begin() as conn:
+            conn.execute(
+                text("UPDATE users SET is_active = false WHERE id = :id"),
+                {"id": network.a.users["director1@a.ru"]},
+            )
+        return tool_reply("get_tasks", {})
+
+    model.replies += [switch_off, text_reply("Данные недоступны.")]
+    r = client.post("/api/chat", headers=login(client, "director1@a.ru"), json={"question": "Задачи?"})
+    assert r.status_code == 200
+    assert json.loads(model.requests[1].messages[-1]["content"][0]["content"]) == {
+        "error": "Пользователь не найден или отключен"
+    }

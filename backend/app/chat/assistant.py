@@ -20,6 +20,7 @@ from app.ai.gateway import Gateway, ModelUnavailableError
 from app.chat import service
 from app.chat.service import Answer
 from app.core.errors import NotFoundError
+from app.insights.models import ReviewStatus
 from app.insights.visible import visible_finding
 from app.tenancy.context import AccessContext, user_session
 
@@ -43,15 +44,16 @@ def _by_rules(ctx: AccessContext, question: str, finding_id: UUID | None, today:
 
 
 def _visible(ctx: AccessContext, finding_id: UUID | None, today: date) -> UUID | None:
-    """The finding the question was asked from, if this user may see it; another's is quietly dropped."""
+    """The finding the question was asked from, if this user may see it; another's is quietly dropped, and
+    so is one still under review — as in the answer by rules and in `explain_finding`."""
     if finding_id is None:
         return None
     with user_session(ctx) as session:
         try:
-            visible_finding(session, ctx, finding_id, today=today)
+            f = visible_finding(session, ctx, finding_id, today=today)
         except NotFoundError:
             return None
-    return finding_id
+    return finding_id if f.review_status in (None, ReviewStatus.CONFIRMED) else None
 
 
 def respond(
