@@ -5,7 +5,8 @@ Numbers are compared as values, not as text: «12 400 ₽», «12400» and «12 
 «31.2» too; a date («30.09.2026») is one value, a minus sign counts. Only plain counting numbers of a text
 («3 шага», a list number) — integers up to `SMALL` with no unit after them — need no source: «4%», «2 п.п.»,
 «в 3 раза» are figures and are always checked (code review 28.10.2026, p. 1). Multipliers in words («вдвое»)
-cannot be checked, so they are reported too. Ids in the sources are not numbers and allow nothing.
+cannot be checked, so they are reported too,
+unless the sources use the same word. Ids in the sources are not numbers and allow nothing.
 """
 
 import json
@@ -63,8 +64,11 @@ def _source_text(source: Any) -> str:
 def unsupported(answer: str, sources: Iterable[Any]) -> list[str]:
     """Figures of the answer found in none of the sources (tool results), in order of appearance."""
     allowed: set[str] = set()
+    said: set[str] = set()  # multipliers in words the sources themselves use («больше половины»)
     for source in sources:
-        allowed |= numbers(_source_text(source))
+        text = _source_text(source)
+        allowed |= numbers(text)
+        said |= {w.lower() for w in WORDS.findall(text)}
     out: list[str] = []
     for value, figure in _values(answer):
         if value in allowed or value in out:
@@ -72,5 +76,6 @@ def unsupported(answer: str, sources: Iterable[Any]) -> list[str]:
         if not figure and not value.startswith(("d:", "-")) and "." not in value and int(value) <= SMALL:
             continue  # a count: «3 шага», «1.» of a list
         out.append(value)
-    out += [w.lower() for w in WORDS.findall(answer)]
+    # A multiplier in words cannot be checked, unless the facts say it themselves (TC-AN-49).
+    out += [w.lower() for w in WORDS.findall(answer) if w.lower() not in said]
     return out

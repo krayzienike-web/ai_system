@@ -593,11 +593,6 @@ def test_a_marking_of_a_restaurants_file_is_kept_under_that_restaurant(
         assert len(row.basis["samples"]) == 4
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="verify.unsupported refuses «половины» even when the code's own flag says it: a draft that quotes "
-    "the pre-check's «Больше половины списаний…» is refused (TC-AN-49)",
-)
 def test_a_draft_may_quote_the_pre_checks_own_flag() -> None:
     """TC-AN-49 (ADR 0008: the numbers of a proposal are checked against the facts). The code's flag «Разовый
     всплеск» says «Больше половины…» (TC-AN-36); a draft repeating the fact the code gave it made nothing
