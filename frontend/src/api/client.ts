@@ -104,6 +104,7 @@ export async function api<T>(
       typeof body.detail === "string" ? body.detail : response.statusText;
     throw new ApiError(response.status, detail, typeof body.code === "string" ? body.code : undefined);
   }
+  if (response.status === 204) return undefined as T; // no content: «Не согласен», its withdrawal
   return response.json() as Promise<T>;
 }
 

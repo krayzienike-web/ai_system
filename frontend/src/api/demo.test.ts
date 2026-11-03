@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { ApiError } from "./client";
 import { demoRequest } from "./demo";
 import snapshot from "./demo/snapshot.json";
-import type { ApiFinding, ApiTask, Check, EngineParam, ImportBatch, Restaurant } from "./types";
+import type { ApiFinding, ApiTask, Check, Digest, Disagreement, EngineParam, ImportBatch, Restaurant } from "./types";
 
 const ADMIN = "admin@demo.local";
 const ANALYST = "analyst@demo.local";
@@ -253,5 +253,36 @@ describe("demo engine parameters", () => {
     expect(overpay(DIRECTOR).value).toBe("7");
     send("/settings/engine", ADMIN, "PUT", { values: { M3_OVERPAY: null } });
     expect(overpay(ADMIN).value).toBe(overpay(ADMIN).default);
+  });
+});
+
+describe("demo digests (stage 6)", () => {
+  it("shows a director their restaurant's digest and nobody else's", () => {
+    const own = get<Digest>("/digests/latest", DIRECTOR);
+    expect(own.scope).toBe("restaurant");
+    expect(own.restaurant_id).toBe(r01().id);
+    expect(status(() => get("/digests/disagreements", DIRECTOR))).toBe(403);
+    const net = get<Digest>("/digests/latest", ADMIN);
+    expect(net.scope).toBe("network");
+  });
+
+  it("keeps a director's «Не согласен» and shows it to the HQ", () => {
+    const item = get<Digest>("/digests/latest", DIRECTOR).problems[0]!;
+    const url = `/findings/${item.finding_id}/disagree`;
+    expect(status(() => send(url, DIRECTOR, "POST", { reason: "other" }))).toBe(422);
+    expect(status(() => send(url, ADMIN, "POST", { reason: "wrong_data" }))).toBe(403);
+    send(url, DIRECTOR, "POST", { reason: "explained", comment: "Был банкет" });
+    const shown = get<Digest>("/digests/latest", DIRECTOR).problems.find((i) => i.finding_id === item.finding_id)!;
+    expect(shown.disagreed).toBe("explained");
+    const [row] = get<Disagreement[]>("/digests/disagreements", ADMIN);
+    expect(row).toMatchObject({ finding_id: item.finding_id, comment: "Был банкет" });
+    expect(row!.restaurant.startsWith("R01")).toBe(true);
+    send(url, DIRECTOR, "DELETE");
+    expect(status(() => send(url, DIRECTOR, "DELETE"))).toBe(404);
+  });
+
+  it("rebuilds to the recorded digest", () => {
+    const again = send<Digest>("/digests/rebuild", ADMIN, "POST", { restaurant_id: null });
+    expect(again.id).toBe(get<Digest>("/digests/latest", ADMIN).id);
   });
 });

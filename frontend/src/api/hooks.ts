@@ -38,6 +38,10 @@ import type {
   NetworkOverview,
   RestaurantRow,
   RestaurantWeek,
+  Digest,
+  DigestWeek,
+  Disagreement,
+  DisagreeReason,
 } from "./types";
 import type { PeriodChoice } from "../state/ui";
 
@@ -506,3 +510,69 @@ export function useDecideIdea() {
     onSuccess: () => client.invalidateQueries({ queryKey: ["finding-ideas"] }),
   });
 }
+
+// ------------------------------------------------------------------ weekly digests (stage 6)
+
+/** `?restaurant_id=…&week_start=…` in the order the prototype recorded them. */
+export function digestQuery(restaurantId?: string, week?: string): string {
+  const parts = [restaurantId && `restaurant_id=${restaurantId}`, week && `week_start=${week}`].filter(Boolean);
+  return parts.length ? `?${parts.join("&")}` : "";
+}
+
+/** The digest of a restaurant (a director's own without one) or of the network (HQ); the latest or of a week. */
+export const useDigest = (restaurantId?: string, week?: string) =>
+  useQuery({
+    queryKey: ["digest", restaurantId ?? "own", week ?? "latest"],
+    queryFn: () => api<Digest>(`/digests/latest${digestQuery(restaurantId, week)}`),
+    retry: false,
+  });
+
+export const useDigestWeeks = (restaurantId?: string) =>
+  useQuery({
+    queryKey: ["digest", restaurantId ?? "own", "weeks"],
+    queryFn: () => api<DigestWeek[]>(`/digests/weeks${digestQuery(restaurantId)}`),
+  });
+
+export function useRebuildDigest() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (restaurantId?: string) =>
+      api<Digest>("/digests/rebuild", { method: "POST", body: JSON.stringify({ restaurant_id: restaurantId ?? null }) }),
+    onSuccess: () => client.invalidateQueries({ queryKey: ["digest"] }),
+  });
+}
+
+export const useDisagreeReasons = () =>
+  useQuery({
+    queryKey: ["digest-reasons"],
+    queryFn: () => api<DisagreeReason[]>("/digests/disagree-reasons"),
+    staleTime: Infinity,
+  });
+
+export interface DisagreeBody {
+  reason: string;
+  comment?: string;
+  digest_id?: string;
+}
+
+export function useDisagree(findingId: string) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (body: DisagreeBody | null) =>
+      body
+        ? api<void>(`/findings/${findingId}/disagree`, { method: "POST", body: JSON.stringify(body) })
+        : api<void>(`/findings/${findingId}/disagree`, { method: "DELETE" }),
+    onSuccess: () =>
+      Promise.all([
+        client.invalidateQueries({ queryKey: ["digest"] }),
+        client.invalidateQueries({ queryKey: ["disagreements"] }),
+      ]),
+  });
+}
+
+export const useDisagreements = (enabled: boolean) =>
+  useQuery({
+    queryKey: ["disagreements"],
+    queryFn: () => api<Disagreement[]>("/digests/disagreements"),
+    enabled,
+  });

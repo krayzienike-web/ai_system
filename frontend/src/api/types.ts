@@ -214,3 +214,11 @@ export type Precheck = S.PrecheckOut;
 export type PrecheckStats = S.PrecheckStatsOut;
 export type Marking = S.MarkingOut;
 export type FindingIdea = S.IdeaOut;
+
+// ------------------------------------------------------------------ weekly digests (stage 6, backend/app/digests)
+
+export type Digest = S.DigestOut;
+export type DigestItem = S.DigestItemOut;
+export type DigestWeek = S.DigestWeekOut;
+export type Disagreement = S.DisagreementOut;
+export type DisagreeReason = S.ReasonOut;

@@ -157,7 +157,15 @@ export function FindingRow({ f, showRestaurant }: { f: ApiFinding; showRestauran
 // ------------------------------------------------------------------ dialogs
 
 /** The director takes a finding: the chosen steps become one task (with a checklist), due by the chosen date. */
-export function TakeToWorkDialog({ f, open, onClose }: { f: ApiFinding; open: boolean; onClose: () => void }) {
+export function TakeToWorkDialog({
+  f,
+  open,
+  onClose,
+}: {
+  f: Pick<ApiFinding, "id" | "actions" | "effect_rub_month">;
+  open: boolean;
+  onClose: () => void;
+}) {
   const create = useCreateTasks();
   const context = useAppContext();
   const { notify } = useUi();

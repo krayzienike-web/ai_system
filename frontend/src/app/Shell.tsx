@@ -17,6 +17,7 @@ import {
   LogOut,
   MoreHorizontal,
   type LucideIcon,
+  Newspaper,
   Settings,
   ShieldCheck,
   Sparkles,
@@ -67,6 +68,7 @@ const DIRECTOR_NAV: NavItem[] = [
     Icon: Lightbulb,
     mobile: true,
   },
+  { to: "/digest", title: "Сводка недели", short: "Сводка", Icon: Newspaper },
   { to: "/data", title: "Данные", short: "Данные", Icon: Database },
 ];
 
@@ -106,6 +108,7 @@ const HQ_NAV: NavItem[] = [
     short: "Рестораны",
     Icon: Building2,
   },
+  { to: "/digest", title: "Сводки", short: "Сводки", Icon: Newspaper },
   {
     to: "/report",
     title: "Отчет для руководителя",

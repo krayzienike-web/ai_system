@@ -71,6 +71,17 @@ def record(client: TestClient, email: str) -> dict[str, Any]:
         get(f"/overview/findings?{variant}")
     for r in answers["/restaurants"]:
         get(f"/overview/restaurants/{r['code']}")
+    # The weekly digests (stage 6): the reader's own (a director's restaurant, the HQ's network), each week of
+    # the archive, and for the HQ every restaurant's.
+    scopes = [""] + ([f"restaurant_id={r['id']}" for r in answers["/restaurants"]] if hq else [])
+    get("/digests/disagree-reasons")
+    for scope in scopes:
+        query = f"?{scope}" if scope else ""
+        get(f"/digests/latest{query}")
+        for w in get(f"/digests/weeks{query}") or []:
+            get(f"/digests/latest?{scope + '&' if scope else ''}week_start={w['week_start']}")
+    if hq:
+        get("/digests/disagreements")
     findings = list(answers["/findings"])
     if hq:
         get("/overview/restaurants")

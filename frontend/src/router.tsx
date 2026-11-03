@@ -27,6 +27,7 @@ function screen<M, K extends keyof M>(load: () => Promise<M>, name: K): () => Re
   };
 }
 
+const DigestPage = screen(() => import("./app/digest/DigestPage"), "DigestPage");
 const DataPage = screen(() => import("./app/DataPage"), "DataPage");
 const DesignSystemPage = screen(() => import("./app/DesignSystemPage"), "DesignSystemPage");
 const FindingPage = screen(() => import("./app/findings/FindingPage"), "FindingPage");
@@ -110,6 +111,16 @@ const tasksRoute = createRoute({
   path: "/tasks",
   component: TasksPage,
 });
+const digestRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/digest",
+  // HQ: ?restaurant=<id> for a restaurant's digest (none: the network's); anyone: ?week=<monday> from the archive.
+  validateSearch: (search: Record<string, unknown>): { restaurant?: string; week?: string } => ({
+    restaurant: typeof search.restaurant === "string" ? search.restaurant : undefined,
+    week: typeof search.week === "string" ? search.week : undefined,
+  }),
+  component: DigestPage,
+});
 const dataRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/data",
@@ -177,6 +188,7 @@ const routeTree = rootRoute.addChildren([
     findingsRoute,
     findingRoute,
     tasksRoute,
+    digestRoute,
     dataRoute,
     decisionsRoute,
     checksRoute,

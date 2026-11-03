@@ -23,6 +23,7 @@ from app.core.security import hash_password
 from app.demo import showcase
 from app.demo.generator import END, generate
 from app.demo.loader import load
+from app.digests import weekly
 from app.tenancy.context import load_access_context
 from app.tenancy.models import Restaurant, Role, RoleAssignment, Tenant, User
 
@@ -107,9 +108,13 @@ def load_demo(seed: int) -> None:
         rows = load(session, ctx, generate(seed=seed), today=today)
         result = showcase.build(session, ctx, analyst_id, today, HISTORY_WEEKS)
         session.commit()
+    # The digests of the last two Mondays (by rules: the stand may have no model), so the archive and the
+    # comparison with the previous digest have something to show.
+    digests = sum(weekly.run(tenant_id, day) for day in (today - timedelta(days=7), today))
     for template, count in rows.items():
         print(f"  {template:<18} {count:>7} rows")
     print(f"  history: {HISTORY_WEEKS} weekly runs; today ({today}): {result.created} new findings")
+    print(f"  digests: {digests}")
 
 
 def analyze() -> None:

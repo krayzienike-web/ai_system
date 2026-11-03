@@ -23,8 +23,9 @@ import {
   demoMatch,
   demoUpload,
 } from "./demoImports";
+import { demoDigest, demoDisagree, demoDisagreements, digestItems } from "./demoDigests";
 import { demoNorms } from "./demoNorms";
-import type { ApiFinding, ApiTask, ChatAnswer, Check, Freshness, FindingBoard, ImportBatch, Me } from "./types";
+import type { ApiFinding, ApiTask, ChatAnswer, Check, Digest, DisagreeReason, Disagreement, Freshness, FindingBoard, ImportBatch, Me } from "./types";
 
 export const DEMO_PASSWORD = snapshot.password;
 
@@ -122,6 +123,8 @@ function overlay<T>(v: Viewer, value: T): T {
   walk(value);
   return value;
 }
+
+const takenInDemo = (findingId: string) => workPatch.get(findingId)?.taken ?? false;
 
 // ------------------------------------------------------------------ the viewer
 
@@ -450,6 +453,29 @@ export function demoRequest(path: string, init: RequestInit, token: string | nul
   if (batchAction) return demoBatchAction(batchAction[1]!, batchAction[2] as "publish" | "rollback" | "reprocess");
   if (path === "/settings/engine") return demoEngineParams(init, v.admin);
   if (path === "/settings/norms") return demoNorms(init, v.admin);
+
+  // Weekly digests (stage 6).
+  const disagreeing = /^\/findings\/([^/]+)\/disagree$/.exec(path);
+  if (disagreeing) {
+    const place = v.me.restaurant ? `${v.me.restaurant.code} · ${v.me.restaurant.name}` : null;
+    const own = digestItems([answers]).get(disagreeing[1]!);
+    return demoDisagree(disagreeing[1]!, method, body, { hq: v.hq, restaurant: place }, own);
+  }
+  if (path === "/digests/rebuild" && method === "POST") {
+    const id = body.restaurant_id ? `?restaurant_id=${String(body.restaurant_id)}` : "";
+    const recorded = answers[`/digests/latest${id}`] as Digest | undefined;
+    if (!recorded) throw new ApiError(404, "Сводки пока нет");
+    return demoDigest(clone(recorded), takenInDemo, !v.hq);
+  }
+  if (path.startsWith("/digests/latest") && answers[path])
+    return demoDigest(clone(answers[path] as Digest), takenInDemo, !v.hq);
+  if (path === "/digests/disagreements") {
+    forbid(v.hq, "Несогласия директоров видит управляющая компания");
+    return demoDisagreements(
+      clone((answers[path] as Disagreement[]) ?? []),
+      (answers["/digests/disagree-reasons"] as DisagreeReason[]) ?? [],
+    );
+  }
 
   // Actions.
   if (method === "POST") {
