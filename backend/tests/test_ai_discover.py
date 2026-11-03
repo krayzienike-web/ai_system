@@ -7,6 +7,8 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import Engine
+from sqlalchemy.orm import Session
 
 from app.ai import discover
 from app.ai.gateway import FakeModel, Gateway, ModelRequest, Reply, get_gateway, text_reply
@@ -112,3 +114,27 @@ def test_ideas_are_for_the_hq_only(client: TestClient, network: Network, model: 
         == 404
     )
     assert client.get("/api/ai/finding-ideas", headers=foreign).json() == []
+
+
+def test_every_batch_of_ideas_is_kept_and_shown(network: Network, owner_engine: Engine) -> None:
+    """Q21 (03.11.2026): «пока храним и показываем всё» — no cut at the latest ten."""
+    from app.ai.models import AiSuggestion
+    from app.core.db import get_sessionmaker
+    from app.tenancy.context import load_access_context
+
+    with Session(owner_engine) as s, s.begin():
+        for n in range(12):
+            s.add(
+                AiSuggestion(
+                    tenant_id=network.a.id,
+                    kind="finding_idea",
+                    content={"n": n},
+                    basis={},
+                    prompt="discover",
+                    prompt_version=1,
+                )
+            )
+    with get_sessionmaker()() as s:
+        ctx = load_access_context(s, network.a.users["analyst@a.ru"], network.a.id)
+    assert ctx is not None
+    assert len(discover.ideas(ctx)) == 12

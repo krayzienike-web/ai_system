@@ -192,13 +192,13 @@ def propose_ideas(gateway: Gateway, ctx: AccessContext, today: date) -> list[Pro
 
 
 def ideas(ctx: AccessContext) -> list[Proposal]:
-    """The batches of ideas, the latest first, decided ones too."""
+    """The batches of ideas, the latest first, decided ones too — all of them (Q21, 03.11.2026: «пока храним и
+    показываем всё»)."""
     _may(ctx)
     with user_session(ctx) as s:
         rows = s.execute(
             select(AiSuggestion)
             .where(AiSuggestion.kind == "finding_idea", AiSuggestion.status != "superseded")
             .order_by(AiSuggestion.created_at.desc())
-            .limit(10)
         ).scalars()
         return [out(r) for r in rows]
