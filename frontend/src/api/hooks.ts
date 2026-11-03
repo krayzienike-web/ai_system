@@ -570,9 +570,10 @@ export function useDisagree(findingId: string) {
   });
 }
 
-export const useDisagreements = (enabled: boolean) =>
+/** The HQ's list of directors' «Не согласен»: the network's, or one restaurant's on its digest. */
+export const useDisagreements = (enabled: boolean, restaurantId?: string) =>
   useQuery({
-    queryKey: ["disagreements"],
-    queryFn: () => api<Disagreement[]>("/digests/disagreements"),
+    queryKey: ["disagreements", restaurantId ?? "all"],
+    queryFn: () => api<Disagreement[]>(`/digests/disagreements${digestQuery(restaurantId)}`),
     enabled,
   });

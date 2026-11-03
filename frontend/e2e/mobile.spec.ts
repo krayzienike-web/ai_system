@@ -50,3 +50,10 @@ test("TC-UI-13: «Еще» is a dialog for the keyboard: focus inside, Escape cl
   await page.getByRole("navigation", { name: "Меню" }).getByRole("link", { name: /Находки/ }).click({ force: true });
   await expect(page.getByRole("dialog", { name: "Еще разделы" })).toHaveCount(0);
 });
+
+test("TC-UI-20: the director opens the week's digest from the phone's tab bar", async ({ page }) => {
+  await signIn(page, "Директор ресторана");
+  await page.getByRole("navigation").getByRole("link", { name: /Сводка/ }).first().click();
+  await expect(page.getByRole("heading", { name: /Сводка · R01/ })).toBeVisible();
+  await expectNoOverflow(page);
+});

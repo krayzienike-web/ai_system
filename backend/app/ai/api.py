@@ -286,10 +286,12 @@ class RebuildIn(BaseModel):
 
 @router.post("/digests/rebuild", response_model=digests_api.DigestOut)
 def rebuild_digest(
-    body: RebuildIn, ctx: CanRead, gateway: GatewayDep, today: TodayDep
+    body: RebuildIn, ctx: CanRead, session: SessionDep, gateway: GatewayDep, today: TodayDep
 ) -> digests_api.DigestOut:
     """«Пересобрать»: the digest of the last full week again, from the findings as they are now; the texts by
-    the model when it is on (within the person's daily budget), by rules otherwise."""
+    the model when it is on (within the person's daily budget), by rules otherwise — but a text by rules
+    never replaces the model's (409; code review 03.11.2026, p. 7)."""
+    _release(session)
     restaurant_id = digests_api.scope_of(ctx, body.restaurant_id)
     if not ctx.role.is_hq and restaurant_id != ctx.restaurant_id:
         raise NotFoundError("Сводки пока нет")  # another restaurant: the same answer as for a missing one
@@ -299,7 +301,9 @@ def rebuild_digest(
                 raise NotFoundError("Ресторан не найден")
     write = digest_writer.writer(gateway, ctx) if gateway is not None else None
     week = digest_builder.Week.before(today)
-    digest_id = digest_service.publish(ctx, restaurant_id=restaurant_id, week=week, today=today, write=write)
+    digest_id = digest_service.publish(
+        ctx, restaurant_id=restaurant_id, week=week, today=today, write=write, keep_model_text=True
+    )
     with user_session(ctx) as s:
         digest = s.get(Digest, digest_id)
         assert digest is not None

@@ -1,6 +1,6 @@
 import { AlertTriangle, CheckCircle2, Info, OctagonAlert } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
-import { type ButtonHTMLAttributes, type ReactNode, useEffect, useId, useState } from "react";
+import { type ButtonHTMLAttributes, type ReactNode, useEffect, useId, useRef, useState } from "react";
 
 export const cx = (...classes: (string | false | null | undefined)[]) => classes.filter(Boolean).join(" ");
 
@@ -192,12 +192,43 @@ export function Dialog({
   title: string;
   children: ReactNode;
 }) {
+  const box = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [open, onClose]);
+  // Focus moves into the dialog, Tab stays inside it, and comes back to what opened it — if it is still there
+  // (an action may have replaced the button; then the browser's default applies).
+  useEffect(() => {
+    if (!open) return;
+    const before = document.activeElement as HTMLElement | null;
+    const focusable = () =>
+      Array.from(
+        box.current?.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), [href], input:not([disabled]), select, textarea, [tabindex]:not([tabindex="-1"])',
+        ) ?? [],
+      );
+    const first = setTimeout(() => focusable()[0]?.focus(), 0);
+    const onTab = (e: KeyboardEvent) => {
+      if (e.key !== "Tab") return;
+      const items = focusable();
+      if (!items.length) return;
+      const [head, tail] = [items[0]!, items[items.length - 1]!];
+      const wrapTo = e.shiftKey ? (document.activeElement === head ? tail : null) : document.activeElement === tail ? head : null;
+      if (wrapTo) {
+        e.preventDefault();
+        wrapTo.focus();
+      }
+    };
+    window.addEventListener("keydown", onTab);
+    return () => {
+      clearTimeout(first);
+      window.removeEventListener("keydown", onTab);
+      if (before?.isConnected) before.focus();
+    };
+  }, [open]);
   return (
     <AnimatePresence>
       {open && (
@@ -209,6 +240,7 @@ export function Dialog({
           onClick={onClose}
         >
           <motion.div
+            ref={box}
             role="dialog"
             aria-modal="true"
             aria-label={title}
@@ -244,9 +276,26 @@ export function ErrorText({ error, fallback = "Не получилось, поп
 }
 
 /** A screen whose data did not load: says so (with the server's reason) instead of loading forever. */
-export function LoadError({ error, title = "Не получилось загрузить данные" }: { error: unknown; title?: string }) {
+export function LoadError({
+  error,
+  title = "Не получилось загрузить данные",
+  retry,
+}: {
+  error: unknown;
+  title?: string;
+  retry?: () => void;
+}) {
   return (
-    <EmptyState title={title}>
+    <EmptyState
+      title={title}
+      action={
+        retry && (
+          <button type="button" onClick={retry} className={buttonClass("ghost")}>
+            Повторить
+          </button>
+        )
+      }
+    >
       <ErrorText error={error} fallback="Обновите страницу чуть позже." className="text-ink-3" />
     </EmptyState>
   );

@@ -1530,6 +1530,17 @@
       ],
       "title": "Disagreed"
      },
+     "disagreed_comment": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Disagreed Comment"
+     },
      "effect_per_month": {
       "anyOf": [
        {
@@ -1540,6 +1551,17 @@
        }
       ],
       "title": "Effect Per Month"
+     },
+     "effect_rub_month": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Effect Rub Month"
      },
      "finding_id": {
       "format": "uuid",
@@ -1572,7 +1594,9 @@
      "causes",
      "actions",
      "taken",
-     "disagreed"
+     "disagreed",
+     "disagreed_comment",
+     "effect_rub_month"
     ],
     "title": "DigestItemOut",
     "type": "object"
@@ -7226,8 +7250,27 @@
   },
   "/api/digests/disagreements": {
    "get": {
-    "description": "The HQ's list of directors' disagreements, the latest first.",
+    "description": "The HQ's list of directors' disagreements, the latest first; of one restaurant when given.",
     "operationId": "disagreements_api_digests_disagreements_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "restaurant_id",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "format": "uuid",
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Restaurant Id"
+      }
+     }
+    ],
     "responses": {
      "200": {
       "content": {
@@ -7242,6 +7285,16 @@
        }
       },
       "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
      }
     },
     "security": [
@@ -7330,7 +7383,7 @@
   },
   "/api/digests/rebuild": {
    "post": {
-    "description": "«Пересобрать»: the digest of the last full week again, from the findings as they are now; the texts by\nthe model when it is on (within the person's daily budget), by rules otherwise.",
+    "description": "«Пересобрать»: the digest of the last full week again, from the findings as they are now; the texts by\nthe model when it is on (within the person's daily budget), by rules otherwise — but a text by rules\nnever replaces the model's (409; code review 03.11.2026, p. 7).",
     "operationId": "rebuild_digest_api_digests_rebuild_post",
     "requestBody": {
      "content": {

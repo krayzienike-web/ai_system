@@ -242,6 +242,8 @@ export interface DigestItemOut {
   actions: string[];
   taken: boolean;
   disagreed: string | null;
+  disagreed_comment: string | null;
+  effect_rub_month: string | null;
 }
 
 export interface DigestKpisOut {

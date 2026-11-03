@@ -41,11 +41,17 @@ export function demoDigest(d: Digest, taken: (findingId: string) => boolean, dir
     ...i,
     taken: i.taken || taken(i.finding_id),
     disagreed: director ? (marks.get(i.finding_id)?.reason ?? null) : null,
+    disagreed_comment: director ? (marks.get(i.finding_id)?.comment ?? null) : null,
   });
   return { ...d, problems: d.problems.map(mark), opportunities: d.opportunities.map(mark), risks: d.risks.map(mark) };
 }
 
-export function demoDisagreements(recorded: Disagreement[], reasons: DisagreeReason[]): Disagreement[] {
+/** The HQ's list, of one restaurant when `restaurant` (its «R01 · Название» label) is given. */
+export function demoDisagreements(
+  recorded: Disagreement[],
+  reasons: DisagreeReason[],
+  restaurant?: string,
+): Disagreement[] {
   const title = (r: string) => reasons.find((x) => x.reason === r)?.title ?? r;
   const added = [...marks.entries()].map(([findingId, m], n) => ({
     id: `demo-disagreement-${n}`,
@@ -57,7 +63,8 @@ export function demoDisagreements(recorded: Disagreement[], reasons: DisagreeRea
     comment: m.comment,
     created_at: m.at,
   }));
-  return [...added.reverse(), ...recorded];
+  const all = [...added.reverse(), ...recorded];
+  return restaurant ? all.filter((d) => d.restaurant === restaurant) : all;
 }
 
 /** Every digest item of the recordings, by finding id: what «Не согласен» may name. */

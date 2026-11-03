@@ -14,10 +14,11 @@ from datetime import UTC, date, datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, literal_column, select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
-from app.core.errors import NotFoundError
+from app.core.errors import ConflictError, NotFoundError
 from app.digests import builder, texts
 from app.digests.models import Digest
 from app.tenancy.context import AccessContext, user_session
@@ -40,6 +41,23 @@ def previous(session: Session, restaurant_id: UUID | None, week: builder.Week) -
     ).scalar()
 
 
+ZERO_ID = UUID(int=0)
+
+
+class ModelTextKeptError(ConflictError):
+    """«Пересобрать» while the model is off or its text did not pass: the digest keeps the model's text
+    rather than falling back to the rules (code review 03.11.2026, p. 7)."""
+
+
+def exists(session: Session, restaurant_id: UUID | None, week: builder.Week) -> bool:
+    return (
+        session.execute(
+            select(Digest.id).where(_scope(restaurant_id), Digest.week_start == week.start)
+        ).scalar()
+        is not None
+    )
+
+
 def publish(
     ctx: AccessContext,
     *,
@@ -47,9 +65,16 @@ def publish(
     week: builder.Week,
     today: date,
     write: Writer | None = None,
+    keep_model_text: bool = False,
 ) -> UUID:
     """Builds and keeps the digest of one scope and week; returns its id. Three steps, so the model's minute
-    holds no transaction: the input (a short transaction), the texts (outside), the row (another one)."""
+    holds no transaction: the input (a short transaction), the texts (outside), the row (another one).
+
+    One row per scope and week, written with INSERT … ON CONFLICT: two builds at once never fail on the unique
+    index, and the one that read the data later wins — a slow build (the model thinking) does not overwrite a
+    newer one with older data (code review 03.11.2026, p. 3). `keep_model_text` (the rebuild button): a text
+    by rules does not replace the model's — `ModelTextKeptError` instead."""
+    read_at = datetime.now(UTC)
     with user_session(ctx) as session:
         before = previous(session, restaurant_id, week)
         data = builder.build(
@@ -64,18 +89,44 @@ def publish(
         (written[0], "model", written[1]) if written else (texts.by_rules(data), "rules", None)
     )
     with user_session(ctx) as session:
-        digest = session.execute(
-            select(Digest).where(_scope(restaurant_id), Digest.week_start == week.start).with_for_update()
-        ).scalar()
-        if digest is None:
-            digest = Digest(
-                tenant_id=ctx.tenant_id, restaurant_id=restaurant_id, week_start=week.start, week_end=week.end
-            )
-            session.add(digest)
-        digest.input, digest.output, digest.source, digest.prompt_version = data, output, source, version
-        digest.built_at = datetime.now(UTC)
-        session.flush()
-        return digest.id
+        if keep_model_text and source == "rules":
+            current = session.execute(
+                select(Digest.source).where(_scope(restaurant_id), Digest.week_start == week.start)
+            ).scalar()
+            if current == "model":
+                raise ModelTextKeptError(
+                    "ИИ сейчас не смог написать текст — сводка осталась прежней. Попробуйте позже"
+                )
+        values = {
+            "tenant_id": ctx.tenant_id,
+            "restaurant_id": restaurant_id,
+            "week_start": week.start,
+            "week_end": week.end,
+            "input": data,
+            "output": output,
+            "source": source,
+            "prompt_version": version,
+            "built_at": read_at,
+        }
+        stmt = insert(Digest).values(**values)
+        upsert = stmt.on_conflict_do_update(
+            index_elements=[
+                Digest.tenant_id,
+                # The index's own expression, as SQL text: a bound parameter does not match it once psycopg
+                # prepares the statement (it did after a few runs).
+                func.coalesce(Digest.restaurant_id, literal_column(f"'{ZERO_ID}'::uuid")),
+                Digest.week_start,
+            ],
+            set_={k: stmt.excluded[k] for k in ("input", "output", "source", "prompt_version", "built_at")},
+            where=Digest.built_at < stmt.excluded.built_at,
+        ).returning(Digest.id)
+        written_id = session.execute(upsert).scalar()
+        if written_id is not None:
+            return written_id
+        kept = session.execute(  # a newer build is already there
+            select(Digest.id).where(_scope(restaurant_id), Digest.week_start == week.start)
+        ).scalar_one()
+        return kept
 
 
 def scopes(session: Session) -> list[UUID | None]:

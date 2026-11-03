@@ -31,7 +31,8 @@ def headline(d: dict[str, Any]) -> str:
         parts.append("Процессы в зоне риска: " + ", ".join(f"«{t}»" for t in bad) + ".")
     done = d["improved"]["tasks_done"]
     if done:
-        parts.append(f"За неделю {'выполнена' if done == 1 else 'выполнено'} {words.plural(done, TASKS)}.")
+        one = done % 10 == 1 and done % 100 != 11  # «выполнена 21 задача», as «1 задача»
+        parts.append(f"За неделю {'выполнена' if one else 'выполнено'} {words.plural(done, TASKS)}.")
     return " ".join(parts)
 
 

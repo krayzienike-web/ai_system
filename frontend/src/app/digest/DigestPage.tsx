@@ -13,7 +13,20 @@ import {
   useRestaurants,
 } from "../../api/hooks";
 import type { Digest, DigestItem } from "../../api/types";
-import { Button, Card, cx, Dialog, EmptyState, ErrorText, PageTitle, Pill, Reveal, Skeleton, type Tone } from "../../ds/primitives";
+import {
+  Button,
+  Card,
+  cx,
+  Dialog,
+  EmptyState,
+  ErrorText,
+  LoadError,
+  PageTitle,
+  Pill,
+  Reveal,
+  Skeleton,
+  type Tone,
+} from "../../ds/primitives";
 import { PROCESS_ICON } from "../../ds/viz";
 import { useViewer } from "../../lib/useViewer";
 import { useUi } from "../../state/ui";
@@ -26,6 +39,12 @@ const STATUS: Record<string, { tone: Tone; word: string }> = {
 };
 
 const dmy = (iso: string) => iso.split("-").reverse().join(".");
+const signed = (n: number) => (n > 0 ? `+${n}` : `−${-n}`);
+
+/** Reactions belong to the latest week only: an archive week is read, not acted on (the latest week chosen in
+ * the archive list is still the latest). */
+const isLatest = (d: Digest, weeks: { week_start: string }[] | undefined) =>
+  !weeks?.length || d.week_start === weeks[0]!.week_start;
 
 /** «Сводка недели» (docs/08 part 1): what the code computed for the week, in the model's or the rules' words.
  * A director reads their restaurant's; the HQ picks the network or a restaurant. Every figure is the server's. */
@@ -112,9 +131,11 @@ export function DigestPage() {
           Сводка выходит по понедельникам о прошлой неделе. Ее можно собрать и сейчас — кнопкой «Пересобрать».
         </EmptyState>
       )}
-      {digest.isError && !missing && <ErrorText error={digest.error} fallback="Не получилось загрузить сводку" />}
-      {d && <DigestView d={d} canReact={!viewer.isHq && !search.week} />}
-      {viewer.can("network.compare") && <Disagreements />}
+      {digest.isError && !missing && (
+        <LoadError error={digest.error} title="Не получилось загрузить сводку" retry={() => void digest.refetch()} />
+      )}
+      {d && <DigestView d={d} canReact={!viewer.isHq && isLatest(d, weeks.data)} />}
+      {viewer.can("network.compare") && <Disagreements restaurantId={restaurant} />}
     </div>
   );
 }
@@ -126,7 +147,7 @@ function DigestView({ d, canReact }: { d: Digest; canReact: boolean }) {
         <section className="grid gap-6 rounded-[24px] bg-ink p-6 text-white sm:p-8 lg:grid-cols-[1fr_1.3fr]">
           <div>
             <div className="text-sm text-spark">На столе в месяц</div>
-            <div className="mt-1 font-display text-[44px] leading-none font-semibold tracking-tight">{d.on_table.total ?? "0 ₽"}</div>
+            <div className="mt-1 font-display text-[44px] leading-none font-semibold tracking-tight">{d.on_table.total ?? "—"}</div>
             <div className="mt-3 space-y-1 text-sm text-white/80">
               <div>Потери: {d.on_table.losses ?? "—"}</div>
               <div>Потенциал: {d.on_table.potential ?? "—"}</div>
@@ -162,7 +183,7 @@ function DigestView({ d, canReact }: { d: Digest; canReact: boolean }) {
                   <span className="text-xs text-ink-3">из 100</span>
                   {p.change !== null && p.change !== 0 && (
                     <span className={cx("num text-xs", p.change > 0 ? "text-gain" : "text-loss")}>
-                      {p.change > 0 ? `+${p.change}` : p.change} к прошлой
+                      {signed(p.change)} к прошлой
                     </span>
                   )}
                 </div>
@@ -176,7 +197,7 @@ function DigestView({ d, canReact }: { d: Digest; canReact: boolean }) {
         </div>
       </section>
 
-      <Items title="Где теряем деньги" empty="Открытых проблем с оценкой в рублях нет" items={d.problems} digest={d} canReact={canReact} />
+      <Items title="Где теряем деньги" empty="Проблем выше нормы не найдено. Посмотрите возможности ниже" items={d.problems} digest={d} canReact={canReact} />
       <Items title="Что улучшить" empty="Новых возможностей нет" items={d.opportunities} digest={d} canReact={canReact} />
       {d.risks.length > 0 && <Items title="Риски на ближайшие дни" empty="" items={d.risks} digest={d} canReact={canReact} />}
 
@@ -212,33 +233,43 @@ function Kpis({ d }: { d: Digest }) {
     ["Фудкост факт", "food_cost_actual"],
     ["Фудкост по техкартам", "food_cost_theory"],
     ["Списания от выручки", "write_offs_share_of_revenue"],
-    ["Выручка", "revenue"],
+    ["Выручка за период фудкоста", "revenue"],
   ];
   if (!d.kpis) return null;
+  const net = d.network_average;
   return (
     <section aria-labelledby="kpis">
       <h2 id="kpis" className="mb-3 font-display text-lg font-semibold">Ключевые показатели</h2>
       <Card className="overflow-x-auto">
         <table className="w-full text-[13px] sm:text-sm [&_td]:px-2 [&_th]:px-2 sm:[&_td]:px-3 sm:[&_th]:px-3">
-          <thead className="text-left text-xs text-ink-3">
+          <thead className="text-xs text-ink-3">
             <tr>
-              <th className="p-3 font-normal">Показатель</th>
-              <th className="p-3 font-normal">Сейчас</th>
-              <th className="p-3 font-normal">В прошлой сводке</th>
-              {d.network_average && <th className="p-3 font-normal">В среднем по сети</th>}
+              <th className="p-3 text-left font-normal">Показатель</th>
+              <th className="p-3 text-right font-normal">В этой сводке</th>
+              <th className="p-3 text-right font-normal">В прошлой сводке</th>
+              {net && <th className="p-3 text-right font-normal">В среднем по сети</th>}
             </tr>
           </thead>
           <tbody>
             {rows.map(([title, key]) => (
               <tr key={key} className="border-t border-line">
                 <td className="p-3">{title}</td>
-                <td className="num p-3 font-medium">{d.kpis![key] ?? "—"}</td>
-                <td className="num p-3 text-ink-2">{d.kpis_previous_digest?.[key] ?? "—"}</td>
-                {d.network_average && <td className="num p-3 text-ink-2">{d.network_average[key] ?? "—"}</td>}
+                <td className="num p-3 text-right font-medium">{d.kpis![key] ?? "—"}</td>
+                <td className="num p-3 text-right text-ink-2">{d.kpis_previous_digest?.[key] ?? "—"}</td>
+                {net && <td className="num p-3 text-right text-ink-2">{net[key] ?? "—"}</td>}
               </tr>
             ))}
           </tbody>
         </table>
+        {/* Food cost is between stock counts, not for the week: say over which days (docs/08). */}
+        <p className="border-t border-line p-3 text-xs text-ink-3">
+          Фудкост и выручка — за период между инвентаризациями
+          {d.kpis.food_cost_period && <>: {d.kpis.food_cost_period}</>}
+          {net?.food_cost_period && net.food_cost_period !== d.kpis.food_cost_period && (
+            <>; в среднем по сети — {net.food_cost_period}</>
+          )}
+          .
+        </p>
       </Card>
     </section>
   );
@@ -314,7 +345,7 @@ function Item({ i, digest, canReact }: { i: DigestItem; digest: Digest; canReact
       </div>
       {taking && (
         <TakeToWorkDialog
-          f={{ id: i.finding_id, actions: i.actions.length ? i.actions : [i.title], effect_rub_month: null }}
+          f={{ id: i.finding_id, actions: i.actions, effect_rub_month: i.effect_rub_month }}
           open={taking}
           onClose={() => setTaking(false)}
         />
@@ -329,7 +360,7 @@ function DisagreeDialog({ i, digestId, onClose }: { i: DigestItem; digestId: str
   const disagree = useDisagree(i.finding_id);
   const { notify } = useUi();
   const [reason, setReason] = useState(i.disagreed ?? "");
-  const [comment, setComment] = useState("");
+  const [comment, setComment] = useState(i.disagreed_comment ?? "");
   const needsComment = reason === "other" && !comment.trim();
   return (
     <Dialog open onClose={onClose} title="Не согласен">
@@ -368,7 +399,14 @@ function DisagreeDialog({ i, digestId, onClose }: { i: DigestItem; digestId: str
             <Button
               variant="ghost"
               disabled={disagree.isPending}
-              onClick={() => disagree.mutate(null, { onSuccess: () => (notify("Несогласие отозвано"), onClose()) })}
+              onClick={() =>
+                disagree.mutate(null, {
+                  onSuccess: () => {
+                    notify("Несогласие отозвано");
+                    onClose();
+                  },
+                })
+              }
             >
               Отозвать
             </Button>
@@ -382,7 +420,12 @@ function DisagreeDialog({ i, digestId, onClose }: { i: DigestItem; digestId: str
             onClick={() =>
               disagree.mutate(
                 { reason, comment: comment.trim() || undefined, digest_id: digestId },
-                { onSuccess: () => (notify("Отправлено в управляющую компанию"), onClose()) },
+                {
+                  onSuccess: () => {
+                    notify("Отправлено в управляющую компанию");
+                    onClose();
+                  },
+                },
               )
             }
           >
@@ -394,10 +437,18 @@ function DisagreeDialog({ i, digestId, onClose }: { i: DigestItem; digestId: str
   );
 }
 
-/** The HQ's list of directors' «Не согласен». */
-function Disagreements() {
-  const list = useDisagreements(true);
-  if (!list.data?.length) return null;
+/** The HQ's list of directors' «Не согласен»: on a restaurant's digest — that restaurant's only. */
+function Disagreements({ restaurantId }: { restaurantId?: string }) {
+  const list = useDisagreements(true, restaurantId);
+  if (list.isPending) return null;
+  if (list.isError)
+    return <LoadError error={list.error} title="Не получилось загрузить несогласия директоров" retry={() => void list.refetch()} />;
+  if (!list.data.length)
+    return (
+      <p className="text-sm text-ink-3">
+        {restaurantId ? "Директор этого ресторана ни с чем не спорил." : "Директора ни с чем не спорили."}
+      </p>
+    );
   return (
     <section aria-labelledby="disagreements">
       <h2 id="disagreements" className="mb-3 font-display text-lg font-semibold">

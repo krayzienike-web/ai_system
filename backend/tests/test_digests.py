@@ -79,8 +79,13 @@ def test_a_digest_is_built_by_the_code_and_written_by_rules(network: Network, ow
         data, out = d.input, d.output
     assert data["scope"] == "network" and len(data["processes"]) == 8
     assert builder.ITEMS_MIN <= len(data["problems"]) <= builder.ITEMS_MAX
-    objects = [i.get("object") for i in data["problems"] + data["opportunities"] if i.get("object")]
-    assert len(objects) == len(set(objects))  # one item per object
+    from app.insights.models import Finding
+
+    picked = [UUID(i["finding_id"]) for i in data["problems"] + data["opportunities"]]
+    with Session(owner_engine) as s:  # the items carry no object: it is the finding's key («M1:R01:P01»)
+        keys = s.execute(select(Finding.key).where(Finding.id.in_(picked))).scalars().all()
+    objects = [":".join(k.split(":")[1:3]) for k in keys if k]
+    assert len(keys) == len(picked) and len(objects) == len(set(objects))  # one item per object
     assert out == texts.by_rules(data)
     assert data["problems"][0]["title"] in out["headline"]
     assert set(out["items"]) == {
@@ -190,7 +195,7 @@ def test_the_models_texts_quote_only_the_digests_numbers(network: Network, owner
     digest_id = _assemble(admin, None, write=digest_writer.writer(Gateway(fake), admin))
     with Session(owner_engine) as s:
         d = s.get(Digest, digest_id)
-        assert d is not None and d.source == "model" and d.prompt_version == 1
+        assert d is not None and d.source == "model" and d.prompt_version == 2
         assert d.output["headline"] == "Главное: проверить закупки."
         assert set(d.output["items"].values()) == {"Текст пункта"}
         total = d.input["on_table"]["total"]
@@ -253,7 +258,8 @@ def test_a_directors_digest_tells_the_model_nothing_of_other_restaurants(
 
 def test_the_digests_are_scheduled_on_monday_morning_in_moscow() -> None:
     job = next(j for j in worker.cron_jobs() if j.name == "cron:weekly_digests")
-    assert (job.weekday, job.hour, job.minute) == ({0}, {5}, {31})  # 08:31 Moscow (Q24)
+    assert isinstance(job.hour, set)
+    assert (job.weekday, min(job.hour), job.minute) == ({0}, 5, {31})  # 08:31 Moscow (Q24), then catch-ups
 
 
 @pytest.mark.usefixtures("demo")
@@ -279,7 +285,7 @@ def test_the_weekly_run_builds_every_restaurant_and_the_network(
     admin = _ctx(network, "admin@a.ru", owner_engine)
     with user_session(admin) as s:
         assert s.execute(select(func.count()).select_from(AiRun)).scalar_one() == 0
-    assert worker.build_digests(TODAY) == built  # again: replaced, not added
+    assert worker.build_digests(TODAY) == 0  # a catch-up run: everything is there, nothing is built again
     with Session(owner_engine) as s:
         assert s.execute(select(func.count()).select_from(Digest)).scalar_one() == len(rows)
 

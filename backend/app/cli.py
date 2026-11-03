@@ -108,8 +108,9 @@ def load_demo(seed: int) -> None:
         rows = load(session, ctx, generate(seed=seed), today=today)
         result = showcase.build(session, ctx, analyst_id, today, HISTORY_WEEKS)
         session.commit()
-    # The digests of the last two Mondays (by rules: the stand may have no model), so the archive and the
-    # comparison with the previous digest have something to show.
+    # The digests of the last two Mondays (by rules: the stand may have no model), so the archive has two
+    # weeks. Both are built from today's findings and KPIs, so the comparison between them shows no change
+    # (code review 03.11.2026, p. 14): a real network gets it from its own Mondays.
     digests = sum(weekly.run(tenant_id, day) for day in (today - timedelta(days=7), today))
     for template, count in rows.items():
         print(f"  {template:<18} {count:>7} rows")

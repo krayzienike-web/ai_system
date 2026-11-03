@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 
 from app.ai.gateway import BudgetError, Gateway, InvalidAnswerError, ModelUnavailableError
 from app.ai.suggestions import ask
+from app.ai.verify import unsupported
 from app.digests.service import Writer
 from app.digests.texts import by_rules
 from app.tenancy.context import AccessContext
@@ -22,16 +23,30 @@ log = logging.getLogger(__name__)
 
 class ItemText(BaseModel):
     finding_id: str
-    text: str = Field(description="1–2 предложения: что видно, сколько стоит, первый шаг")
+    text: str = Field(min_length=1, description="1–2 предложения: что видно, сколько стоит, первый шаг")
 
 
 class Texts(BaseModel):
-    headline: str = Field(description="Главное за неделю: 2–3 предложения")
+    headline: str = Field(min_length=1, description="Главное за неделю: 2–3 предложения")
     items: list[ItemText]
+
+
+COMMON = ("week", "kpis", "kpis_previous_digest", "network_average", "on_table", "last_count", "restaurant")
 
 
 def _ids(data: dict[str, Any]) -> list[str]:
     return [i["finding_id"] for i in data["problems"] + data["opportunities"] + data["risks"]]
+
+
+def strictly(t: "Texts", data: dict[str, Any]) -> list[str]:
+    """Counts are the digest's facts too (`strict`), and an item's text may quote only its own item and the
+    common blocks — never another item's effect (code review 03.11.2026, pp. 4–5); the headline — anything."""
+    items = {i["finding_id"]: i for i in data["problems"] + data["opportunities"] + data["risks"]}
+    common = {k: data.get(k) for k in COMMON}
+    out = unsupported(t.headline, [data], strict=True)
+    for i in t.items:
+        out += unsupported(i.text, [items.get(i.finding_id), common], strict=True)
+    return list(dict.fromkeys(out))
 
 
 def writer(gateway: Gateway, ctx: AccessContext) -> Writer:
@@ -42,7 +57,7 @@ def writer(gateway: Gateway, ctx: AccessContext) -> Writer:
             got = [i.finding_id for i in t.items]
             if sorted(got) != sorted(expected):
                 return ["тексты нужны ровно для пунктов сводки, по одному на каждый finding_id из фактов"]
-            return []
+            return strictly(t, data)
 
         try:
             texts, chat = ask(

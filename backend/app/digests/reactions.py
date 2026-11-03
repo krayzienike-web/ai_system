@@ -10,7 +10,8 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, true
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from app.core.errors import ForbiddenError, InvalidError, NotFoundError
@@ -53,19 +54,35 @@ def disagree(
     comment = (comment or "").strip() or None
     if reason == "other" and comment is None:
         raise InvalidError("Напишите, с чем не согласны")
-    if digest_id is not None and session.get(Digest, digest_id) is None:
-        raise NotFoundError("Сводка не найдена")
-    row = session.execute(
-        select(Disagreement).where(Disagreement.finding_id == finding_id, Disagreement.user_id == ctx.user_id)
-    ).scalar()
-    if row is None:
-        row = Disagreement(
-            tenant_id=ctx.tenant_id, restaurant_id=restaurant_id, finding_id=finding_id, user_id=ctx.user_id
+    if digest_id is not None:
+        digest = session.get(Digest, digest_id)
+        named = (
+            {i["finding_id"] for k in ("problems", "opportunities", "risks") for i in digest.input[k]}
+            if digest
+            else set()
         )
-        session.add(row)
-    row.reason, row.comment, row.digest_id = reason, comment, digest_id
-    row.created_at = datetime.now(UTC)
+        if str(finding_id) not in named:  # the digest the reaction came from must hold the item
+            raise NotFoundError("Сводка не найдена")
+    # Saying it again replaces it; two clicks at once do not fail on the unique (finding, person) pair.
+    stmt = insert(Disagreement).values(
+        tenant_id=ctx.tenant_id,
+        restaurant_id=restaurant_id,
+        finding_id=finding_id,
+        user_id=ctx.user_id,
+        digest_id=digest_id,
+        reason=reason,
+        comment=comment,
+        created_at=datetime.now(UTC),
+    )
+    row_id = session.execute(
+        stmt.on_conflict_do_update(
+            index_elements=[Disagreement.finding_id, Disagreement.user_id],
+            set_={k: stmt.excluded[k] for k in ("reason", "comment", "digest_id", "created_at")},
+        ).returning(Disagreement.id)
+    ).scalar_one()
     session.flush()
+    row = session.get(Disagreement, row_id, populate_existing=True)
+    assert row is not None
     return row
 
 
@@ -85,7 +102,7 @@ class Live:
     """What changed since the digest was built: tasks taken and the reader's own disagreements."""
 
     taken: frozenset[UUID]
-    mine: dict[UUID, str]
+    mine: dict[UUID, tuple[str, str | None]]  # finding → the reader's reason and comment
 
 
 def live(session: Session, ctx: AccessContext, finding_ids: list[UUID], restaurant_id: UUID | None) -> Live:
@@ -93,13 +110,14 @@ def live(session: Session, ctx: AccessContext, finding_ids: list[UUID], restaura
     if restaurant_id is not None:
         tasks = tasks.where(Task.restaurant_id == restaurant_id)
     taken = frozenset(f for f in session.execute(tasks).scalars() if f is not None)
-    mine = dict(
-        session.execute(
-            select(Disagreement.finding_id, Disagreement.reason).where(
+    mine = {
+        f: (reason, comment)
+        for f, reason, comment in session.execute(
+            select(Disagreement.finding_id, Disagreement.reason, Disagreement.comment).where(
                 Disagreement.finding_id.in_(finding_ids), Disagreement.user_id == ctx.user_id
             )
         ).all()
-    )
+    }
     return Live(taken, mine)
 
 
@@ -115,14 +133,15 @@ class DisagreementRow:
     created_at: datetime
 
 
-def for_hq(session: Session, ctx: AccessContext) -> list[DisagreementRow]:
-    """The HQ's list, the latest first."""
+def for_hq(session: Session, ctx: AccessContext, restaurant_id: UUID | None = None) -> list[DisagreementRow]:
+    """The HQ's list, the latest first; of one restaurant when given (its digest's page)."""
     if not ctx.can(Permission.NETWORK_COMPARE):
         raise ForbiddenError("Несогласия директоров видит управляющая компания")
     rows = session.execute(
         select(Disagreement, Finding.title, Restaurant.code, Restaurant.name)
         .join(Finding, Finding.id == Disagreement.finding_id)
         .join(Restaurant, Restaurant.id == Disagreement.restaurant_id)
+        .where(true() if restaurant_id is None else Disagreement.restaurant_id == restaurant_id)
         .order_by(Disagreement.created_at.desc())
     ).all()
     return [

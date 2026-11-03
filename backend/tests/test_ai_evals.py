@@ -2,6 +2,7 @@
 figure is computed from the demo data, a model that does it right scores 100 %, a leaking or inventing one is
 caught. The score of the real model is measured by `python -m app.ai.evals` once the key comes (Q12)."""
 
+import json
 from typing import Any
 from uuid import UUID
 
@@ -10,7 +11,9 @@ from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
 from app.ai import evals, tools
-from app.ai.gateway import Gateway, ModelRequest, Reply, Usage, text_reply
+from app.ai.evals import digest as digest_eval
+from app.ai.gateway import FakeModel, Gateway, ModelRequest, Reply, Usage, text_reply
+from app.tenancy.context import AccessContext
 from app.tenancy.permissions import Permission
 from tests.conftest import Network
 from tests.test_overview import TODAY, demo  # noqa: F401  (the demo network: tenant A, director r01@a.ru)
@@ -94,3 +97,69 @@ def test_an_invented_figure_is_not_counted_as_correct(world: evals.World) -> Non
     wrong = [o for o in report.outcomes if not o.correct]
     assert wrong and all("987654" in " ".join(o.problems) for o in wrong)
     assert report.score < evals.TARGET and not report.passed
+
+
+# ------------------------------------------------------------------ the digest texts' eval (stage 6)
+
+
+def _digest_cases(network: Network, owner_engine: Engine) -> tuple[list[digest_eval.Case], AccessContext]:
+    from app.core.db import get_sessionmaker
+    from app.digests import weekly
+    from app.tenancy.context import load_access_context
+
+    weekly.run(network.a.id, TODAY)
+    with Session(owner_engine) as s:
+        all_cases = digest_eval.cases(s, network.a.id)
+    with get_sessionmaker()() as s:
+        ctx = load_access_context(s, network.a.users["admin@a.ru"], network.a.id)
+    assert ctx is not None
+    return all_cases, ctx
+
+
+def _writer(spoil: str = "") -> Any:
+    """Writes every digest from its own facts; `spoil` adds jargon, a greeting or another restaurant."""
+
+    def reply(request: ModelRequest) -> Reply:
+        facts = json.loads(request.messages[0]["content"][0]["text"].split("\n", 1)[1])
+        ids = [i["finding_id"] for i in facts["problems"] + facts["opportunities"] + facts["risks"]]
+        total = facts["on_table"]["total"]
+        headline = f"На столе {total} в месяц. Начните с главного пункта.{spoil}"
+        body = {
+            "headline": headline,
+            "items": [{"finding_id": i, "text": "Проверьте накладные."} for i in ids],
+        }
+        return text_reply(json.dumps(body, ensure_ascii=False))
+
+    return reply
+
+
+@pytest.mark.usefixtures("demo")
+def test_the_digest_eval_passes_good_texts_and_catches_bad_ones(
+    network: Network, owner_engine: Engine
+) -> None:
+    all_cases, ctx = _digest_cases(network, owner_engine)
+    assert {c.scope for c in all_cases} >= {"сеть", "R01"}
+    good = digest_eval.run(
+        Gateway(FakeModel([_writer() for _ in range(40)]), per_user_day=10_000), ctx, all_cases
+    )
+    assert good.passed and good.score == 1.0, good.summary()
+
+    r01 = [c for c in all_cases if c.scope == "R01"]
+    other = r01[0].others[0]
+    for spoil, problem in ((" Это видно по M1.", "коды модулей"), (" Здравствуйте!", "приветствие")):
+        bad = digest_eval.run(Gateway(FakeModel([_writer(spoil)]), per_user_day=10_000), ctx, r01)
+        assert not bad.outcomes[0].ok and problem in bad.summary()
+    leak = digest_eval.run(Gateway(FakeModel([_writer(f" Как в {other}.")]), per_user_day=10_000), ctx, r01)
+    assert leak.outcomes[0].leak and not leak.passed and "УТЕЧКА" in leak.summary()
+
+
+@pytest.mark.usefixtures("demo")
+def test_a_text_that_falls_back_to_the_rules_is_a_miss(network: Network, owner_engine: Engine) -> None:
+    all_cases, ctx = _digest_cases(network, owner_engine)
+    net = [c for c in all_cases if c.scope == "сеть"]
+    invented = text_reply(json.dumps({"headline": "На столе 999 999 ₽.", "items": []}, ensure_ascii=False))
+    report = digest_eval.run(Gateway(FakeModel([invented, invented]), per_user_day=10_000), ctx, net)
+    assert not report.passed and "по правилам" in report.summary()
+    assert digest_eval.check(net[0], {"headline": "Раз. Два. Три. Четыре.", "items": {}}).problems == [
+        "«Главное за неделю» — 4 предложений, нужно 1–3"
+    ]

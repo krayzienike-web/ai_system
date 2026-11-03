@@ -6,6 +6,7 @@ security). Building again — the assistant's API (`POST /digests/rebuild`), as 
 """
 
 from datetime import date, datetime
+from decimal import Decimal
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
@@ -35,6 +36,8 @@ class DigestItemOut(BaseModel):
     actions: list[str]
     taken: bool  # a task on it: «Беру в работу» was pressed (or the HQ assigned one)
     disagreed: str | None  # the reader's «Не согласен»: its reason
+    disagreed_comment: str | None  # and its comment, so changing the reason keeps it
+    effect_rub_month: Decimal | None  # for the task dialog's «если сработает, эффект — до …»
 
 
 class DigestProcessOut(BaseModel):
@@ -108,7 +111,9 @@ def _items(items: list[dict[str, Any]], texts: dict[str, str], now: reactions.Li
             causes=i["causes"],
             actions=i["actions"],
             taken=i["taken"] or UUID(i["finding_id"]) in now.taken,
-            disagreed=now.mine.get(UUID(i["finding_id"])),
+            disagreed=(now.mine.get(UUID(i["finding_id"])) or (None, None))[0],
+            disagreed_comment=(now.mine.get(UUID(i["finding_id"])) or (None, None))[1],
+            effect_rub_month=i.get("effect_rub_month"),
         )
         for i in items
     ]
@@ -133,7 +138,8 @@ def digest_out(session: Session, ctx: AccessContext, d: Digest) -> DigestOut:
         headline=out["headline"],
         kpis=data["kpis"],
         kpis_previous_digest=data["kpis_previous_digest"],
-        network_average=data["network_average"],
+        # Never the network's revenue (its sum, not an average), also in digests stored before the fix.
+        network_average={**data["network_average"], "revenue": None} if data["network_average"] else None,
         processes=data["processes"],
         problems=_items(data["problems"], texts, now),
         opportunities=_items(data["opportunities"], texts, now),
@@ -220,6 +226,8 @@ def withdraw(finding_id: UUID, ctx: CanRead, session: SessionDep) -> None:
 
 
 @router.get("/digests/disagreements", response_model=list[DisagreementOut])
-def disagreements(ctx: CanRead, session: SessionDep) -> list[DisagreementOut]:
-    """The HQ's list of directors' disagreements, the latest first."""
-    return [DisagreementOut(**r.__dict__) for r in reactions.for_hq(session, ctx)]
+def disagreements(
+    ctx: CanRead, session: SessionDep, restaurant_id: UUID | None = None
+) -> list[DisagreementOut]:
+    """The HQ's list of directors' disagreements, the latest first; of one restaurant when given."""
+    return [DisagreementOut(**r.__dict__) for r in reactions.for_hq(session, ctx, restaurant_id)]

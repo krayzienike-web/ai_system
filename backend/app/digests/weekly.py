@@ -26,12 +26,18 @@ def tenants() -> list[UUID]:
         return list(session.execute(text("SELECT app.tenant_ids()")).scalars())
 
 
-def run(tenant_id: UUID, today: date, writer_for: WriterFor | None = None) -> int:
-    """Builds the network's digests of the week before `today`; returns how many were built."""
+def run(
+    tenant_id: UUID, today: date, writer_for: WriterFor | None = None, *, only_missing: bool = False
+) -> int:
+    """Builds the network's digests of the week before `today`; returns how many were built. `only_missing`:
+    the catch-up runs of the Monday morning build only what is not there yet (code review 03.11.2026,
+    p. 17)."""
     week = builder.Week.before(today)
     with get_sessionmaker()() as session:
         ctx = system_context(session, tenant_id)
         scopes = service.scopes(session)
+        if only_missing:
+            scopes = [s for s in scopes if not service.exists(session, s, week)]
     write = writer_for(ctx) if writer_for is not None else None
     built = 0
     for restaurant_id in scopes:

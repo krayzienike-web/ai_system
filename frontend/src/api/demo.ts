@@ -467,13 +467,19 @@ export function demoRequest(path: string, init: RequestInit, token: string | nul
     if (!recorded) throw new ApiError(404, "Сводки пока нет");
     return demoDigest(clone(recorded), takenInDemo, !v.hq);
   }
+  // Weeks of a restaurant the viewer may not see: the server answers an empty archive (row-level security).
+  if (path.startsWith("/digests/weeks") && !(path in answers)) return [];
   if (path.startsWith("/digests/latest") && answers[path])
     return demoDigest(clone(answers[path] as Digest), takenInDemo, !v.hq);
-  if (path === "/digests/disagreements") {
+  if (path.startsWith("/digests/disagreements")) {
     forbid(v.hq, "Несогласия директоров видит управляющая компания");
+    const id = new URLSearchParams(path.split("?")[1] ?? "").get("restaurant_id");
+    const place = id ? allRestaurants().find((r) => r.id === id) : undefined;
+    if (id && !place) throw new ApiError(404, "Ресторан не найден");
     return demoDisagreements(
-      clone((answers[path] as Disagreement[]) ?? []),
+      clone((answers["/digests/disagreements"] as Disagreement[]) ?? []),
       (answers["/digests/disagree-reasons"] as DisagreeReason[]) ?? [],
+      place && `${place.code} · ${place.name}`,
     );
   }
 

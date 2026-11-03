@@ -71,9 +71,10 @@ def status(idx: int) -> str:
 
 
 def _object(fw: FindingWork) -> str:
-    """What a finding is about — the item of its key («M1:R01:P01» → P01) — so one object appears once."""
+    """What a finding is about — the place and the item of its key («M1:R01:P01» → R01:P01) — so one object
+    appears once; the same product in two restaurants is two objects (code review 03.11.2026, p. 10)."""
     parts = (fw.finding.key or "").split(":")
-    return parts[2] if len(parts) > 2 else str(fw.finding.id)
+    return ":".join(parts[1:3]) if len(parts) > 2 else str(fw.finding.id)
 
 
 def _view(fw: FindingWork, for_director: bool) -> dict[str, Any]:
@@ -92,10 +93,11 @@ def _item(fw: FindingWork, for_director: bool) -> dict[str, Any]:
         "title": f.title,
         "process": overview.PROCESS_TITLE.get(f.process, f.process),
         "effect_per_month": money(f.effect_rub_month),
+        "effect_rub_month": None if f.effect_rub_month is None else str(f.effect_rub_month),
         "headline": f.headline,
         "summary": view.get("summary"),
         "causes": view.get("causes") or [],
-        "actions": list(f.actions),
+        "actions": list(f.actions) or [f.title],  # «Беру в работу» always has a first step
         "taken": fw.work.stage != "new",
     }
 
@@ -112,18 +114,22 @@ def _pick(ranked: list[FindingWork], kind: str, taken: set[str]) -> list[Finding
     return out
 
 
-def _kpis(row: KpiSnapshot | None) -> dict[str, Any] | None:
+def _kpis(row: KpiSnapshot | None, *, revenue: bool = True) -> dict[str, Any] | None:
+    """The network's snapshot has the sum of all restaurants' revenue, not an average: a director must not get
+    it — their own subtracted, it is the others' (code review 03.11.2026, p. 1). Shares only."""
     if row is None:
         return None
-    return {
+    out = {
         "food_cost_actual": pct(row.food_cost_actual),
         "food_cost_theory": pct(row.food_cost_theory),
         "write_offs_share_of_revenue": pct(row.write_offs_share, 2),
         "food_cost_period": f"{row.food_cost_from:%d.%m.%Y}–{row.food_cost_to:%d.%m.%Y}"
         if row.food_cost_from and row.food_cost_to
         else None,
-        "revenue": money(row.revenue),
     }
+    if revenue:
+        out["revenue"] = money(row.revenue)
+    return out
 
 
 def build(
@@ -168,7 +174,11 @@ def build(
     snapshots = {k.restaurant_id: k for k in session.execute(select(KpiSnapshot)).scalars()}
     kpis = _kpis(snapshots.get(restaurant_id))
 
-    tasks = select(Task).where(Task.status == TaskStatus.DONE, Task.done_on.between(week.start, week.end))
+    tasks = (
+        select(Task)
+        .where(Task.status == TaskStatus.DONE, Task.done_on.between(week.start, week.end))
+        .order_by(Task.done_on.desc(), Task.title)  # the same five every time (idempotent)
+    )
     if restaurant_id is not None:
         tasks = tasks.where(Task.restaurant_id == restaurant_id)
     done = list(session.execute(tasks).scalars())
@@ -183,8 +193,10 @@ def build(
         "processes_better": [str(p["title"]) for p in processes if int(p["change"] or 0) > 0],
     }
     # Stock-outs of the next days: the priced ones first, then those without an estimate.
+    # A stock-out already among the problems is not repeated in the risks (test pass 03.11.2026).
+    shown = {fw.finding.id for fw in problems}
     stock = sorted(
-        (fw for fw in items if fw.finding.module == "M6"),
+        (fw for fw in items if fw.finding.module == "M6" and fw.finding.id not in shown),
         key=lambda fw: -(fw.finding.effect_rub_month or ZERO),
     )
     risks = [_item(fw, for_director) for fw in stock[:ITEMS_MAX]]
@@ -201,7 +213,7 @@ def build(
         "week": f"{week.start:%d.%m.%Y}–{week.end:%d.%m.%Y}",
         "kpis": kpis,
         "kpis_previous_digest": (previous or {}).get("kpis"),
-        "network_average": _kpis(snapshots.get(None)) if restaurant_id else None,
+        "network_average": _kpis(snapshots.get(None), revenue=False) if restaurant_id else None,
         "processes": processes,
         "problems": [_item(fw, for_director) for fw in problems],
         "opportunities": [_item(fw, for_director) for fw in opportunities],

@@ -68,7 +68,7 @@ const DIRECTOR_NAV: NavItem[] = [
     Icon: Lightbulb,
     mobile: true,
   },
-  { to: "/digest", title: "Сводка недели", short: "Сводка", Icon: Newspaper },
+  { to: "/digest", title: "Сводка недели", short: "Сводка", Icon: Newspaper, mobile: true },
   { to: "/data", title: "Данные", short: "Данные", Icon: Database },
 ];
 

@@ -34,10 +34,11 @@ async def reset_demo(ctx: dict[str, Any]) -> None:
 
 
 def build_digests(today: date) -> int:
-    """Every network's digests of the week before `today`; the texts by the model when it is on."""
+    """Every network's digests of the week before `today` that are not there yet; the texts by the model when
+    it is on. Run at 08:31 and caught up hourly until 14:31 (a restarted worker loses no week)."""
     gateway = get_gateway()
     writer_for = (lambda ctx: digest_writer.writer(gateway, ctx)) if gateway is not None else None
-    return sum(weekly.run(tenant_id, today, writer_for) for tenant_id in weekly.tenants())
+    return sum(weekly.run(tenant_id, today, writer_for, only_missing=True) for tenant_id in weekly.tenants())
 
 
 async def weekly_digests(ctx: dict[str, Any]) -> None:
@@ -45,8 +46,9 @@ async def weekly_digests(ctx: dict[str, Any]) -> None:
 
 
 def cron_jobs() -> list[CronJob]:
-    # The digests: Monday 08:31 Moscow time (05:31 UTC), about the week before (Q24; off the round minute).
-    jobs = [cron(weekly_digests, weekday={0}, hour={5}, minute={31}, timeout=3600)]
+    # The digests: Monday 08:31 Moscow time (05:31 UTC), about the week before (Q24; off the round minute),
+    # then every hour until 14:31 for what is still missing (code review 03.11.2026, p. 17).
+    jobs = [cron(weekly_digests, weekday={0}, hour=set(range(5, 12)), minute={31}, timeout=3600)]
     if get_settings().demo_reset_nightly:  # 03:07 Moscow time (00:07 UTC): nobody looks at the demo then
         jobs.append(cron(reset_demo, hour={0}, minute={7}, timeout=1800))
     return jobs

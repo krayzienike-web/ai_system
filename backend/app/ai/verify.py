@@ -61,8 +61,10 @@ def _source_text(source: Any) -> str:
     return UUID.sub(" ", text)
 
 
-def unsupported(answer: str, sources: Iterable[Any]) -> list[str]:
-    """Figures of the answer found in none of the sources (tool results), in order of appearance."""
+def unsupported(answer: str, sources: Iterable[Any], *, strict: bool = False) -> list[str]:
+    """Figures of the answer found in none of the sources (tool results), in order of appearance. `strict`:
+    small counts are figures too — where the counts are the facts («выполнено 7 задач», «4 процесса» in a
+    digest; code review 03.11.2026, p. 4)."""
     allowed: set[str] = set()
     said: set[str] = set()  # multipliers in words the sources themselves use («больше половины»)
     for source in sources:
@@ -73,7 +75,13 @@ def unsupported(answer: str, sources: Iterable[Any]) -> list[str]:
     for value, figure in _values(answer):
         if value in allowed or value in out:
             continue
-        if not figure and not value.startswith(("d:", "-")) and "." not in value and int(value) <= SMALL:
+        if (
+            not strict
+            and not figure
+            and not value.startswith(("d:", "-"))
+            and "." not in value
+            and int(value) <= SMALL
+        ):
             continue  # a count: «3 шага», «1.» of a list
         out.append(value)
     # A multiplier in words cannot be checked, unless the facts say it themselves (TC-AN-49).

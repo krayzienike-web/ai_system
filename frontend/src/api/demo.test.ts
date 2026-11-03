@@ -286,3 +286,43 @@ describe("demo digests (stage 6)", () => {
     expect(again.id).toBe(get<Digest>("/digests/latest", ADMIN).id);
   });
 });
+
+describe("demo digests keep to the director's restaurant (TC-UI-22)", () => {
+  it("answers another restaurant's digest, archive and rebuild like a missing one", () => {
+    const own = get<Digest>("/digests/latest", DIRECTOR);
+    const other = get<Restaurant[]>("/restaurants", ADMIN).find((r) => r.id !== own.restaurant_id)!;
+    expect(status(() => get(`/digests/latest?restaurant_id=${other.id}`, DIRECTOR))).toBe(404);
+    // Another restaurant's archive is empty, as on the server (row-level security).
+    expect(get(`/digests/weeks?restaurant_id=${other.id}`, DIRECTOR)).toEqual([]);
+    expect(status(() => send("/digests/rebuild", DIRECTOR, "POST", { restaurant_id: other.id }))).toBe(404);
+    // The network's digest is the HQ's: a director without a restaurant named gets their own.
+    expect(send<Digest>("/digests/rebuild", DIRECTOR, "POST", {}).restaurant_id).toBe(own.restaurant_id);
+    expect(get<{ week_start: string }[]>("/digests/weeks", DIRECTOR).length).toBeGreaterThan(1);
+  });
+
+  it("refuses «Не согласен» with an item of another restaurant's digest", () => {
+    const own = get<Digest>("/digests/latest", DIRECTOR);
+    const mine = new Set([...own.problems, ...own.opportunities, ...own.risks].map((i) => i.finding_id));
+    const other = get<Restaurant[]>("/restaurants", ADMIN).find((r) => r.id !== own.restaurant_id)!;
+    const theirs = get<Digest>(`/digests/latest?restaurant_id=${other.id}`, ADMIN);
+    const item = [...theirs.problems, ...theirs.opportunities].find((i) => !mine.has(i.finding_id))!;
+    expect(item).toBeDefined();
+    expect(status(() => send(`/findings/${item.finding_id}/disagree`, DIRECTOR, "POST", { reason: "wrong_data" }))).toBe(404);
+    expect(get<Disagreement[]>("/digests/disagreements", ADMIN).some((d) => d.finding_id === item.finding_id)).toBe(false);
+  });
+});
+
+describe("demo digests after the review (03.11.2026)", () => {
+  it("never shows a director the network's revenue and filters the HQ's list by restaurant", () => {
+    const own = get<Digest>("/digests/latest", DIRECTOR);
+    expect(own.network_average?.revenue ?? null).toBeNull();
+    const item = own.problems[0]!;
+    send(`/findings/${item.finding_id}/disagree`, DIRECTOR, "POST", { reason: "wrong_data", comment: "Накладные" });
+    const shown = get<Digest>("/digests/latest", DIRECTOR).problems[0]!;
+    expect(shown.disagreed_comment).toBe("Накладные");
+    const others = get<Restaurant[]>("/restaurants", ADMIN).filter((r) => r.id !== own.restaurant_id);
+    expect(get<Disagreement[]>(`/digests/disagreements?restaurant_id=${own.restaurant_id}`, ADMIN)).toHaveLength(1);
+    expect(get<Disagreement[]>(`/digests/disagreements?restaurant_id=${others[0]!.id}`, ADMIN)).toHaveLength(0);
+    send(`/findings/${item.finding_id}/disagree`, DIRECTOR, "DELETE");
+  });
+});
