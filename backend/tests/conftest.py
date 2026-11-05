@@ -106,3 +106,28 @@ def login(client: TestClient, email: str, password: str = PASSWORD) -> dict[str,
     response = client.post("/api/auth/login", json={"email": email, "password": password})
     assert response.status_code == 200, response.text
     return {"Authorization": f"Bearer {response.json()['access_token']}"}
+
+
+def hq_task(owner_engine: Engine, finding_id: UUID, title: str = "Задача от УК") -> None:
+    """The HQ's decision on a finding (ADR 0009): a task on its restaurant, so its director meets it."""
+    from datetime import date
+
+    from app.insights.models import Finding
+    from app.tasks.models import Task
+
+    with Session(owner_engine) as s, s.begin():
+        f = s.get(Finding, finding_id)
+        assert f is not None and f.restaurant_id is not None, "a restaurant's finding"
+        s.add(
+            Task(
+                tenant_id=f.tenant_id,
+                restaurant_id=f.restaurant_id,
+                finding_id=f.id,
+                assigned_by="hq",
+                title=title,
+                checklist=[],
+                checklist_done=[],
+                created_on=date(2026, 10, 15),
+                due_on=date(2026, 10, 30),
+            )
+        )

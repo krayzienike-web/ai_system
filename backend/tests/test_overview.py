@@ -29,7 +29,7 @@ from app.insights.models import Finding
 from app.main import app
 from app.tenancy.context import load_access_context
 from app.tenancy.models import Restaurant, Role, RoleAssignment, User
-from tests.conftest import PASSWORD, Network, login
+from tests.conftest import PASSWORD, Network, hq_task, login
 
 D = Decimal
 TODAY = date(2026, 10, 20)
@@ -207,7 +207,10 @@ def test_overview_screens_follow_the_access_rules(
     assert client.get("/api/overview/restaurants/R02", headers=director).status_code == 404
     assert client.get("/api/overview/restaurants/R01", headers=foreign).status_code == 404
 
-    assert client.get("/api/overview/badges", headers=hq).json() == {"inbox": 3, "open_tasks": 0}
+    # «Ждут решения»: checks to launch, late tasks and findings waiting for a decision (ADR 0009)
+    awaiting = len(client.get("/api/overview/awaiting", headers=hq).json())
+    assert awaiting > 0
+    assert client.get("/api/overview/badges", headers=hq).json() == {"inbox": 3 + awaiting, "open_tasks": 0}
     assert client.get("/api/overview/badges", headers=director).json() == {"inbox": 0, "open_tasks": 1}
 
 
@@ -533,6 +536,8 @@ def test_a_director_gets_an_m3_finding_without_other_restaurants_prices(
                 restaurant_id=beef["restaurant_id"],
             )
         )
+    if not client.get(f"/api/findings/{beef['id']}", headers=hq).json()["tasks"]:
+        hq_task(owner_engine, UUID(beef["id"]))  # the HQ's decision: R02's director meets it (ADR 0009)
     director = login(client, "r02@a.ru")
     as_hq = client.get(f"/api/findings/{beef['id']}", headers=hq).json()["view"]
     assert len(as_hq["table"]["rows"]) > 1  # HQ compares the restaurants

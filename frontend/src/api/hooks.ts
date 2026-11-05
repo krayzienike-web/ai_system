@@ -311,6 +311,10 @@ export const useRestaurantWeek = (code: string) =>
     queryFn: () => api<RestaurantWeek>(`/overview/restaurants/${code}`),
   });
 
+/** «Ждут решения» → «Решить по находке» (ADR 0009): reviewed findings with no task and no check yet. HQ only. */
+export const useAwaiting = (enabled = true) =>
+  useQuery({ queryKey: ["overview", "awaiting"], queryFn: () => api<ApiFinding[]>("/overview/awaiting"), enabled });
+
 export const useRestaurantRows = () =>
   useQuery({ queryKey: ["overview", "restaurants"], queryFn: () => api<RestaurantRow[]>("/overview/restaurants") });
 

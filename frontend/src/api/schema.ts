@@ -627,6 +627,7 @@ export interface NetworkOut {
   completed_checks: number;
   checks_waiting: number;
   overdue_tasks: number;
+  findings_awaiting: number;
   trend: TrendOut;
   ranking: RankOut[];
   common: CommonOut[];
@@ -968,7 +969,6 @@ export interface WeekOut {
   delta_week: string | null;
   digest: string;
   digest_findings: FindingOut[];
-  actions: FindingOut[];
   top: FindingOut[];
   processes: ProcessOut[];
   fine_processes: string[];

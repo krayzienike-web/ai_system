@@ -30,7 +30,6 @@ import {
 import { PROCESS_ICON } from "../../ds/viz";
 import { useViewer } from "../../lib/useViewer";
 import { useUi } from "../../state/ui";
-import { TakeToWorkDialog } from "../findings/parts";
 
 const STATUS: Record<string, { tone: Tone; word: string }> = {
   good: { tone: "gain", word: "Норма" },
@@ -172,7 +171,9 @@ function DigestView({ d, canReact }: { d: Digest; canReact: boolean }) {
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
           {d.processes.map((p) => {
             const Icon = PROCESS_ICON[p.process as keyof typeof PROCESS_ICON];
-            const s = STATUS[p.status] ?? STATUS.warning!;
+            // A director's map counts only findings with the HQ's task (ADR 0009): «Задач нет», not «Норма».
+            const s =
+              d.scope === "restaurant" && p.status === "good" ? { tone: "neutral" as Tone, word: "Задач нет" } : (STATUS[p.status] ?? STATUS.warning!);
             return (
               <Card key={p.process} className="p-3 sm:p-4">
                 <div className="flex items-center gap-2 text-sm font-medium">
@@ -306,7 +307,6 @@ function Items({
 
 function Item({ i, digest, canReact }: { i: DigestItem; digest: Digest; canReact: boolean }) {
   const { openChat } = useUi();
-  const [taking, setTaking] = useState(false);
   const [disagreeing, setDisagreeing] = useState(false);
   return (
     <Card className="p-5">
@@ -320,15 +320,7 @@ function Item({ i, digest, canReact }: { i: DigestItem; digest: Digest; canReact
       <p className="mt-2 text-sm text-ink-2">{i.text}</p>
       {i.causes.length > 0 && <p className="mt-2 text-xs text-ink-3">Вероятные причины: {i.causes.join("; ")}</p>}
       <div className="mt-4 flex flex-wrap items-center gap-2">
-        {i.taken ? (
-          <Pill tone="brand">В работе</Pill>
-        ) : (
-          canReact && (
-            <Button variant="primary" onClick={() => setTaking(true)}>
-              Беру в работу
-            </Button>
-          )
-        )}
+        {i.taken ? <Pill tone="brand">В работе</Pill> : <Pill tone="warn">Задачу еще не поставили</Pill>}
         {canReact &&
           (i.disagreed ? (
             <Button variant="ghost" onClick={() => setDisagreeing(true)}>
@@ -343,13 +335,6 @@ function Item({ i, digest, canReact }: { i: DigestItem; digest: Digest; canReact
           <MessageCircle size={15} /> Обсудить с ИИ
         </Button>
       </div>
-      {taking && (
-        <TakeToWorkDialog
-          f={{ id: i.finding_id, actions: i.actions, effect_rub_month: i.effect_rub_month }}
-          open={taking}
-          onClose={() => setTaking(false)}
-        />
-      )}
       {disagreeing && <DisagreeDialog i={i} digestId={digest.id} onClose={() => setDisagreeing(false)} />}
     </Card>
   );

@@ -141,7 +141,8 @@ export function TaskTrace({ task, showFinding = true, showRestaurant = false }: 
   );
 }
 
-/** "Что сделать" with a one-click task on every step: HQ assigns it to the director, a director takes it. */
+/** "Что сделать" with a one-click task on every step: the HQ assigns it to the director (ADR 0009); a director
+ * sees which steps are already their tasks. */
 export function QuickSteps({ f, tasks }: { f: ApiFinding; tasks: ApiTask[] }) {
   const viewer = useViewer();
   const create = useCreateTasks();
@@ -150,8 +151,9 @@ export function QuickSteps({ f, tasks }: { f: ApiFinding; tasks: ApiTask[] }) {
   const [days, setDays] = useState(7);
   if (!viewer) return null;
   const byHq = viewer.isHq;
-  const mayCreate = viewer.can(byHq ? "tasks.assign" : "tasks.execute");
-  const forWhom = f.restaurant_id ? (byHq ? "директору" : "себе") : "всем директорам";
+  // A task on a finding is the HQ's decision (ADR 0009): a director reads the steps, the HQ sets them.
+  const mayCreate = byHq && viewer.can("tasks.assign");
+  const forWhom = f.restaurant_id ? "директору" : "всем директорам";
   const option = context.data?.due_options.find((o) => o.days === days);
 
   return (
@@ -200,16 +202,12 @@ export function QuickSteps({ f, tasks }: { f: ApiFinding; tasks: ApiTask[] }) {
                       { title: a, finding_id: f.id, due_on: option!.due_on },
                       {
                         onSuccess: () =>
-                          notify(
-                            byHq
-                              ? `Задача поставлена ${forWhom}, срок ${ddmm(option!.due_on)}`
-                              : `Задача в «Моих задачах», срок ${ddmm(option!.due_on)}`,
-                          ),
+                          notify(`Задача поставлена ${forWhom}, срок ${ddmm(option!.due_on)}`),
                       },
                     )
                   }
                 >
-                  <Plus size={14} /> {byHq ? `Поставить ${forWhom}` : "В мои задачи"}
+                  <Plus size={14} /> Поставить {forWhom}
                 </Button>
               )}
             </li>

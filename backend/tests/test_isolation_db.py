@@ -252,11 +252,24 @@ def test_director_can_neither_change_a_finding_under_review_nor_see_it_through_a
         )
     ctx = RlsContext(a, network.a.users["director1@a.ru"], False, frozenset({a1}))
     apply_rls_context(app_session, ctx)
-    assert _count(app_session, "findings") == 1 and _count(app_session, "tasks") == 1  # the task is theirs
+    # The checked one has no task yet: it waits for the HQ's decision, the director sees neither (ADR 0009).
+    assert _count(app_session, "findings") == 0 and _count(app_session, "tasks") == 1  # the task is theirs
+    app_session.rollback()
+    with owner_engine.begin() as conn:  # the HQ's decision on the checked one
+        conn.execute(
+            text(
+                "INSERT INTO tasks (tenant_id, restaurant_id, finding_id, title, assigned_by, "
+                "created_on, due_on) "
+                "VALUES (:t, :r, :c, 'Шаг 2', 'hq', '2026-10-02', '2026-10-30')"
+            ),
+            {"t": a, "r": a1, "c": confirmed},
+        )
+    apply_rls_context(app_session, ctx)
+    assert _count(app_session, "findings") == 1 and _count(app_session, "tasks") == 2
     through_task = app_session.execute(
         text("SELECT f.title FROM tasks t JOIN findings f ON f.id = t.finding_id")
     ).all()
-    assert through_task == []
+    assert [t for (t,) in through_task] == ["Проверена"]  # never the one under review
     for statement in (
         "UPDATE findings SET review_status = 'confirmed' WHERE id = :p",
         "UPDATE findings SET effect_rub_month = 0 WHERE id = :p",

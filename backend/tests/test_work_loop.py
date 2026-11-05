@@ -298,14 +298,19 @@ def test_finding_of_one_restaurant_cannot_go_to_another(
     assert r.status_code == 422
 
 
-def test_director_takes_own_step_but_not_for_others(client: TestClient, work: Work, network: Network) -> None:
+def test_director_cannot_task_a_finding_but_keeps_own_tasks(
+    client: TestClient, work: Work, network: Network
+) -> None:
+    """ADR 0009: a task on a finding is the HQ's decision; a director's own task without one is theirs."""
     director = login(client, "director1@a.ru")
     own = client.post(
         "/api/tasks",
         headers=director,
         json={"title": "Шаг", "finding_id": str(work.mozzarella), "due_on": "2026-10-30"},
     )
-    assert own.status_code == 201 and own.json()[0]["assigned_by"] == "director"
+    assert own.status_code in (403, 404)  # not theirs to decide (and unseen until the HQ's task)
+    mine = client.post("/api/tasks", headers=director, json={"title": "Свое", "due_on": "2026-10-30"})
+    assert mine.status_code == 201 and mine.json()[0]["assigned_by"] == "director"
     other_finding = client.post(
         "/api/tasks",
         headers=director,

@@ -187,8 +187,7 @@ def work(session: Session, ctx: AccessContext, today: date, analyst: UUID) -> No
     task(
         salmon,
         "R03",
-        "Проверить выход филе при разделке",
-        assigned_by="director",
+        "Проверить выход филе при разделке",  # set by the HQ: a finding's task is its decision (ADR 0009)
         created_on=day(-9),
         due_on=day(-3),
     )
@@ -196,7 +195,6 @@ def work(session: Session, ctx: AccessContext, today: date, analyst: UUID) -> No
         salmon,
         "R03",
         "Взвешивать филе после разделки неделю",
-        assigned_by="director",
         created_on=day(-16),
         due_on=day(-9),
         status="done",

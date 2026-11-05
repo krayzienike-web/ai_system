@@ -12,12 +12,14 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.deps import SessionDep, require
 from app.core.period import TodayDep
-from app.digests import reactions, service
+from app.digests import builder, reactions, service, texts
 from app.digests.models import Digest
+from app.insights.models import Finding
 from app.tenancy.context import AccessContext
 from app.tenancy.permissions import Permission
 
@@ -119,8 +121,37 @@ def _items(items: list[dict[str, Any]], texts: dict[str, str], now: reactions.Li
     ]
 
 
+def _as_director_sees(
+    session: Session, data: dict[str, Any], out: dict[str, Any]
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """A digest stored before ADR 0009 may hold findings the director does not see yet: read through the
+    findings' row-level security, they are left out — with the totals and «Главное» they made (review
+    05.11.2026, p. 2; test pass). A digest built since holds none, and is shown as it is."""
+    kinds = ("problems", "opportunities", "risks")
+    stored = [i["finding_id"] for k in kinds for i in data[k]]
+    seen = {str(f) for f in session.execute(select(Finding.id).where(Finding.id.in_(stored))).scalars()}
+    if seen == set(stored):
+        return data, out
+    data = {**data, **{k: [i for i in data[k] if i["finding_id"] in seen] for k in kinds}}
+
+    def total(kind: str) -> Decimal:
+        return sum(
+            (Decimal(i["effect_rub_month"] or 0) for i in data[kind] if "effect_rub_month" in i), Decimal(0)
+        )
+
+    losses, potential = total("problems"), total("opportunities")
+    data["on_table"] = {
+        "losses": builder.money(losses),
+        "potential": builder.money(potential),
+        "total": builder.money(losses + potential),
+    }
+    return data, {**out, "headline": texts.headline(data)}
+
+
 def digest_out(session: Session, ctx: AccessContext, d: Digest) -> DigestOut:
     data, out = d.input, d.output
+    if not ctx.role.is_hq:
+        data, out = _as_director_sees(session, data, out)
     ids = [UUID(i["finding_id"]) for i in data["problems"] + data["opportunities"] + data["risks"]]
     now = reactions.live(session, ctx, ids, d.restaurant_id)
     place = data.get("restaurant")

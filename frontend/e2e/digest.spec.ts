@@ -2,7 +2,7 @@
 // «Не согласен» with a reason, which the HQ then sees; the HQ switches between the network and a restaurant.
 import { expect, test } from "@playwright/test";
 
-import { expectNoOverflow, open, signIn, signInAs } from "./helpers";
+import { expectNoOverflow, open, signIn } from "./helpers";
 
 test("TC-UI-18: the director disagrees with an item, the reason reaches the HQ", async ({ page }) => {
   await signIn(page, "Директор ресторана");
@@ -61,14 +61,9 @@ test("TC-UI-21: reactions only on the latest week; a changed reason keeps the co
   await expect(dialog.getByLabel(/Комментарий/)).toHaveValue("Банкет 30.10");
 });
 
-test("TC-UI-23: «Беру в работу» makes a task to oneself (the item is «В работе»); «Обсудить с ИИ» opens the chat on it", async ({ page }) => {
-  await signInAs(page, "director2@demo.local"); // R02: its item is not taken yet in the recording
+test("TC-UI-23: the director's digest items are in work (no «Беру в работу», ADR 0009); «Обсудить с ИИ» opens the chat on one", async ({ page }) => {
+  await signIn(page, "Директор ресторана");
   await open(page, /Сводка/);
-  await page.getByRole("button", { name: "Беру в работу" }).first().click();
-  const dialog = page.getByRole("dialog", { name: "Взять в работу" });
-  await expect(dialog.getByRole("checkbox").first()).toBeChecked(); // the server's first step, not invented
-  await dialog.getByRole("button", { name: "Взять в работу" }).click();
-  await expect(page.getByText("Задача в «Моих задачах»")).toBeVisible();
   await expect(page.getByText("В работе").first()).toBeVisible();
   await expect(page.getByRole("button", { name: "Беру в работу" })).toHaveCount(0);
 

@@ -24,6 +24,8 @@ def headline(d: dict[str, Any]) -> str:
     elif d["opportunities"]:
         top = d["opportunities"][0]
         parts.append(f"Главная возможность — «{top['title']}»: {top['effect_per_month']} в месяц.")
+    elif d.get("scope") == "restaurant":  # a director's: only findings with the HQ's task (ADR 0009)
+        parts.append("Задач по находкам от управляющей компании пока нет.")
     else:
         parts.append("Открытых проблем с оценкой в рублях нет.")
     bad = [p["title"] for p in d["processes"] if p["status"] == "critical"]

@@ -3917,6 +3917,10 @@
       "title": "Confirmed",
       "type": "string"
      },
+     "findings_awaiting": {
+      "title": "Findings Awaiting",
+      "type": "integer"
+     },
      "found_count": {
       "title": "Found Count",
       "type": "integer"
@@ -3999,6 +4003,7 @@
      "completed_checks",
      "checks_waiting",
      "overdue_tasks",
+     "findings_awaiting",
      "trend",
      "ranking",
      "common",
@@ -5901,13 +5906,6 @@
    },
    "WeekOut": {
     "properties": {
-     "actions": {
-      "items": {
-       "$ref": "#/components/schemas/FindingOut"
-      },
-      "title": "Actions",
-      "type": "array"
-     },
      "delta_week": {
       "anyOf": [
        {
@@ -6032,7 +6030,6 @@
      "delta_week",
      "digest",
      "digest_findings",
-     "actions",
      "top",
      "processes",
      "fine_processes",
@@ -8659,6 +8656,37 @@
     "summary": "Rollback",
     "tags": [
      "imports"
+    ]
+   }
+  },
+  "/api/overview/awaiting": {
+   "get": {
+    "description": "«Ждут решения» → «Решить по находке» (ADR 0009): reviewed findings with no task and no check yet; the\nHQ puts a task on the director or proposes a check. A director never gets them: a finding reaches a\ndirector only with a task.",
+    "operationId": "get_awaiting_api_overview_awaiting_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "items": {
+          "$ref": "#/components/schemas/FindingOut"
+         },
+         "title": "Response Get Awaiting Api Overview Awaiting Get",
+         "type": "array"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Awaiting",
+    "tags": [
+     "overview"
     ]
    }
   },

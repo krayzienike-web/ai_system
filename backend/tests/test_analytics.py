@@ -36,7 +36,7 @@ from app.main import app
 from app.norms.service import Norms
 from app.tenancy.context import load_access_context
 from app.tenancy.models import Restaurant, Role, RoleAssignment, User
-from tests.conftest import PASSWORD, Network, login
+from tests.conftest import PASSWORD, Network, hq_task, login
 
 D0, D1 = date(2026, 8, 3), date(2026, 10, 1)
 
@@ -541,6 +541,10 @@ def test_engine_finds_planted_problems_and_review_gates_directors(
             == "confirmed"
         )
         assert client.post(url, headers=director, json={"verdict": "reopen"}).status_code == 403
+        # Confirmed, it waits for the HQ's decision; the director meets it with the HQ's task (ADR 0009).
+        assert client.get("/api/findings", headers=director).json() == []
+        assert moz["id"] in client.get("/api/overview/awaiting", headers=hq).text
+        hq_task(owner_engine, UUID(moz["id"]))
         assert [f["id"] for f in client.get("/api/findings", headers=director).json()] == [moz["id"]]
         # The path is traceable: found by the engine → checked by a person → in the working list.
         in_list = next(f for f in client.get("/api/findings", headers=hq).json() if f["id"] == moz["id"])
@@ -592,13 +596,19 @@ def test_engine_finds_planted_problems_and_review_gates_directors(
         app.dependency_overrides.pop(get_today, None)
 
 
-def test_review_can_be_switched_off(client: TestClient, network: Network, demo: dict[str, UUID]) -> None:
+def test_review_can_be_switched_off(
+    client: TestClient, network: Network, demo: dict[str, UUID], owner_engine: Engine
+) -> None:
     hq = login(client, "admin@a.ru")
     body = client.get("/api/settings/norms", headers=hq).json()
     assert body["review_findings"] is True
     client.put("/api/settings/norms", headers=hq, json={**body, "review_findings": False})
     client.post("/api/analytics/run", headers=hq)
     director = login(client, "r01@a.ru")
+    # Without the review the findings go straight to «Решить по находке»; with HQ's tasks, to the director
+    for f in client.get("/api/overview/awaiting", headers=hq).json():
+        if f["restaurant_code"] == "R01":
+            hq_task(owner_engine, UUID(f["id"]))
     assert {f["title"] for f in client.get("/api/findings", headers=director).json()} == {
         "Перерасход по техкарте: Сыр Моцарелла",
         "Списания выше сети: Руккола",

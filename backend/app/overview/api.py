@@ -139,6 +139,7 @@ class NetworkOut(BaseModel):
     completed_checks: int
     checks_waiting: int
     overdue_tasks: int
+    findings_awaiting: int
     trend: TrendOut
     ranking: list[RankOut]
     common: list[CommonOut]
@@ -172,7 +173,6 @@ class WeekOut(BaseModel):
     delta_week: Decimal | None
     digest: str
     digest_findings: list[FindingOut]
-    actions: list[FindingOut]
     top: list[FindingOut]
     processes: list[ProcessOut]
     fine_processes: list[str]
@@ -247,6 +247,7 @@ def get_network(ctx: CanCompare, session: SessionDep, period: PeriodDep, today: 
         completed_checks=n.completed_checks,
         checks_waiting=n.checks_waiting,
         overdue_tasks=n.overdue_tasks,
+        findings_awaiting=n.findings_awaiting,
         trend=TrendOut.of(n.trend),
         on_table=n.losses + n.potential,
         on_table_year=(n.losses + n.potential) * 12,
@@ -280,7 +281,7 @@ def get_restaurants(ctx: CanCompare, session: SessionDep, today: TodayDep) -> li
 
 @router.get("/overview/restaurants/{code}")
 def get_restaurant(code: str, ctx: CanRead, session: SessionDep, today: TodayDep) -> WeekOut:
-    w = service.restaurant(session, code, today)
+    w = service.restaurant(session, code, today, hq=ctx.role.is_hq)
 
     def out(items: list[FindingWork]) -> list[FindingOut]:
         return findings_out(session, ctx, items)
@@ -298,7 +299,6 @@ def get_restaurant(code: str, ctx: CanRead, session: SessionDep, today: TodayDep
         delta_week=w.delta_week,
         digest=w.digest,
         digest_findings=out(w.digest_findings),
-        actions=out(w.actions),
         top=out(w.top),
         processes=[
             ProcessOut(process=p.process, title=p.title, losses=p.losses, findings=out(p.findings))
@@ -373,3 +373,11 @@ def get_board(
         ],
         max_effect=b.max_effect,
     )
+
+
+@router.get("/overview/awaiting", response_model=list[FindingOut])
+def get_awaiting(ctx: CanCompare, session: SessionDep, today: TodayDep) -> list[FindingOut]:
+    """«Ждут решения» → «Решить по находке» (ADR 0009): reviewed findings with no task and no check yet; the
+    HQ puts a task on the director or proposes a check. A director never gets them: a finding reaches a
+    director only with a task."""
+    return findings_out(session, ctx, service.awaiting(session, today))

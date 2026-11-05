@@ -23,6 +23,7 @@ from app.insights.visible import VisibleFinding, visible_finding
 from app.norms.models import NormSettings
 from app.operations.models import InventoryCount, Receipt, WriteOff
 from app.overview.service import PROCESS_TITLE
+from app.tasks.models import Task
 from app.tenancy.context import AccessContext
 
 LOOKBACK_DAYS = 120  # how far back «what changed around» looks
@@ -98,8 +99,11 @@ SHOWN = Finding.review_status.is_(None) | (Finding.review_status == "confirmed")
 
 
 def _data_problems(session: Session, restaurant_id: UUID, finding_id: UUID) -> list[str]:
-    """Open data-quality findings (M7) of the same restaurant — only those a director may see (none under
-    review or rejected: code review 02.11.2026, p. 2): a figure may be wrong because the data is."""
+    """Open data-quality findings (M7) of the same restaurant — only those its director may see (none under
+    review or rejected: code review 02.11.2026, p. 2; and only with the HQ's task on it: ADR 0009, review
+    05.11.2026, p. 1 — the basis is kept and shown to whoever sees the finding): a figure may be wrong
+    because the data is."""
+    tasked = select(Task.finding_id).where(Task.restaurant_id == restaurant_id, Task.finding_id.is_not(None))
     return list(
         session.execute(
             select(Finding.title).where(
@@ -108,6 +112,7 @@ def _data_problems(session: Session, restaurant_id: UUID, finding_id: UUID) -> l
                 Finding.status != "dismissed",
                 Finding.id != finding_id,
                 SHOWN,
+                Finding.id.in_(tasked),
             )
         ).scalars()
     )

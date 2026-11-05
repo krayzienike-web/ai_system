@@ -361,31 +361,30 @@ def _first_item(client: TestClient, headers: dict[str, str]) -> tuple[dict[str, 
 
 
 @pytest.mark.usefixtures("demo")
-def test_take_it_on_is_a_task_to_oneself_shown_in_the_digest(
-    client: TestClient, owner_engine: Engine
-) -> None:
+def test_the_hqs_task_puts_an_item_in_the_directors_digest(client: TestClient, owner_engine: Engine) -> None:
+    """ADR 0009 (replaces «Беру в работу»): a director's digest holds a finding once the HQ set a task on it,
+    and it is «в работе» there; without the task it is not in the director's digest at all."""
     from app.insights.models import Finding
     from app.tasks.models import Task
 
-    director = login(client, "r01@a.ru")
+    director, admin = login(client, "r01@a.ru"), login(client, "admin@a.ru")
     _, item = _first_item(client, director)
-    with Session(owner_engine) as s, s.begin():  # the demo took it already: free it, as on a new week
-        s.execute(delete(Task).where(Task.finding_id == UUID(item["finding_id"])))
-        s.execute(update(Finding).where(Finding.id == UUID(item["finding_id"])).values(status="new"))
-    digest, item = _first_item(client, director)
-    assert not item["taken"]
+    fid = item["finding_id"]
+    with Session(owner_engine) as s, s.begin():  # the demo assigned it already: undo, as on a new week
+        s.execute(delete(Task).where(Task.finding_id == UUID(fid)))
+        s.execute(update(Finding).where(Finding.id == UUID(fid)).values(status="new"))
+    digest = client.post("/api/digests/rebuild", json={}, headers=director).json()
+    assert fid not in {
+        i["finding_id"] for i in digest["problems"] + digest["opportunities"] + digest["risks"]
+    }
     due = str(TODAY + timedelta(days=7))
     made = client.post(
-        "/api/tasks",
-        json={"title": item["title"], "due_on": due, "finding_id": item["finding_id"]},
-        headers=director,
+        "/api/tasks", json={"title": item["title"], "due_on": due, "finding_id": fid}, headers=admin
     )
     assert made.status_code == 201, made.text
-    assert made.json()[0]["restaurant_id"] == digest["restaurant_id"]  # for their own restaurant
-    again = client.get("/api/digests/latest", headers=director).json()
-    assert next(
-        i for i in again["problems"] + again["opportunities"] if i["finding_id"] == item["finding_id"]
-    )["taken"]
+    assert made.json()[0]["restaurant_id"] == digest["restaurant_id"]  # the finding's restaurant
+    again = client.post("/api/digests/rebuild", json={}, headers=director).json()
+    assert next(i for i in again["problems"] + again["opportunities"] if i["finding_id"] == fid)["taken"]
 
 
 @pytest.mark.usefixtures("demo")

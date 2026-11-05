@@ -15,7 +15,7 @@ from app.ai.gateway import FakeModel, Gateway, ModelRequest, Reply, get_gateway,
 from app.ai.verify import numbers, unsupported
 from app.chat.assistant import CHECKED
 from app.main import app
-from tests.conftest import Network, login
+from tests.conftest import Network, hq_task, login
 from tests.test_overview import TODAY, demo  # noqa: F401  (the demo network: tenant A, director r01@a.ru)
 
 
@@ -402,7 +402,9 @@ def _finding(owner_engine: Any, network: Network, *, review_status: str | None =
         )
         s.add(f)
         s.flush()
-        return f.id
+        fid = f.id
+    hq_task(owner_engine, fid)  # the HQ's decision: the director meets it (ADR 0009)
+    return fid
 
 
 def test_a_finding_the_person_sees_goes_to_the_model_first_and_is_the_answers_source(

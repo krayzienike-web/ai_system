@@ -27,7 +27,7 @@ from app.insights.models import Finding
 from app.main import app
 from app.overview.service import CONFIDENCE_WEIGHT
 from app.tenancy.models import Restaurant
-from tests.conftest import Network, login
+from tests.conftest import Network, hq_task, login
 from tests.test_overview import TODAY, demo  # noqa: F401  (the demo network: tenant A, director r01@a.ru)
 
 WEEK = builder.Week.before(TODAY)
@@ -119,7 +119,7 @@ def test_a_directors_digest_when_the_restaurant_has_no_findings(
     assert d["problems"] == d["opportunities"] == d["risks"] == []
     assert d["on_table"] == {"losses": "0 ₽", "potential": "0 ₽", "total": "0 ₽"}
     assert d["improved"]["tasks_done"] == 0 and d["kpis"] is None and d["last_count"] is None
-    assert d["headline"] == "Открытых проблем с оценкой в рублях нет."
+    assert d["headline"] == "Задач по находкам от управляющей компании пока нет."  # ADR 0009: not «all fine»
     assert "None" not in json.dumps(d, ensure_ascii=False)
     with Session(owner_engine) as s:
         row = s.execute(
@@ -144,6 +144,8 @@ def test_every_digest_endpoint_keeps_to_the_readers_restaurant_and_network(
         theirs = _finding(a.id, a2, "A2", "Перерасход сыра A2")
         foreign = _finding(b.id, b1, "B1", "Перерасход сыра сети Б")
         s.add_all([mine, theirs, foreign])
+    for f in (mine, theirs, foreign):  # the HQ's decisions: each director meets their own (ADR 0009)
+        hq_task(owner_engine, f.id)
     weekly.run(a.id, TODAY)
     weekly.run(b.id, TODAY)
     with Session(owner_engine) as s:
@@ -324,6 +326,7 @@ def test_the_index_trend_and_what_improved_worked_out_by_hand(network: Network, 
     with Session(owner_engine, expire_on_commit=False) as s, s.begin():
         cheese = _finding(a.id, a1, "A1", "Перерасход сыра", effect="12000.00")
         s.add(cheese)
+    hq_task(owner_engine, cheese.id)  # in A1's digest only with the HQ's task (ADR 0009)
     admin = _ctx(network, "admin@a.ru", owner_engine)
     first = {r: service.publish(admin, restaurant_id=r, week=WEEK, today=TODAY) for r in (a1, None)}
     with Session(owner_engine) as s:

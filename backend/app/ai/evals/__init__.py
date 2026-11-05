@@ -27,6 +27,7 @@ from app.ai.gateway import Gateway
 from app.ai.verify import numbers
 from app.insights.models import Finding
 from app.overview.models import KpiSnapshot
+from app.tasks.models import Task
 from app.tenancy.context import AccessContext, tool_session
 from app.tenancy.models import Restaurant, RoleAssignment, User
 
@@ -186,7 +187,13 @@ def world_from(owner: Session, *, director_email: str, hq_email: str) -> World:
     own = (
         owner.execute(
             select(Finding.id)
-            .where(Finding.restaurant_id == mine, Finding.effect_rub_month.is_not(None), *shown)
+            .where(
+                Finding.restaurant_id == mine,
+                Finding.effect_rub_month.is_not(None),
+                *shown,
+                # What the director meets: a finding with the HQ's task on it (ADR 0009).
+                Finding.id.in_(select(Task.finding_id).where(Task.restaurant_id == mine)),
+            )
             .order_by(Finding.effect_rub_month.desc())
         )
         .scalars()

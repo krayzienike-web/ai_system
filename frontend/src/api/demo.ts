@@ -9,6 +9,7 @@
 // The findings list's filters are applied here to the recorded list; `demo.test.ts` checks them against the
 // server's own answers for the recorded filter variants.
 import { ApiError } from "./client";
+import { money } from "../lib/format";
 import snapshot from "./demo/snapshot.json";
 import { demoEngineParams } from "./demoEngine";
 import {
@@ -115,9 +116,6 @@ function overlay<T>(v: Viewer, value: T): T {
         if (c) Object.assign(o, c);
       }
       Object.values(o).forEach(walk);
-      // A restaurant's «what to do» cards are findings nobody has taken yet (overview/service.py).
-      if (Array.isArray(o.actions) && o.actions.some((a) => a && typeof a === "object" && isFinding(a as Record<string, unknown>)))
-        o.actions = (o.actions as ApiFinding[]).filter((a) => a.work.stage === "new");
     }
   };
   walk(value);
@@ -152,19 +150,44 @@ const checked = (f: ApiFinding) => {
   return r === null || r === "confirmed";
 };
 
+/** «Решить по находке» (ADR 0009) as the server builds it, after what the visitor did: reviewed (also in this
+ * session), open, nobody acted on — no task, no check. The recorded order (the server's ranking) first. */
+function awaitingOf(v: Viewer): ApiFinding[] {
+  const recorded = ((v.user.answers["/overview/awaiting"] as ApiFinding[]) ?? []).map((f) => f.id);
+  const rank = (f: ApiFinding) => (recorded.includes(f.id) ? recorded.indexOf(f.id) : recorded.length);
+  return overlay(v, clone([...pool.findings.values()]))
+    .filter((f) => checked(f) && f.status === "new" && f.work.stage === "new" && !f.work.check_waiting_launch)
+    .sort((a, b) => rank(a) - rank(b) || (money(b.effect_rub_month) ?? 0) - (money(a.effect_rub_month) ?? 0));
+}
+
 /** The working list: recorded, plus findings confirmed in this session; minus ones reopened or rejected. */
 function findingsOf(v: Viewer): ApiFinding[] {
   const recorded = (v.user.answers["/findings"] as ApiFinding[]) ?? [];
   const ids = new Set(recorded.map((f) => f.id));
+  // A director meets a finding once the HQ set a task on their restaurant (ADR 0009): those the recording has,
+  // and those the visitor's HQ assigned in this session.
+  const tasked = (f: ApiFinding) => newTasks.some((t) => t.finding_id === f.id && t.restaurant_id === v.restaurantId);
   const extra = [...pool.findings.values()].filter(
-    (f) => !ids.has(f.id) && checked(f) && f.status !== "dismissed" && (v.hq || (f.restaurant_id !== null && f.restaurant_id === v.restaurantId)),
+    (f) =>
+      !ids.has(f.id) &&
+      checked(f) &&
+      f.status !== "dismissed" &&
+      (v.hq || (f.restaurant_id !== null && f.restaurant_id === v.restaurantId && tasked(f))),
   );
   return overlay(v, clone([...recorded, ...extra])).filter(checked);
 }
 
 function tasksOf(v: Viewer, late: boolean): ApiTask[] {
   const recorded = (v.user.answers["/tasks"] as ApiTask[]) ?? [];
-  const all = overlay(v, clone([...recorded, ...newTasks.filter((t) => visibleTask(v, t))]));
+  // A director's task names its finding only when the director sees it (the server's row-level security):
+  // a network-wide finding's task is «from the HQ», without the finding's title or its network sum.
+  const seen = v.hq ? null : new Set(findingsOf(v).map((f) => f.id));
+  const mine = newTasks.filter((t) => visibleTask(v, t)).map((t) =>
+    seen && t.finding_id && !seen.has(t.finding_id)
+      ? { ...t, finding_title: null, finding_effect_rub_month: null, source: "Поставлено управляющей компанией" }
+      : t,
+  );
+  const all = overlay(v, clone([...recorded, ...mine]));
   return late ? all.filter((t) => t.late) : all;
 }
 
@@ -256,7 +279,11 @@ function markTaken(findingId: string | null | undefined, count: number) {
 function createTasks(v: Viewer, body: { title: string; due_on: string; finding_id?: string; restaurant_ids?: string[]; checklist?: string[] }) {
   const finding = body.finding_id ? pool.findings.get(body.finding_id) : undefined;
   if (finding && !checked(finding)) throw new ApiError(422, "Находка еще не прошла проверку: задачи по ней ставят после подтверждения");
-  if (!v.hq) forbid(!finding || finding.restaurant_id === v.restaurantId, "Задачи ставят только своему ресторану");
+  // A task on a finding is the HQ's decision (ADR 0009), as on the server: an unseen finding is «not found».
+  if (!v.hq && finding && !findingsOf(v).some((f) => f.id === finding.id)) throw new ApiError(404, "Finding not found");
+  if (!v.hq) forbid(!finding, "Задачи по находкам ставит управляющая компания");
+  if (finding?.restaurant_id && body.restaurant_ids && body.restaurant_ids.some((r) => r !== finding.restaurant_id))
+    throw new ApiError(422, "A restaurant's finding can only be assigned to that restaurant");
   const targets = v.hq
     ? (body.restaurant_ids ?? (finding?.restaurant_id ? [finding.restaurant_id] : allRestaurants().map((r) => r.id)))
     : [v.restaurantId!];
@@ -511,6 +538,19 @@ export function demoRequest(path: string, init: RequestInit, token: string | nul
   const [route = path, query = ""] = path.split("?");
   const q = new URLSearchParams(query);
   if (path === "/findings") return findingsOf(v);
+  // «Решить по находке»: what the visitor already decided on (a task, a check) leaves the list.
+  if (path === "/overview/awaiting") {
+    forbid(v.hq, "Forbidden");
+    return awaitingOf(v);
+  }
+  // The counters follow the visitor's decisions too: «Ждут решения» = findings to decide + checks + late tasks.
+  if (path === "/overview/badges" && v.hq) {
+    const proposed = overlay(v, clone([...(answers["/checks"] as Check[]), ...newChecks])).filter((c) => c.status === "proposed");
+    return { ...(answers[path] as object), inbox: awaitingOf(v).length + proposed.length + tasksOf(v, true).length };
+  }
+  if (route === "/overview/network" && answers[path]) {
+    return { ...(overlay(v, clone(answers[path])) as object), findings_awaiting: awaitingOf(v).length };
+  }
   if (route === "/overview/findings") return board(findingsOf(v), q);
   if (path === "/tasks" || path === "/tasks?late=true") return tasksOf(v, path.endsWith("true"));
   const reviewing = /^\/findings\?review=(pending|confirmed|rejected)$/.exec(path);

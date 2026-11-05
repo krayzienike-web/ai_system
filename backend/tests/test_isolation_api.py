@@ -9,7 +9,7 @@ from sqlalchemy import Engine, text
 from sqlalchemy.orm import Session
 
 from app.insights.models import Finding
-from tests.conftest import Network, login
+from tests.conftest import Network, hq_task, login
 
 
 def _codes(client: TestClient, headers: dict[str, str]) -> list[str]:
@@ -200,8 +200,10 @@ def test_stage_4_endpoints_stay_within_the_restaurant_and_the_network(
         code: int = client.get(f"/api/findings/{finding.id}/sources", headers=headers).status_code
         return code
 
-    # «Откуда цифры» follows the card: own checked finding only; not another restaurant, not the network's
-    # finding, not one waiting for the check, never another network.
+    # «Откуда цифры» follows the card: own checked finding with the HQ's task only (ADR 0009); not another
+    # restaurant, not the network's finding, not one waiting for the check, never another network.
+    assert sources(own, director1) == 404  # checked, but no task yet
+    hq_task(owner_engine, own.id)
     assert [sources(own, h) for h in (hq, director1, director2, foreign)] == [200, 200, 404, 404]
     assert [sources(net_wide, h) for h in (hq, director1, foreign)] == [200, 404, 404]
     assert [sources(pending, h) for h in (hq, director1, foreign)] == [200, 404, 404]

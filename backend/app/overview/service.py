@@ -3,7 +3,7 @@
 - `context` — the demo's «today», data up to which day, the next stock count;
 - `network` — the network's home: found potential, confirmed effect, decisions waiting, the trend, who loses
   most, problems common to several restaurants;
-- `restaurant` — «Моя неделя» of one restaurant: potential, change on the week, the summary, three actions,
+- `restaurant` — «Моя неделя» of one restaurant: potential, change on the week, the summary, the top three,
   losses by process, KPIs against the network, results of the work;
 - `restaurants` — the list of all restaurants for HQ;
 - `badges` — counters of the menu.
@@ -21,7 +21,7 @@ from statistics import median
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import exists, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core import words
@@ -29,7 +29,7 @@ from app.core.errors import NotFoundError
 from app.core.period import Period
 from app.experiments.models import Experiment, ExperimentStatus, Verdict
 from app.imports.service import freshness
-from app.insights.models import FindingStatus
+from app.insights.models import Finding, FindingStatus
 from app.insights.service import FindingWork, list_findings
 from app.insights.work import WorkStage
 from app.operations.models import InventoryCount, Sale
@@ -264,6 +264,7 @@ class Network:
     completed_checks: int
     checks_waiting: int
     overdue_tasks: int
+    findings_awaiting: int  # «Решить по находке» (ADR 0009): the card counts what the menu badge counts
     trend: Trend
     ranking: list[RankRow]
     common: list[Common]
@@ -393,6 +394,7 @@ def network(session: Session, period: Period, today: date) -> Network:
             select(func.count()).select_from(Experiment).where(Experiment.status == ExperimentStatus.PROPOSED)
         ).scalar_one(),
         overdue_tasks=sum(1 for t in tasks if _late(t, today)),
+        findings_awaiting=_awaiting_count(session),
         trend=trend_of(session, None, period),
         ranking=ranking,
         common=common,
@@ -436,7 +438,6 @@ class RestaurantWeek:
     delta_week: Decimal | None
     digest: str
     digest_findings: list[FindingWork]
-    actions: list[FindingWork]  # the three for the director to take (not taken yet)
     top: list[FindingWork]  # the three most valuable whatever their stage (HQ's read-only view)
     processes: list[ProcessLosses]
     fine_processes: list[str]
@@ -544,12 +545,14 @@ def restaurant_by_code(session: Session, code: str) -> Restaurant:
     return r
 
 
-def restaurant(session: Session, code: str, today: date) -> RestaurantWeek:
+def restaurant(session: Session, code: str, today: date, *, hq: bool = True) -> RestaurantWeek:
     r = restaurant_by_code(session, code)
     items = _open(session, today, r.id)
     ranked = _rank(items)
     now, before = _last_two(session, r.id)
     delta = (now.losses + now.potential) - (before.losses + before.potential) if now and before else None
+    if not hq:  # the stored weekly totals hold findings the director does not see yet (ADR 0009)
+        delta = None
     tasks = list(session.execute(select(Task).where(Task.restaurant_id == r.id)).scalars())
     late = sum(1 for t in tasks if _late(t, today))
     by_process = _process_losses(items)
@@ -578,7 +581,6 @@ def restaurant(session: Session, code: str, today: date) -> RestaurantWeek:
         delta_week=delta,
         digest=_digest(r.name, delta, ranked, late),
         digest_findings=ranked[:3],
-        actions=[fw for fw in ranked if fw.work.stage == WorkStage.NEW][:3],
         top=ranked[:3],
         processes=processes,
         fine_processes=fine,
@@ -661,6 +663,35 @@ def restaurants(session: Session, today: date) -> list[RestaurantRow]:
 # ------------------------------------------------------------------ badges
 
 
+def awaiting(session: Session, today: date) -> list[FindingWork]:
+    """«Ждут решения» → «Решить по находке» (ADR 0009): reviewed open findings nobody acted on yet — no task,
+    no check (a proposed one waits in «Проверки к запуску») — of restaurants and of the network; the most
+    expensive first, those without a ruble estimate last. The HQ's."""
+    items = [
+        fw
+        for fw in _open(session, today)
+        if fw.work.stage == WorkStage.NEW and not fw.work.check_waiting_launch
+    ]
+    return _rank(items) + [fw for fw in items if not fw.finding.effect_rub_month]
+
+
+def _awaiting_count(session: Session) -> int:
+    """`awaiting` counted in the database, for the badge on every page (architecture review, p. 19)."""
+    acted = or_(
+        exists().where(Task.finding_id == Finding.id),
+        exists().where(Experiment.finding_id == Finding.id, Experiment.status != ExperimentStatus.REJECTED),
+    )
+    return session.execute(
+        select(func.count())
+        .select_from(Finding)
+        .where(
+            Finding.status == FindingStatus.NEW,
+            Finding.review_status.is_(None) | (Finding.review_status == "confirmed"),
+            ~acted,
+        )
+    ).scalar_one()
+
+
 def badges(session: Session, today: date, *, hq: bool) -> dict[str, Any]:
     """Asked on every page: counted in the database, not by reading every task (architecture review, p. 19).
     The same rule as `_late`: not done and past the due date."""
@@ -673,7 +704,7 @@ def badges(session: Session, today: date, *, hq: bool) -> dict[str, Any]:
             select(func.count()).select_from(Experiment).where(Experiment.status == ExperimentStatus.PROPOSED)
         ).scalar_one()
         late = count(Task.status != TaskStatus.DONE, Task.due_on < today)
-        return {"inbox": waiting + late, "open_tasks": 0}
+        return {"inbox": waiting + late + _awaiting_count(session), "open_tasks": 0}
     return {"inbox": 0, "open_tasks": count(Task.status != TaskStatus.DONE)}
 
 

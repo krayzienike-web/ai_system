@@ -14,7 +14,7 @@ import { ddmm, money, num, perMonth, rub } from "../../lib/format";
 import { useViewer } from "../../lib/useViewer";
 import { useUi } from "../../state/ui";
 import { QuickSteps, TaskTrace } from "../tasks/trace";
-import { FindingConfidence, MoneyWords, ProcessChip, STAGE_INDEX, TakeToWorkDialog } from "./parts";
+import { FindingConfidence, MoneyWords, ProcessChip, STAGE_INDEX } from "./parts";
 import { AiHypotheses } from "./Hypotheses";
 import { ReviewTrace } from "./ReviewTrace";
 
@@ -34,7 +34,6 @@ export function FindingPage() {
 function FindingView({ f, isHq }: { f: FindingDetail; isHq: boolean }) {
   const { openChat } = useUi();
   const context = useAppContext();
-  const [taking, setTaking] = useState(false);
   const [showEvidence, setShowEvidence] = useState(false);
   const view = f.view;
   const check = f.check;
@@ -74,11 +73,6 @@ function FindingView({ f, isHq }: { f: FindingDetail; isHq: boolean }) {
             </div>
           )}
           <div className="mt-6 flex flex-wrap items-center gap-3 border-t border-line pt-5">
-            {!isHq && f.work.stage === "new" && (
-              <Button variant="primary" size="lg" onClick={() => setTaking(true)}>
-                Взять в работу
-              </Button>
-            )}
             {isHq && f.restaurant_id && !check && (
               <Link to="/checks/new/$findingId" params={{ findingId: f.id }} className={buttonClass("primary", "lg")}>
                 <FlaskConical size={16} /> Проверить на части ресторанов
@@ -266,7 +260,6 @@ function FindingView({ f, isHq }: { f: FindingDetail; isHq: boolean }) {
         {effect !== null && `Сумма ${perMonth(effect)} — оценка до уровня среднего по сети, а не до идеала.`}
       </p>
 
-      <TakeToWorkDialog f={f} open={taking} onClose={() => setTaking(false)} />
     </div>
   );
 }

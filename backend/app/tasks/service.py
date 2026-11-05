@@ -48,6 +48,8 @@ def _targets(
         return list(dict.fromkeys(restaurant_ids)), AssignedBy.HQ
     if not ctx.can(Permission.TASKS_EXECUTE) or ctx.restaurant_id is None:
         raise ForbiddenError("Not allowed to take tasks")
+    if finding is not None:  # ADR 0009: a task on a finding is the HQ's decision, never the director's
+        raise ForbiddenError("Задачи по находкам ставит управляющая компания")
     if restaurant_ids is not None and list(restaurant_ids) != [ctx.restaurant_id]:
         raise ForbiddenError("A director takes tasks only for their own restaurant")
     return [ctx.restaurant_id], AssignedBy.DIRECTOR

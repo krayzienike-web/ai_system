@@ -1,7 +1,7 @@
 """A director's reactions to the digest's items (docs/08 part 1, stage 6).
 
-- «Беру в работу» — a task of the director to themselves: the tasks' own `POST /tasks` with the finding;
-  the digest shows it live (`taken`).
+- «Беру в работу» — removed (ADR 0009): a director's digest holds only findings with the HQ's task, shown
+  live as `taken`.
 - «Не согласен» — with a reason, for the HQ (`Disagreement`): stored here.
 - «Обсудить с ИИ» — the chat with the finding (`POST /chat`, `finding_id`): nothing to store.
 """

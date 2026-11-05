@@ -23,7 +23,7 @@ from app.insights.models import Finding
 from app.main import app
 from app.operations.models import Receipt, Sale, WriteOff
 from app.tenancy.context import tool_session
-from tests.conftest import Network, login
+from tests.conftest import Network, hq_task, login
 from tests.test_overview import TODAY, demo  # noqa: F401  (the demo network: tenant A, director r01@a.ru)
 
 
@@ -72,6 +72,8 @@ def test_the_facts_hold_suppliers_by_month_and_the_restaurants_data_problems(
     price; the data problems of the same restaurant (R10's mozzarella: the stock by documents goes
     negative)."""
     finding = _finding_id(owner_engine, network, "M1:R10:P01:under")
+    # A data problem is named in the basis once its director sees it: with the HQ's task (ADR 0009).
+    hq_task(owner_engine, _finding_id(owner_engine, network, "M7:R10:P01:negative"))
     model.replies.append(_hypotheses())
     made = client.post(f"/api/findings/{finding}/hypotheses", headers=login(client, "admin@a.ru")).json()
     facts = _facts(model.requests[0])

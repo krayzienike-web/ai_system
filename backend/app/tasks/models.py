@@ -47,6 +47,7 @@ class Task(IdMixin, TenantMixin, TimestampMixin, Base):
         CheckConstraint("status = 'done' OR outcome_verdict IS NULL", name="outcome_only_when_done"),
         CheckConstraint("due_on >= created_on", name="due_after_created"),
         Index("ix_tasks_restaurant_status", "restaurant_id", "status"),
+        Index("ix_tasks_finding_restaurant", "finding_id", "restaurant_id"),  # the findings' policy (0025)
     )
 
     restaurant_id: Mapped[UUID] = mapped_column(ForeignKey("restaurants.id", ondelete="CASCADE"))

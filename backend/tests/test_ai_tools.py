@@ -15,6 +15,7 @@ from app.catalog.models import Product
 from app.insights.models import Finding
 from app.operations.models import Receipt
 from app.overview.models import KpiSnapshot
+from app.tasks.models import Task
 from app.tenancy.context import tool_session
 from app.tenancy.models import Restaurant, User
 from tests.conftest import Network
@@ -31,8 +32,10 @@ class World:
             r01, r02 = self.places["R01"].id, self.places["R02"].id
             open_ = Finding.status != "dismissed"
             visible = Finding.review_status.is_(None) | (Finding.review_status == "confirmed")
+            # The director's own: one with the HQ's task on it (ADR 0009)
+            tasked = select(Task.finding_id).where(Task.restaurant_id == r01)
             self.own = s.execute(
-                select(Finding.id).where(Finding.restaurant_id == r01, open_, visible)
+                select(Finding.id).where(Finding.restaurant_id == r01, open_, visible, Finding.id.in_(tasked))
             ).scalar()
             self.other = s.execute(
                 select(Finding.id).where(Finding.restaurant_id == r02, open_, visible)

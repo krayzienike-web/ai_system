@@ -1,14 +1,15 @@
 import { Link } from "@tanstack/react-router";
-import { BellRing, ChevronDown, FlaskConical, Timer } from "lucide-react";
+import { BellRing, ChevronDown, FlaskConical, ListTodo, Timer } from "lucide-react";
 import { useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 
-import { useCheckAction, useChecks, useTaskAction, useTasks } from "../../api/hooks";
-import type { Check } from "../../api/types";
-import { Button, Card, cx, EmptyState, ErrorText, PageTitle, Reveal, Skeleton } from "../../ds/primitives";
+import { useAppContext, useAwaiting, useCheckAction, useChecks, useCreateTasks, useRestaurants, useTaskAction, useTasks } from "../../api/hooks";
+import type { ApiFinding, Check } from "../../api/types";
+import { Button, buttonClass, Card, cx, Dialog, EmptyState, ErrorText, PageTitle, Reveal, Skeleton } from "../../ds/primitives";
 import { ddmm, money, plural, rub } from "../../lib/format";
 import { useViewer } from "../../lib/useViewer";
 import { useUi } from "../../state/ui";
+import { MoneyWords } from "../findings/parts";
 
 const names = (places: Check["test"]) => places?.map((p) => p.name).join(", ") ?? "";
 const weeks = (c: Check) => c.weeks;
@@ -84,18 +85,165 @@ function ProposedRow({ e, onDecide, canDecide, busy }: { e: Check; onDecide: (id
   );
 }
 
+/** The HQ's decision on a finding (ADR 0009): one task with the chosen steps as its checklist and a due date;
+ * a network-wide finding goes to the restaurants chosen (all by default). */
+function AssignDialog({ f, onClose }: { f: ApiFinding; onClose: () => void }) {
+  const create = useCreateTasks();
+  const context = useAppContext();
+  const restaurants = useRestaurants();
+  const { notify } = useUi();
+  const [steps, setSteps] = useState<boolean[]>(() => f.actions.map((_, i) => i === 0));
+  const [due, setDue] = useState(1);
+  const [places, setPlaces] = useState<string[] | null>(null); // null: every restaurant
+  const options = context.data?.due_options ?? [];
+  const option = options[due];
+  const chosen = f.actions.filter((_, i) => steps[i]);
+  const all = (restaurants.data ?? []).map((r) => r.id);
+  const targets = f.restaurant_id ? undefined : (places ?? all);
+  return (
+    <Dialog open onClose={onClose} title="Поставить задачу">
+      <div className="space-y-5 text-sm">
+        <p className="text-ink-2">
+          «{f.title}» — {f.restaurant_name ? `директору: ${f.restaurant_name}` : "директорам выбранных ресторанов"}.
+        </p>
+        <fieldset>
+          <legend className="mb-2 font-medium text-ink">Что сделать</legend>
+          <div className="space-y-2">
+            {f.actions.map((a, i) => (
+              <label key={a} className="flex cursor-pointer items-start gap-2.5 rounded-[10px] border border-line p-3 hover:border-brand">
+                <input
+                  type="checkbox"
+                  checked={steps[i] ?? false}
+                  onChange={() => setSteps((s) => s.map((v, j) => (j === i ? !v : v)))}
+                  className="mt-0.5 h-4 w-4 accent-[#0a8f84]"
+                />
+                <span>{a}</span>
+              </label>
+            ))}
+          </div>
+        </fieldset>
+        {!f.restaurant_id && (
+          <fieldset>
+            <legend className="mb-2 font-medium text-ink">Рестораны</legend>
+            <div className="grid gap-1.5 sm:grid-cols-2">
+              {(restaurants.data ?? []).map((r) => {
+                const on = (places ?? all).includes(r.id);
+                return (
+                  <label key={r.id} className="flex cursor-pointer items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={on}
+                      onChange={() => setPlaces((p) => ((p ?? all).includes(r.id) ? (p ?? all).filter((x) => x !== r.id) : [...(p ?? all), r.id]))}
+                      className="h-4 w-4 accent-[#0a8f84]"
+                    />
+                    {r.code} · {r.name}
+                  </label>
+                );
+              })}
+            </div>
+          </fieldset>
+        )}
+        <fieldset>
+          <legend className="mb-2 font-medium text-ink">Срок</legend>
+          <div className="flex flex-wrap gap-2">
+            {options.map((d, i) => (
+              <button
+                key={d.days}
+                type="button"
+                onClick={() => setDue(i)}
+                aria-pressed={due === i}
+                className={cx(
+                  "rounded-full border px-3 py-1.5",
+                  due === i ? "border-brand bg-brand-soft font-medium text-brand-strong" : "border-line-strong text-ink-2",
+                )}
+              >
+                {d.label} <span className="text-ink-3">· до {ddmm(d.due_on)}</span>
+              </button>
+            ))}
+          </div>
+        </fieldset>
+        <ErrorText error={create.error} fallback="Не получилось поставить задачу. Попробуйте еще раз." />
+        <div className="flex justify-end gap-2">
+          <Button variant="ghost" onClick={onClose}>
+            Отмена
+          </Button>
+          <Button
+            variant="primary"
+            disabled={!chosen.length || !option || (targets !== undefined && !targets.length) || create.isPending}
+            onClick={() =>
+              create.mutate(
+                {
+                  title: chosen[0]!,
+                  checklist: chosen.length > 1 ? chosen : [],
+                  finding_id: f.id,
+                  due_on: option!.due_on,
+                  restaurant_ids: targets,
+                },
+                {
+                  onSuccess: () => {
+                    notify(f.restaurant_id ? "Задача поставлена директору" : `Задача поставлена директорам: ${targets!.length}`);
+                    onClose();
+                  },
+                },
+              )
+            }
+          >
+            Поставить задачу
+          </Button>
+        </div>
+      </div>
+    </Dialog>
+  );
+}
+
+/** A reviewed finding nobody acted on: the HQ sets a task on the director or checks the change first. */
+function AwaitingRow({ f, canAssign }: { f: ApiFinding; canAssign: boolean }) {
+  const [assigning, setAssigning] = useState(false);
+  return (
+    <motion.li layout exit={{ opacity: 0, height: 0, transition: { duration: 0.25 } }} className="overflow-hidden">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-4">
+        <div className="min-w-0 flex-1">
+          <Link to="/findings/$findingId" params={{ findingId: f.id }} className="block font-semibold hover:underline">
+            {f.title}
+          </Link>
+          <span className="mt-0.5 block text-sm text-ink-3">
+            {f.restaurant_name ?? "Вся сеть"} · <MoneyWords f={f} />
+          </span>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {canAssign ? (
+            <Button variant="primary" onClick={() => setAssigning(true)}>
+              Поставить задачу
+            </Button>
+          ) : (
+            <span className="text-xs text-ink-3">Задачу ставит администратор УК</span>
+          )}
+          {f.restaurant_id && (
+            <Link to="/checks/new/$findingId" params={{ findingId: f.id }} className={buttonClass("ghost")}>
+              <FlaskConical size={15} /> Сначала проверить
+            </Link>
+          )}
+        </div>
+      </div>
+      {assigning && <AssignDialog f={f} onClose={() => setAssigning(false)} />}
+    </motion.li>
+  );
+}
+
 export function DecisionsPage() {
   const checks = useChecks("proposed");
   const overdue = useTasks(true);
+  const awaiting = useAwaiting();
   const check = useCheckAction();
   const task = useTaskAction();
   const { notify } = useUi();
   const viewer = useViewer();
-  if (checks.isError || overdue.isError) return <EmptyState title="Не получилось загрузить решения">Обновите страницу чуть позже.</EmptyState>;
-  if (!checks.data || !overdue.data) return <Skeleton className="mx-auto h-96 max-w-[920px]" />;
+  if (checks.isError || overdue.isError || awaiting.isError) return <EmptyState title="Не получилось загрузить решения">Обновите страницу чуть позже.</EmptyState>;
+  if (!checks.data || !overdue.data || !awaiting.data) return <Skeleton className="mx-auto h-96 max-w-[920px]" />;
   const proposed = checks.data;
   const late = overdue.data;
-  const total = proposed.length + late.length;
+  const found = awaiting.data;
+  const total = proposed.length + late.length + found.length;
   const decide = (id: string, d: "launch" | "reject") =>
     check.mutate(
       { id, action: d },
@@ -106,6 +254,23 @@ export function DecisionsPage() {
     <div className="mx-auto max-w-[920px] space-y-8">
       <PageTitle title="Ждут вашего решения" subtitle={total ? "Все, что нельзя сделать без вас. Решения — прямо здесь." : undefined} />
       {!total && <EmptyState title="Все решения приняты">Новые вопросы появятся здесь — и на главной сети.</EmptyState>}
+
+      <Section icon={<ListTodo size={20} />} title="Решить по находке" count={found.length}>
+        <motion.div key="awaiting" layout exit={exit}>
+          <p className="mb-2 text-sm text-ink-3">
+            Находки прошли проверку. Директор увидит находку, когда управляющая компания поставит по ней задачу.
+          </p>
+          <Card className="p-2">
+            <ul className="divide-y divide-line">
+              <AnimatePresence initial={false}>
+                {found.map((f) => (
+                  <AwaitingRow key={f.id} f={f} canAssign={!!viewer?.can("tasks.assign")} />
+                ))}
+              </AnimatePresence>
+            </ul>
+          </Card>
+        </motion.div>
+      </Section>
 
       <Section icon={<FlaskConical size={20} />} title="Проверки к запуску" count={proposed.length}>
         <motion.div key="proposed" layout exit={exit}>

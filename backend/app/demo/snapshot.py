@@ -85,6 +85,7 @@ def record(client: TestClient, email: str) -> dict[str, Any]:
     findings = list(answers["/findings"])
     if hq:
         get("/overview/restaurants")
+        get("/overview/awaiting")
         get("/checks")
         get("/checks?status=proposed")
         for p in PRESETS:

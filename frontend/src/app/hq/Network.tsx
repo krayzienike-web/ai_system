@@ -23,7 +23,7 @@ export function NetworkPage() {
   const onTable = money(n.on_table) ?? 0;
   const trend = n.trend.on_table.map((v) => money(v) ?? 0);
   const change = money(n.trend.change);
-  const inbox = n.checks_waiting + n.overdue_tasks;
+  const inbox = n.findings_awaiting + n.checks_waiting + n.overdue_tasks;
   const ranking = n.ranking.map((r) => ({
     id: r.code,
     title: r.name,
@@ -74,6 +74,8 @@ export function NetworkPage() {
               <div className="mt-1 font-display text-3xl font-semibold">{inbox}</div>
               <div className="mt-1 text-xs text-ink/70">
                 {[
+                  n.findings_awaiting &&
+                    plural(n.findings_awaiting, ["находка ждет решения", "находки ждут решения", "находок ждут решения"]),
                   n.checks_waiting && plural(n.checks_waiting, ["проверка ждет запуска", "проверки ждут запуска", "проверок ждут запуска"]),
                   n.overdue_tasks && plural(n.overdue_tasks, ["просроченная задача", "просроченные задачи", "просроченных задач"]),
                 ]

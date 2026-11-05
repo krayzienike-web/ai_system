@@ -1,6 +1,5 @@
 import { Link } from "@tanstack/react-router";
 import { ArrowDownRight, ArrowUpRight, CheckCircle2, ChevronDown, MessageCircle } from "lucide-react";
-import { AnimatePresence } from "motion/react";
 import { useState } from "react";
 
 import { useAppContext, useRestaurantWeek } from "../../api/hooks";
@@ -10,7 +9,7 @@ import { Card, cx, EmptyState, QuestionBlock, Reveal, Skeleton, Term } from "../
 import { AnimatedNumber, BulletScale, PROCESS_ICON, ProfitSplit } from "../../ds/viz";
 import { ddmm, money, pct, perMonth, plural, rub, thousands } from "../../lib/format";
 import { useUi } from "../../state/ui";
-import { ActionCard, FindingRow, MoneyWords, TakeToWorkDialog } from "../findings/parts";
+import { FindingRow, MoneyWords } from "../findings/parts";
 import { OutcomePill } from "../tasks/trace";
 
 const share = (v: string | null | undefined) => (v === null || v === undefined ? null : Number(v) * 100);
@@ -20,7 +19,6 @@ export function WeekView({ code, readOnly = false }: { code: string; readOnly?: 
   const { openChat } = useUi();
   const week = useRestaurantWeek(code);
   const context = useAppContext();
-  const [taking, setTaking] = useState<ApiFinding | null>(null);
   const [process, setProcess] = useState<string | null>(null);
   if (week.isError) return <EmptyState title="Ресторан не найден" />;
   const w = week.data;
@@ -106,7 +104,11 @@ export function WeekView({ code, readOnly = false }: { code: string; readOnly?: 
         <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
           <div>
             <h2 className="font-display text-xl font-semibold">С чего начать на этой неделе</h2>
-            <p className="text-sm text-ink-3">Три дела, которые дадут больше всего денег при самой надежной оценке</p>
+            <p className="text-sm text-ink-3">
+              {readOnly
+                ? "Три дела, которые дадут больше всего денег при самой надежной оценке"
+                : "Три самые дорогие находки, по которым вам поставлены задачи"}
+            </p>
           </div>
           {!readOnly && (
             <Link to="/tasks" className="text-sm font-medium text-brand-strong hover:underline">
@@ -114,7 +116,7 @@ export function WeekView({ code, readOnly = false }: { code: string; readOnly?: 
             </Link>
           )}
         </div>
-        {readOnly ? (
+        {w.top.length ? (
           <div className="grid gap-4 md:grid-cols-3">
             {w.top.map((f, i) => (
               <Card key={f.id} className="p-5">
@@ -124,22 +126,20 @@ export function WeekView({ code, readOnly = false }: { code: string; readOnly?: 
                 </Link>
                 <div className="mt-1 text-sm">
                   <MoneyWords f={f} />
-                  <span className="text-ink-3"> · {f.work.stage === "new" ? "директор еще не взял" : "в работе"}</span>
+                  <span className="text-ink-3">
+                    {" "}
+                    · {readOnly ? (f.work.stage === "new" ? "задачу еще не поставили" : "в работе") : "задача от управляющей компании"}
+                  </span>
                 </div>
               </Card>
             ))}
           </div>
-        ) : w.actions.length ? (
-          <div className="grid gap-4 md:grid-cols-3">
-            <AnimatePresence mode="popLayout">
-              {w.actions.map((f, i) => (
-                <ActionCard key={f.id} f={f} index={i} onTake={() => setTaking(f)} />
-              ))}
-            </AnimatePresence>
-          </div>
         ) : (
-          <EmptyState title="Все главные дела недели уже в работе">
-            Отлично. Следите за выполнением в «Задачах»{nextCount && ` — результат посчитаем после инвентаризации ${nextCount}`}.
+          <EmptyState title={readOnly ? "Открытых находок нет" : "Задач по находкам пока нет"}>
+            {readOnly
+              ? "У ресторана нет подтвержденных находок."
+              : "Когда управляющая компания поставит задачу по находке, она появится здесь и в «Задачах»."}
+            {nextCount && !readOnly && ` Результат выполненных посчитаем после инвентаризации ${nextCount}.`}
           </EmptyState>
         )}
       </Reveal>
@@ -155,7 +155,7 @@ export function WeekView({ code, readOnly = false }: { code: string; readOnly?: 
                 «{w.processes[0]!.title}»: <span className="text-loss">{perMonth(money(w.processes[0]!.losses) ?? 0)}</span>.
               </>
             ) : (
-              "Потерь выше нормы не нашли"
+              readOnly ? "Потерь выше нормы не нашли" : "Задач по находкам от управляющей компании пока нет"
             )
           }
           source={context.data?.data_until && <VerifiedNote>открытые находки на {ddmm(context.data.data_until)}</VerifiedNote>}
@@ -203,7 +203,9 @@ export function WeekView({ code, readOnly = false }: { code: string; readOnly?: 
           </ul>
           {w.fine_processes.length > 0 && (
             <p className="mt-3 flex items-start gap-2 border-t border-line px-2 pt-3 text-sm text-ink-3">
-              <CheckCircle2 size={16} className="mt-0.5 shrink-0 text-gain" aria-hidden />В норме: {w.fine_processes.join(", ")}.
+              <CheckCircle2 size={16} className="mt-0.5 shrink-0 text-gain" aria-hidden />
+              {/* A director sees findings with the HQ's task only (ADR 0009): no task is not «all fine». */}
+              {readOnly ? "В норме" : "Задач нет"}: {w.fine_processes.join(", ")}.
             </p>
           )}
           <Link to="/findings" className="mt-3 inline-block px-2 text-sm font-medium text-brand-strong hover:underline">
@@ -290,7 +292,6 @@ export function WeekView({ code, readOnly = false }: { code: string; readOnly?: 
         </QuestionBlock>
       </Reveal>
 
-      {taking && <TakeToWorkDialog key={taking.id} f={taking} open onClose={() => setTaking(null)} />}
     </div>
   );
 }

@@ -149,13 +149,17 @@ describe("demo follows the server after the actions (code review 27.10.2026)", (
   const detail = (id: string, token: string) =>
     get<ApiFinding & { tasks: ApiTask[]; check: { status: string } | null }>(`/findings/${id}`, token);
 
-  it("drops a «what to do» card once the director takes it into work", () => {
-    const director = "director2@demo.local"; // R02: the demo's one untaken card
-    const week = () => get<{ actions: ApiFinding[] }>("/overview/restaurants/R02", director).actions;
-    const card = week()[0]!;
-    send("/tasks", director, "POST", { title: card.title, due_on: "2026-11-10", finding_id: card.id });
-    expect(week().map((f) => f.id)).not.toContain(card.id);
-    expect(detail(card.id, director).work.stage).toBe("doing");
+  it("a finding the HQ assigns leaves «Решить по находке» and only then reaches the director (ADR 0009)", () => {
+    const own = get<Restaurant[]>("/restaurants", DIRECTOR)[0]!;
+    const waiting = get<ApiFinding[]>("/overview/awaiting", ADMIN).find((f) => f.restaurant_id === own.id)!;
+    expect(waiting).toBeDefined();
+    expect(get<ApiFinding[]>("/findings", DIRECTOR).map((f) => f.id)).not.toContain(waiting.id);
+    // Unseen by the director: «not found», as on the server (row-level security before the role's rule).
+    expect(status(() => send("/tasks", DIRECTOR, "POST", { title: "x", due_on: "2026-11-10", finding_id: waiting.id }))).toBe(404);
+    expect(status(() => get("/overview/awaiting", DIRECTOR))).toBe(403);
+    send("/tasks", ADMIN, "POST", { title: waiting.actions[0] ?? waiting.title, due_on: "2026-11-10", finding_id: waiting.id });
+    expect(get<ApiFinding[]>("/overview/awaiting", ADMIN).map((f) => f.id)).not.toContain(waiting.id);
+    expect(get<ApiFinding[]>("/findings", DIRECTOR).find((f) => f.id === waiting.id)?.work.stage).toBe("doing");
   });
 
   it("shows a check to HQ only, refuses a second one and keeps the director's own stage", () => {
@@ -202,20 +206,25 @@ describe("demo follows the server after the actions (code review 27.10.2026)", (
 
 
 describe("demo actions", () => {
-  it("takes a finding into work and lets only the director do the task", () => {
-    const f = get<ApiFinding[]>("/findings", DIRECTOR).find((x) => x.work.stage === "new")!;
-    const [task] = send<ApiTask[]>("/tasks", DIRECTOR, "POST", { title: f.actions[0] ?? f.title, due_on: "2026-10-27", finding_id: f.id, checklist: ["a", "b"] });
-    expect(get<ApiFinding[]>("/findings", DIRECTOR).find((x) => x.id === f.id)!.work.stage).toBe("doing");
-    expect(get<ApiTask[]>("/tasks", DIRECTOR).map((t) => t.id)).toContain(task!.id);
-    expect(get<ApiTask[]>("/tasks", "director2@demo.local").map((t) => t.id)).not.toContain(task!.id);
-    expect(status(() => send(`/tasks/${task!.id}/start`, "director2@demo.local", "POST"))).toBe(404);
+  it("lets only the director do the task the HQ set on a finding", () => {
+    // A network-wide finding waiting for the HQ: its task goes to every restaurant, R01 among them.
+    const f = get<ApiFinding[]>("/overview/awaiting", ADMIN).find((x) => x.restaurant_id === null && x.actions.length)!;
+    const own = get<Restaurant[]>("/restaurants", DIRECTOR)[0]!;
+    const tasks = send<ApiTask[]>("/tasks", ADMIN, "POST", { title: f.actions[0]!, due_on: "2026-10-27", finding_id: f.id, checklist: ["a", "b"] });
+    const task = tasks.find((t) => t.restaurant_id === own.id);
+    const who = DIRECTOR;
+    const other = "director2@demo.local";
+    expect(get<ApiFinding[]>("/overview/awaiting", ADMIN).map((x) => x.id)).not.toContain(f.id);
+    expect(get<ApiTask[]>("/tasks", who).map((t) => t.id)).toContain(task!.id);
+    expect(get<ApiTask[]>("/tasks", other).map((t) => t.id)).not.toContain(task!.id);
+    expect(status(() => send(`/tasks/${task!.id}/start`, other, "POST"))).toBe(404);
     expect(status(() => send(`/tasks/${task!.id}/start`, ADMIN, "POST"))).toBe(403);
 
-    send(`/tasks/${task!.id}/checklist`, DIRECTOR, "POST", { index: 1, done: true });
-    const done = send<ApiTask>(`/tasks/${task!.id}/complete`, DIRECTOR, "POST", { report: "сделано" });
+    send(`/tasks/${task!.id}/checklist`, who, "POST", { index: 1, done: true });
+    const done = send<ApiTask>(`/tasks/${task!.id}/complete`, who, "POST", { report: "сделано" });
     expect(done.checklist_done).toEqual([false, true]);
     expect(done.status).toBe("done");
-    expect(status(() => send(`/tasks/${task!.id}/start`, DIRECTOR, "POST"))).toBe(422);
+    expect(status(() => send(`/tasks/${task!.id}/start`, who, "POST"))).toBe(422);
   });
 
   it("reminds about overdue tasks from HQ only", () => {
@@ -303,9 +312,14 @@ describe("demo digests keep to the director's restaurant (TC-UI-22)", () => {
   it("refuses «Не согласен» with an item of another restaurant's digest", () => {
     const own = get<Digest>("/digests/latest", DIRECTOR);
     const mine = new Set([...own.problems, ...own.opportunities, ...own.risks].map((i) => i.finding_id));
-    const other = get<Restaurant[]>("/restaurants", ADMIN).find((r) => r.id !== own.restaurant_id)!;
-    const theirs = get<Digest>(`/digests/latest?restaurant_id=${other.id}`, ADMIN);
-    const item = [...theirs.problems, ...theirs.opportunities].find((i) => !mine.has(i.finding_id))!;
+    // Any other restaurant's digest item (most demo restaurants have none until the HQ sets tasks).
+    const item = get<Restaurant[]>("/restaurants", ADMIN)
+      .filter((r) => r.id !== own.restaurant_id)
+      .flatMap((r) => {
+        const d = get<Digest>(`/digests/latest?restaurant_id=${r.id}`, ADMIN);
+        return [...d.problems, ...d.opportunities, ...d.risks];
+      })
+      .find((i) => !mine.has(i.finding_id))!;
     expect(item).toBeDefined();
     expect(status(() => send(`/findings/${item.finding_id}/disagree`, DIRECTOR, "POST", { reason: "wrong_data" }))).toBe(404);
     expect(get<Disagreement[]>("/digests/disagreements", ADMIN).some((d) => d.finding_id === item.finding_id)).toBe(false);
@@ -324,5 +338,64 @@ describe("demo digests after the review (03.11.2026)", () => {
     expect(get<Disagreement[]>(`/digests/disagreements?restaurant_id=${own.restaurant_id}`, ADMIN)).toHaveLength(1);
     expect(get<Disagreement[]>(`/digests/disagreements?restaurant_id=${others[0]!.id}`, ADMIN)).toHaveLength(0);
     send(`/findings/${item.finding_id}/disagree`, DIRECTOR, "DELETE");
+  });
+});
+
+describe("demo «Решить по находке» follows the review (code review 05.11.2026, p. 4)", () => {
+  it("a finding confirmed in the session enters it, one sent back leaves it; the counters follow", () => {
+    const inbox = () => get<{ inbox: number }>("/overview/badges", ADMIN).inbox;
+    const net = () => get<{ findings_awaiting: number }>("/overview/network?preset=week", ADMIN).findings_awaiting;
+    const before = inbox();
+    const pending = get<ApiFinding[]>("/findings?review=pending", ADMIN)[0]!;
+    send(`/findings/${pending.id}/review`, ADMIN, "POST", { verdict: "confirm" });
+    expect(get<ApiFinding[]>("/overview/awaiting", ADMIN).map((f) => f.id)).toContain(pending.id);
+    expect(inbox()).toBe(before + 1);
+    expect(net()).toBe(get<ApiFinding[]>("/overview/awaiting", ADMIN).length);
+    send(`/findings/${pending.id}/review`, ADMIN, "POST", { verdict: "reopen" });
+    expect(get<ApiFinding[]>("/overview/awaiting", ADMIN).map((f) => f.id)).not.toContain(pending.id);
+    expect(inbox()).toBe(before);
+  });
+});
+
+describe("demo «Поставить задачу» keeps the server's rules (test engineer, end of stage 6.1)", () => {
+  const network = () => get<ApiFinding[]>("/overview/awaiting", ADMIN).find((f) => f.restaurant_id === null)!;
+  const OTHER = "director2@demo.local"; // R02
+
+  it("a network finding given to part of the network reaches only those directors", () => {
+    const f = network();
+    expect(f).toBeDefined();
+    const tasks = send<ApiTask[]>("/tasks", ADMIN, "POST", { title: "Часть сети", due_on: "2026-11-10", finding_id: f.id, restaurant_ids: [r01().id] });
+    expect(tasks.map((t) => t.restaurant_id)).toEqual([r01().id]);
+    expect(get<ApiFinding[]>("/overview/awaiting", ADMIN).map((x) => x.id)).not.toContain(f.id);
+    expect(get<ApiTask[]>("/tasks", DIRECTOR).map((t) => t.id)).toContain(tasks[0]!.id);
+    expect(get<ApiTask[]>("/tasks", OTHER).some((t) => t.finding_id === f.id)).toBe(false);
+    for (const who of [DIRECTOR, OTHER]) {
+      expect(get<ApiFinding[]>("/findings", who).map((x) => x.id), who).not.toContain(f.id);
+      expect(status(() => get(`/findings/${f.id}`, who)), who).toBe(404);
+    }
+  });
+
+  it("the analyst sees «Решить по находке» but cannot put the task", () => {
+    const f = get<ApiFinding[]>("/overview/awaiting", ANALYST)[0]!;
+    expect(status(() => send("/tasks", ANALYST, "POST", { title: "x", due_on: "2026-11-10", finding_id: f.id }))).toBe(403);
+    expect(get<ApiFinding[]>("/overview/awaiting", ADMIN).map((x) => x.id)).toContain(f.id);
+  });
+
+  // Server: tasks/service.py `_targets` — «A restaurant's finding can only be assigned to that restaurant» (422).
+  it("refuses to give a restaurant's finding to another restaurant (found 05.11.2026, fixed)", () => {
+    const f = get<ApiFinding[]>("/overview/awaiting", ADMIN).find((x) => x.restaurant_id !== null)!;
+    const other = get<Restaurant[]>("/restaurants", ADMIN).find((r) => r.id !== f.restaurant_id)!;
+    expect(status(() => send("/tasks", ADMIN, "POST", { title: "x", due_on: "2026-11-10", finding_id: f.id, restaurant_ids: [other.id] }))).toBe(422);
+  });
+
+  // Server: `tasks_out` reads findings under the director's row-level security — a network finding is not theirs,
+  // so the director's task carries no finding title or network sum, and says «Поставлено управляющей компанией».
+  it("does not name a network finding nor its network sum in the director's task (found 05.11.2026, fixed)", () => {
+    const f = network();
+    send("/tasks", ADMIN, "POST", { title: "Всем", due_on: "2026-11-10", finding_id: f.id });
+    const mine = get<ApiTask[]>("/tasks", DIRECTOR).find((t) => t.finding_id === f.id)!;
+    expect(mine.finding_title).toBeNull();
+    expect(mine.finding_effect_rub_month).toBeNull();
+    expect(mine.source).toBe("Поставлено управляющей компанией");
   });
 });

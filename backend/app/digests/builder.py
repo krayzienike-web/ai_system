@@ -140,7 +140,16 @@ def build(
     places = {r.id: r for r in session.execute(select(Restaurant)).scalars()}
     items = overview.open_findings(session, today, restaurant_id)
     if restaurant_id is not None:
-        items = [fw for fw in items if fw.finding.restaurant_id == restaurant_id]
+        # What the director sees (ADR 0009): the restaurant's findings with a task on it — built under the
+        # system's context, so the findings' row-level security does not do it here.
+        tasked = set(
+            session.execute(
+                select(Task.finding_id).where(
+                    Task.restaurant_id == restaurant_id, Task.finding_id.is_not(None)
+                )
+            ).scalars()
+        )
+        items = [fw for fw in items if fw.finding.restaurant_id == restaurant_id and fw.finding.id in tasked]
     ranked = overview.rank(items)
     threshold = overview.PROCESS_CRITICAL_RUB * (1 if restaurant_id else max(1, len(places)))
 
