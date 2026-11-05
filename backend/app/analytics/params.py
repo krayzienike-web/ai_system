@@ -71,12 +71,23 @@ class EngineParams:
     M6_MAX_LOSS: Decimal = Decimal("0.3")  # the usual unexplained use added to the recipes' is capped
     M6_SHORT_DAYS: int = 1  # a shortage of at least this many days before the delivery …
     M6_REVENUE_AT_RISK: Decimal = Decimal(3000)  # … of dishes bringing at least this much a day
+    # Overstock (stage 6.5, «Остатки на дату»): the window's typical stock outlasts the shelf life
+    M6_OVERSTOCK_TIMES: Decimal = Decimal("1.5")  # the median stock covers 1.5 × the shelf life or more
+    M6_OVERSTOCK_MIN_DAYS: int = 14  # stock snapshots needed in the window to judge
+    M6_MATERIALITY_RUB_MONTH: Decimal = Decimal(3000)
     # M7 — data quality
     M7_WINDOW_DAYS: int = 28  # a dish sold without a recipe within the last 4 weeks
     M7_GAP_DAYS: int = 5  # an export missing for this many days, while other restaurants have them …
     M7_GAP_TIMES: Decimal = Decimal(2)  # … and longer than twice the restaurant's usual pause between days
     M7_NEGATIVE_DAYS: Decimal = Decimal(3)  # the books below zero by more than three days of use
     M7_HISTORY_DAYS: int = 56  # the usual pause: over the last 8 weeks of the restaurant's data
+    # M8 — the till (stage 6.5): removals after the check was printed and discounts, by cashier
+    M8_WINDOW_DAYS: int = 28
+    M8_VOIDS_MIN_COUNT: int = 8  # fewer removals after printing in the window: no conclusion
+    M8_VOIDS_TIMES: Decimal = Decimal(3)  # … at least 3 times the typical cashier's sum
+    M8_DISCOUNT_TIMES: Decimal = Decimal(2)  # the discount share at least twice the typical …
+    M8_DISCOUNT_EXCESS: Decimal = Decimal("0.03")  # … and at least 3 p.p. more
+    M8_MATERIALITY_RUB_MONTH: Decimal = Decimal(3000)
 
 
 DEFAULT = EngineParams()
@@ -415,6 +426,80 @@ DEFS: tuple[ParamDef, ...] = (
         "закупки бывают не каждый день: сравниваем с обычной паузой за 8 недель",
         D(1),
         D(10),
+    ),
+    ParamDef(
+        "M6_OVERSTOCK_TIMES",
+        "M6",
+        "Затоваривание: обычный остаток за 4 недели хватает дольше срока годности в",
+        "раза",
+        "по выгрузке «Остатки на дату»; 1 — ровно на срок годности",
+        D(1),
+        D(5),
+    ),
+    ParamDef(
+        "M6_OVERSTOCK_MIN_DAYS",
+        "M6",
+        "Для вывода о затоваривании нужно остатков на дату не меньше",
+        "дней",
+        "",
+        D(3),
+        D(90),
+    ),
+    ParamDef(
+        "M6_MATERIALITY_RUB_MONTH",
+        "M6",
+        "Затоваривание показываем от",
+        "₽ в месяц",
+        "стоимость запаса сверх срока годности",
+        D(0),
+        D(100000),
+    ),
+    ParamDef("M8_WINDOW_DAYS", "M8", "Кассу проверяем за последние", "дней", "", D(7), D(90)),
+    ParamDef(
+        "M8_VOIDS_MIN_COUNT",
+        "M8",
+        "Удалений после пречека у кассира должно быть хотя бы",
+        "шт.",
+        "меньше — случайность",
+        D(1),
+        D(500),
+    ),
+    ParamDef(
+        "M8_VOIDS_TIMES",
+        "M8",
+        "…и на сумму больше, чем у обычного кассира сети, в",
+        "раза",
+        "обычный — медиана кассиров сети",
+        D(1),
+        D(20),
+    ),
+    ParamDef(
+        "M8_DISCOUNT_TIMES",
+        "M8",
+        "Доля скидок кассира выше обычной в",
+        "раза",
+        "обычная — медиана кассиров сети",
+        D(1),
+        D(20),
+    ),
+    ParamDef(
+        "M8_DISCOUNT_EXCESS",
+        "M8",
+        "…и больше обычной хотя бы на",
+        "п.п.",
+        "",
+        D(0),
+        D(50),
+        PCT,
+    ),
+    ParamDef(
+        "M8_MATERIALITY_RUB_MONTH",
+        "M8",
+        "Находки по кассе показываем от",
+        "₽ в месяц",
+        "",
+        D(0),
+        D(100000),
     ),
 )
 BY_KEY = {d.key: d for d in DEFS}

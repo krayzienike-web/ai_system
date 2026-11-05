@@ -148,6 +148,9 @@ TEMPLATES: dict[str, Template] = {
                 _c("qty", "Количество", Kind.DECIMAL, True, "кол-во", "кол-во блюд", "количество блюд"),
                 _c("revenue", "Выручка", Kind.DECIMAL, True, "сумма", "сумма со скидкой", "выручка, ₽"),
                 _c("discount", "Скидка", Kind.DECIMAL, False, "сумма скидки"),
+                _c(
+                    "cashier", "Кассир", Kind.TEXT, False, "официант", "сотрудник", "кассир чека"
+                ),  # stage 6.5
             ),
             one_of=(("menu_item_code", "menu_item_name"),),
         ),
@@ -275,6 +278,51 @@ TEMPLATES: dict[str, Template] = {
                 UNIT,
             ),
             one_of=(("product_code", "product_name"),),
+        ),
+        # Stage 6.5 (docs/09): the stock by day (iiko «Остатки на дату») and the till's voids (r_keeper)
+        Template(
+            "stock_balances",
+            "Остатки на дату",
+            Scope.RESTAURANT,
+            (
+                _c("day", "Дата", Kind.DATE, True, "на дату", "дата остатка", "день", "date"),
+                *PRODUCT,
+                _c(
+                    "qty",
+                    "Остаток",
+                    Kind.DECIMAL,
+                    True,
+                    "количество",
+                    "остаток на конец дня",
+                    "конечный остаток",
+                ),
+                UNIT,
+            ),
+            one_of=(("product_code", "product_name"),),
+        ),
+        Template(
+            "voids",
+            "Удаления и отмены",
+            Scope.RESTAURANT,
+            (
+                DAY,
+                _c("check_no", "№ чека", Kind.TEXT, False, "номер чека", "чек", "заказ"),
+                _c("menu_item_code", "Код блюда", Kind.TEXT, False, "код"),
+                _c("menu_item_name", "Блюдо", Kind.TEXT, False, "наименование блюда", "позиция"),
+                _c("qty", "Количество", Kind.DECIMAL, False, "кол-во"),
+                _c("amount", "Сумма", Kind.DECIMAL, True, "сумма удаления", "сумма, ₽"),
+                _c("cashier", "Кассир", Kind.TEXT, False, "сотрудник", "официант", "кто удалил"),
+                _c(
+                    "after_print",
+                    "После печати",
+                    Kind.TEXT,
+                    False,
+                    "после пречека",
+                    "удалено после печати",
+                    "этап",
+                ),
+                _c("reason", "Причина", Kind.TEXT, False, "причина удаления", "комментарий"),
+            ),
         ),
     )
 }

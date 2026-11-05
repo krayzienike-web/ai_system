@@ -8,14 +8,21 @@ For each restaurant and product, at the end of the restaurant's data:
 3. The next delivery = the next weekday on which this product has been delivered over that history.
 4. Shortage: the stock runs out before the next delivery.
 It is not a monthly loss: the finding says what is at risk (the dishes' revenue per day).
-Overstock (stock that spoils before it is used) needs real stock snapshots: the computed stock drifts too far
-from a count weeks ago — planned with the «Остатки на дату» export.
+
+Overstock (stage 6.5) uses the «Остатки на дату» export, not the computed stock (it drifts too far from
+a count
+weeks ago): over the snapshots of the last `M6_HISTORY_DAYS`, the median stock lasts — at the average daily
+need — longer than `M6_OVERSTOCK_TIMES` × the product's shelf life. What lies beyond the shelf life is the
+excess: its value at the window's purchase price, spoiling once per shelf life — a monthly risk
+(excess × price × 30 / shelf life), but no more than what is bought beyond the use (only that can spoil month
+after month).
 """
 
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date, timedelta
 from decimal import Decimal
+from statistics import median
 from uuid import UUID
 
 from app.analytics.drafts import Draft, dmy, rub
@@ -130,6 +137,136 @@ def detect(facts: Facts, usage: Usage, m1_rows: list[M1Row], cfg: EngineParams =
                 if short >= cfg.M6_SHORT_DAYS and at_risk >= cfg.M6_REVENUE_AT_RISK:
                     drafts.append(_shortage(facts, o, info.name, code, unit, zero, short, at_risk))
                     continue
+    return drafts + detect_overstock(facts, usage, m1_rows, cfg)
+
+
+@dataclass
+class Overstock:
+    restaurant: UUID
+    product: UUID
+    start: date
+    end: date
+    snapshots: int
+    stock: Decimal  # the median of the snapshots
+    daily_need: Decimal
+    shelf_life: int
+    price: Decimal  # ₽ per base unit, the window's purchases
+    over_bought: Decimal  # bought in the window beyond the use, base units
+
+    @property
+    def cover_days(self) -> Decimal:
+        return self.stock / self.daily_need
+
+    @property
+    def excess(self) -> Decimal:
+        return max(self.stock - self.daily_need * self.shelf_life, Decimal(0))
+
+    @property
+    def effect(self) -> Decimal:
+        days = (self.end - self.start).days + 1
+        spoils = self.excess * 30 / self.shelf_life
+        cap = max(self.over_bought, Decimal(0)) * 30 / days
+        return (min(spoils, cap) * self.price).quantize(Decimal(1))
+
+
+def overstocks(
+    facts: Facts, usage: Usage, m1_rows: list[M1Row], cfg: EngineParams = DEFAULT
+) -> list[Overstock]:
+    snapshots: dict[tuple[UUID, UUID], dict[date, Decimal]] = defaultdict(dict)
+    for st in facts.stock:
+        snapshots[(st.restaurant, st.product)][st.day] = st.qty
+    loss: dict[tuple[UUID, UUID], Decimal] = {}
+    for r in sorted(m1_rows, key=lambda r: r.end):
+        loss[(r.restaurant, r.product)] = min(max(r.share, Decimal(0)), cfg.M6_MAX_LOSS)
+    out = []
+    for key, by_day in snapshots.items():
+        restaurant, product = key
+        info = facts.products.get(product)
+        if info is None or info.is_semi or not info.shelf_life_days:
+            continue
+        end = max(by_day)
+        start = end - timedelta(days=cfg.M6_HISTORY_DAYS - 1)
+        window = [q for d, q in by_day.items() if start <= d <= end]
+        if len(window) < cfg.M6_OVERSTOCK_MIN_DAYS:
+            continue
+        used = usage.total(restaurant, product, start, end) * (1 + loss.get(key, Decimal(0)))
+        daily = used / cfg.M6_HISTORY_DAYS
+        bought = [
+            rc
+            for rc in facts.receipts
+            if rc.restaurant == restaurant and rc.product == product and rc.qty > 0
+        ]
+        recent = [rc for rc in bought if start <= rc.day <= end]
+        qty = sum((rc.qty for rc in recent), Decimal(0))
+        if daily <= 0 or qty <= 0:
+            continue
+        price = sum((rc.amount for rc in recent), Decimal(0)) / qty
+        out.append(
+            Overstock(
+                restaurant,
+                product,
+                start,
+                end,
+                len(window),
+                Decimal(median(window)),
+                daily,
+                info.shelf_life_days,
+                price,
+                qty - used,
+            )
+        )
+    return out
+
+
+def detect_overstock(
+    facts: Facts, usage: Usage, m1_rows: list[M1Row], cfg: EngineParams = DEFAULT
+) -> list[Draft]:
+    drafts = []
+    for o in overstocks(facts, usage, m1_rows, cfg):
+        if o.cover_days < cfg.M6_OVERSTOCK_TIMES * o.shelf_life or o.effect < cfg.M6_MATERIALITY_RUB_MONTH:
+            continue
+        info = facts.products[o.product]
+        code = facts.restaurants[o.restaurant]
+        unit = UNIT.get(info.unit, info.unit)
+        cover = o.cover_days.quantize(Decimal(1))
+        drafts.append(
+            Draft(
+                key=f"M6:{code}:{info.code}:overstock",
+                module="M6",
+                kind="problem",
+                process="planning",
+                restaurant=o.restaurant,
+                title=f"Затоваривание: {info.name}",
+                headline=(
+                    f"За {dmy(o.start)}–{dmy(o.end)} обычный остаток {info.name.lower()} — "
+                    f"{o.stock.quantize(Decimal('0.1'))} {unit}, это ≈ {cover} дн. расхода "
+                    f"при сроке годности {o.shelf_life} дн. "
+                    f"Сверх срока лежит {o.excess.quantize(Decimal('0.1'))} {unit} — "
+                    f"риск порчи ≈ {rub(o.effect)} в месяц"
+                ),
+                effect_rub_month=o.effect,
+                effect_note="риск: запас сверх срока годности",
+                confidence="medium",
+                period_from=o.start,
+                period_to=o.end,
+                actions=[
+                    f"Заказывать {info.name.lower()} не больше чем на {o.shelf_life} дн. расхода",
+                    "Пересчитать минимальный остаток и объем заказа",
+                ],
+                evidence={
+                    "kind": "overstock",
+                    "product": info.code,
+                    "snapshots": o.snapshots,
+                    "stock": str(o.stock.quantize(Decimal("0.001"))),
+                    "daily_need": str(o.daily_need.quantize(Decimal("0.001"))),
+                    "cover_days": str(o.cover_days.quantize(Decimal("0.1"))),
+                    "shelf_life_days": o.shelf_life,
+                    "excess": str(o.excess.quantize(Decimal("0.001"))),
+                    "price": str(o.price.quantize(Decimal("0.01"))),
+                    "over_bought": str(o.over_bought.quantize(Decimal("0.001"))),
+                },
+            )
+        )
     return drafts
 
 

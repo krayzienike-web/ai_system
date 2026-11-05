@@ -118,6 +118,14 @@ SEMI = {"P17": ("Соус томатный (п/ф)", "Заготовки", "kg",
 # Goods moved between restaurants: every Monday R05 sends R06 flour (sender, receiver, product, qty).
 TRANSFERS = [("R05", "R06", "P05", 5.0)]
 
+# Stage 6.5: the exports «Остатки на дату» (the last weeks), «Удаления и отмены» and the cashier of a sale.
+STOCK_DAYS = 28  # «Остатки на дату» covers the last four weeks
+OVERSTOCK_FROM = date(2026, 9, 28)  # R06 orders cream for 12 days while it keeps 7
+# Cashiers by personnel number, as r_keeper can export them: no names in the demo (docs/09, personal data).
+CASHIERS = ["таб. 101", "таб. 102", "таб. 103", "таб. 104", "таб. 105", "таб. 106"]
+SUSPECT_VOIDS = ("R08", "таб. 103")  # removes dishes after the check is printed, much more than the others
+SUSPECT_DISCOUNTS = ("R05", "таб. 104")  # gives big discounts much more often than the others
+
 PERISHABLE_WRITE_OFF = {"P10": 0.05, "P16": 0.04, "P06": 0.02, "P04": 0.01, "P12": 0.04}
 
 
@@ -210,6 +218,9 @@ PLANTED_CAUSES = {
     "r10-missing-invoice": "export_gap",
     "r12-paper-counts": "paper_count",
     "r08-count-overdue": "count_skipped",
+    "r06-cream-overstock": "overordering",
+    "r08-voids-after-print": "theft",
+    "r05-cashier-discounts": "theft",
 }
 
 
@@ -424,13 +435,47 @@ def generate(seed: int = 42, restaurants: int = 12, start: date = START, end: da
                         ]
                     )
 
+    planted(
+        id="r06-cream-overstock",
+        restaurant="R06",
+        module="M6",
+        product="P04",
+        kind="problem",
+        description="С 28.09 сливки заказывают на 12 дней при сроке годности 7: запас переживает срок",
+    )
+    planted(
+        id="r08-voids-after-print",
+        restaurant="R08",
+        module="M8",
+        cashier=SUSPECT_VOIDS[1],
+        kind="problem",
+        description="Кассир удаляет позиции после печати пречека в разы чаще остальных",
+    )
+    planted(
+        id="r05-cashier-discounts",
+        restaurant="R05",
+        module="M8",
+        cashier=SUSPECT_DISCOUNTS[1],
+        kind="problem",
+        description="Кассир дает скидки 15% к половине своих продаж — в разы чаще остальных",
+    )
+    # The stage 6.5 data draw from their own generator: the planted story above stays byte for byte.
+    till = random.Random(seed + 65)  # noqa: S311  (a simulation)
+
     # ------------------------------------------------------------ restaurants
     for code, name, _city, size in chosen:
         sales_rows: list[list[Any]] = []
         receipts_rows: list[list[Any]] = []
         write_off_rows: list[list[Any]] = []
         count_rows: list[list[Any]] = []
+        stock_rows: list[list[Any]] = []
+        void_rows: list[list[Any]] = []
         days = _days(start, end)
+        staff = till.sample(CASHIERS, 3)
+        if code == SUSPECT_VOIDS[0] and SUSPECT_VOIDS[1] not in staff:
+            staff[0] = SUSPECT_VOIDS[1]
+        if code == SUSPECT_DISCOUNTS[0] and SUSPECT_DISCOUNTS[1] not in staff:
+            staff[0] = SUSPECT_DISCOUNTS[1]
         usage_theory: dict[str, dict[date, float]] = defaultdict(dict)
 
         for day in days:
@@ -444,11 +489,51 @@ def generate(seed: int = 42, restaurants: int = 12, start: date = START, end: da
                     continue
                 gross = Decimal(qty * price)
                 discount = _q(float(gross) * rnd.choice((0, 0, 0.03, 0.05)), "0.01")
-                sales_rows.append([day, m_code, m_name, qty, gross - discount, discount])
+                cashier = till.choice(staff)
+                if (code, cashier) == SUSPECT_DISCOUNTS and till.random() < 0.5:
+                    discount = _q(float(gross) * 0.15, "0.01")
+                sales_rows.append([day, m_code, m_name, qty, gross - discount, discount, cashier])
                 for p, g in recipe.items():
                     # A semi-finished product is used up as its raw products.
                     for raw, share in SEMI[p][4].items() if p in SEMI else ((p, 1.0),):
                         usage_theory[raw][day] = usage_theory[raw].get(day, 0) + qty * g * share
+
+        # The till's voids: a few a day, rarely after the check is printed — except one cashier of R08.
+        for day in days:
+            for _ in range(till.choice((0, 1, 1, 2, 3))):
+                m_code, m_name, _cat, price, _base, _recipe = till.choice(MENU)
+                who = till.choice(staff)
+                printed = till.random() < 0.08
+                void_rows.append(
+                    [
+                        day,
+                        f"{code}-{day:%m%d}-{till.randint(100, 999)}",
+                        m_code,
+                        m_name,
+                        1,
+                        price,
+                        who,
+                        "да" if printed else "нет",
+                        "гость передумал" if printed else "ошибка ввода",
+                    ]
+                )
+            if code == SUSPECT_VOIDS[0] and SUSPECT_VOIDS[1] in staff:
+                for _ in range(till.choice((1, 2, 2, 3))):
+                    m_code, m_name, _cat, price, _base, _recipe = till.choice(MENU)
+                    printed = till.random() < 0.7
+                    void_rows.append(
+                        [
+                            day,
+                            f"{code}-{day:%m%d}-{till.randint(100, 999)}",
+                            m_code,
+                            m_name,
+                            1,
+                            price,
+                            SUSPECT_VOIDS[1],
+                            "да" if printed else "нет",
+                            "гость передумал",
+                        ]
+                    )
 
         # Stock simulation per product: the shelf (real) and the books (theory).
         for p_code, p_name, category, unit, _shelf, base_price, supplier, loss in PRODUCTS:
@@ -479,11 +564,18 @@ def generate(seed: int = 42, restaurants: int = 12, start: date = START, end: da
                         need = avg * 1.15
                     else:
                         need = avg * horizon * 1.1 - shelf_stock
+                    overstock = code == "R06" and p_code == "P04" and day >= OVERSTOCK_FROM
+                    if overstock:
+                        need = avg * 16 * 1.1 - shelf_stock  # ordered for 16 days, keeps 7 (stage 6.5)
+                        # The price is drawn on every delivery day, as the old order did (it always needed
+                        # cream then): the shared generator keeps its sequence for the other restaurants.
+                        drawn = rnd.uniform(-0.02, 0.02)
                     if code == "R04" and p_code == "P15" and day == SHORT_DELIVERY:
                         need *= 0.55  # a short delivery: the pasta runs out before the next one
                     if need > 0:
                         delivered = _q(need) if unit != "pcs" else _q(round(need), "1")
-                        sup, unit_price = supplier, base_price * (1 + rnd.uniform(-0.02, 0.02))
+                        sup = supplier
+                        unit_price = base_price * (1 + (drawn if overstock else rnd.uniform(-0.02, 0.02)))
                         if code == "R02" and p_code == "P08" and day >= date(2026, 7, 27):
                             sup, unit_price = "S8", base_price * 1.11
                         if code == "R05" and p_code == "P04" and day >= date(2026, 8, 1):
@@ -529,6 +621,9 @@ def generate(seed: int = 42, restaurants: int = 12, start: date = START, end: da
                 if code == "R07" and p_code == "P12" and day.weekday() in (0, 1):
                     rate = 0.25
                 spoiled = min(max(shelf_stock, 0.0), avg * rate * rnd.uniform(0.5, 1.5))
+                if code == "R06" and p_code == "P04" and day >= OVERSTOCK_FROM:
+                    # What outlives its 7 days spoils (no random draw: the shared sequence stays as it was)
+                    spoiled += max(shelf_stock - spoiled - avg * 7, 0.0) / 7
                 if code == "R01":
                     # Closing shortages: half of the spoilage is written off right before a count.
                     pending_write_off += spoiled * 0.6
@@ -544,6 +639,9 @@ def generate(seed: int = 42, restaurants: int = 12, start: date = START, end: da
 
                 if shelf_stock < 0:
                     shelf_stock = book_stock = 0.0  # emergency purchase; not part of the story
+
+                if (end - day).days < STOCK_DAYS:  # «Остатки на дату»: the books at the end of the day
+                    stock_rows.append([day, p_code, p_name, _q(max(book_stock, 0.0)), unit_title[unit]])
 
                 if day in count_days and not (code == "R08" and day == count_days[-1]):  # R08 skipped it
                     actual = shelf_stock
@@ -561,13 +659,13 @@ def generate(seed: int = 42, restaurants: int = 12, start: date = START, end: da
             total_rev = sum((r[4] for r in sales_rows), Decimal(0))
             net.files[f"sales_{code}.xlsx"] = _pretty_xlsx(
                 f"Продажи блюд · {name} · {start:%d.%m.%Y}–{end:%d.%m.%Y}",
-                ["Дата", "Код", "Блюдо", "Кол-во", "Сумма", "Скидка"],
+                ["Дата", "Код", "Блюдо", "Кол-во", "Сумма", "Скидка", "Кассир"],
                 sales_rows,
-                ["Итого", "", "", total_qty, total_rev, ""],
+                ["Итого", "", "", total_qty, total_rev, "", ""],
             )
         else:
             net.files[f"sales_{code}.csv"] = _csv(
-                ["Дата", "Код блюда", "Блюдо", "Количество", "Выручка", "Скидка"], sales_rows
+                ["Дата", "Код блюда", "Блюдо", "Количество", "Выручка", "Скидка", "Кассир"], sales_rows
             )
         receipts_header = [
             "Дата",
@@ -614,6 +712,23 @@ def generate(seed: int = 42, restaurants: int = 12, start: date = START, end: da
         net.files[f"inventory_counts_{code}.csv"] = _csv(
             ["Дата", "Код товара", "Товар", "Учетный остаток", "Фактический остаток", "Ед. изм."], count_rows
         )
+        net.files[f"stock_balances_{code}.csv"] = _csv(
+            ["На дату", "Код товара", "Товар", "Остаток", "Ед. изм."], stock_rows
+        )
+        net.files[f"voids_{code}.csv"] = _csv(
+            [
+                "Дата",
+                "№ чека",
+                "Код блюда",
+                "Блюдо",
+                "Количество",
+                "Сумма",
+                "Кассир",
+                "После пречека",
+                "Причина",
+            ],
+            void_rows,
+        )
 
     net.files["anomalies.json"] = json.dumps(
         {
@@ -631,7 +746,7 @@ def generate(seed: int = 42, restaurants: int = 12, start: date = START, end: da
 
 # Order in which the files are loaded: reference data first, then each restaurant's facts.
 REFERENCE_ORDER = ("restaurants", "products", "suppliers", "menu_items", "recipes")
-FACT_ORDER = ("sales", "receipts", "transfers", "write_offs", "inventory_counts")
+FACT_ORDER = ("sales", "receipts", "transfers", "write_offs", "inventory_counts", "stock_balances", "voids")
 
 
 def load_plan(net: DemoNetwork) -> list[tuple[str, str | None, str]]:

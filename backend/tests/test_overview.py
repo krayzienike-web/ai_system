@@ -182,7 +182,8 @@ def test_overview_screens_follow_the_access_rules(
     findings = client.get("/api/findings", headers=hq).json()
     open_problems = [f for f in findings if f["status"] != "resolved" and f["kind"] == "problem"]
     assert D(net["losses"]) == sum(D(f["effect_rub_month"] or 0) for f in open_problems)
-    assert net["ranking"][0]["code"] == "R01" and net["ranking"][0]["top_problem"].endswith("Сыр Моцарелла")
+    # R05's cashier with discounts far above the others' (M8) is the costliest since stage 6.5
+    assert net["ranking"][0]["code"] == "R05" and net["ranking"][0]["top_problem"].endswith("таб. 104")
     assert net["checks_waiting"] == 1 and net["completed_checks"] == 2 and net["overdue_tasks"] == 2
     assert D(net["confirmed"]) > 0  # the rocket check worked
     assert len(net["trend"]["labels"]) >= 2 and net["trend"]["labels"][-1] == "12.10"
@@ -266,7 +267,9 @@ def test_checks_are_drafted_proposed_and_rolled_out(
     )
     foreign = login(client, "admin@b.ru")
     findings = client.get("/api/findings", headers=hq).json()
-    cream = next(f for f in findings if f["title"].endswith("Сливки 33%"))
+    cream = next(
+        f for f in findings if f["title"].endswith("Сливки 33%") and "Затоваривание" not in f["title"]
+    )
     draft = client.get("/api/checks/draft", headers=analyst, params={"finding_id": cream["id"]}).json()
     assert draft["test"]["code"] == "R05" and draft["default_weeks"] == 4
     assert sum(c["suggested"] for c in draft["candidates"]) == 3

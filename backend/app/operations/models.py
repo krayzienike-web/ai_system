@@ -4,7 +4,7 @@ from datetime import date
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import CheckConstraint, Date, ForeignKey, Index, Numeric, String
+from sqlalchemy import Boolean, CheckConstraint, Date, ForeignKey, Index, Numeric, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.models import Base, IdMixin, TenantMixin
@@ -33,6 +33,7 @@ class Sale(_Fact, Base):
     qty: Mapped[Decimal] = mapped_column(QTY)
     revenue: Mapped[Decimal] = mapped_column(MONEY)
     discount: Mapped[Decimal] = mapped_column(MONEY, default=Decimal(0))
+    cashier: Mapped[str | None] = mapped_column(String(100))  # stage 6.5: discounts by cashier
 
 
 class Receipt(_Fact, Base):
@@ -98,3 +99,38 @@ class InventoryCount(_Fact, Base):
     product_id: Mapped[UUID] = mapped_column(ForeignKey("products.id", ondelete="RESTRICT"))
     book_qty: Mapped[Decimal | None] = mapped_column(QTY)
     actual_qty: Mapped[Decimal] = mapped_column(QTY)
+
+
+class StockBalance(_Fact, Base):
+    """«Остатки на дату» (iiko, stage 6.5): the books' stock of a product at the end of a day. Between counts
+    it says what lies on the shelves — for overstock (M6) and a closer stock-out forecast."""
+
+    __tablename__ = "stock_balances"
+    __table_args__ = (
+        Index("ix_stock_balances_restaurant_day", "restaurant_id", "day"),
+        Index("ix_stock_balances_tenant_day", "tenant_id", "day"),
+        CheckConstraint("qty >= 0", name="qty_nonnegative"),
+    )
+
+    product_id: Mapped[UUID] = mapped_column(ForeignKey("products.id", ondelete="RESTRICT"))
+    qty: Mapped[Decimal] = mapped_column(QTY)
+
+
+class Void(_Fact, Base):
+    """«Удаления и отмены» (r_keeper, stage 6.5): a dish removed from a check or a check cancelled — by whom,
+    before or after the check was printed. Many after printing are a risk of abuse at the till."""
+
+    __tablename__ = "voids"
+    __table_args__ = (
+        Index("ix_voids_restaurant_day", "restaurant_id", "day"),
+        Index("ix_voids_tenant_day", "tenant_id", "day"),
+        CheckConstraint("amount >= 0", name="amount_nonnegative"),
+    )
+
+    check_no: Mapped[str | None] = mapped_column(String(100))
+    menu_item_id: Mapped[UUID | None] = mapped_column(ForeignKey("menu_items.id", ondelete="RESTRICT"))
+    qty: Mapped[Decimal] = mapped_column(QTY, default=Decimal(1))
+    amount: Mapped[Decimal] = mapped_column(MONEY)
+    cashier: Mapped[str | None] = mapped_column(String(100))
+    after_print: Mapped[bool] = mapped_column(Boolean, default=False)
+    reason: Mapped[str | None] = mapped_column(String(200))

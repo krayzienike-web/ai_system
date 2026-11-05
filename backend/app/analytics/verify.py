@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.analytics import params
 from app.analytics.costs import CostBook
-from app.analytics.drafts import pct, rub
+from app.analytics.drafts import pct, per_month, rub
 from app.analytics.facts import ReceiptRow
 from app.analytics.stats import med
 from app.catalog.models import ContractPrice, MenuItem, Product, RecipeLine, Supplier
@@ -25,7 +25,7 @@ from app.catalog.recipes import Line, explode, lines_on
 from app.imports.models import ImportBatch
 from app.insights.models import Finding
 from app.norms.service import load_norms
-from app.operations.models import InventoryCount, Receipt, Sale, Transfer, WriteOff
+from app.operations.models import InventoryCount, Receipt, Sale, StockBalance, Transfer, Void, WriteOff
 from app.tenancy.models import Restaurant
 
 UNITS = {"kg": "кг", "l": "л", "pcs": "шт"}
@@ -49,8 +49,12 @@ def verify(session: Session, finding: Finding) -> dict[str, Any]:
         return _m3_growth(session, finding)
     if finding.module == "M3" and (finding.evidence or {}).get("kind") == "contract":
         return _m3_contract(session, finding)
+    if finding.module == "M6" and (finding.evidence or {}).get("kind") == "overstock":
+        return _m6_overstock(session, finding)
     if finding.module == "M6" and finding.restaurant_id is not None:
         return _m6(session, finding)
+    if finding.module == "M8" and finding.restaurant_id is not None:
+        return _m8(session, finding)
     if finding.module == "M7" and (finding.evidence or {}).get("kind") == "negative":
         return _m7_negative(session, finding)
     if finding.module == "M4" and finding.restaurant_id is not None:
@@ -2069,5 +2073,239 @@ def _m6(session: Session, f: Finding) -> dict[str, Any]:
         "interpretation": [
             "Это прогноз: остаток посчитан по документам, расход — по прошлым неделям.",
             "Если поставку можно ускорить или взять товар у соседнего ресторана — сделайте это заранее.",
+        ],
+    }
+
+
+def _m6_overstock(session: Session, f: Finding) -> dict[str, Any]:
+    """Overstock recomputed from «Остатки на дату», the sales by recipes and the purchases of the window."""
+    ev = f.evidence or {}
+    cfg = params.load(session)
+    restaurant = session.get(Restaurant, f.restaurant_id)
+    product = session.execute(select(Product).where(Product.code == ev["product"])).scalar_one_or_none()
+    if restaurant is None or product is None or not product.shelf_life_days or not f.period_from:
+        return {"module": "M6", "supported": False, "note": "Ресторана, товара или срока годности больше нет"}
+    start, end = f.period_from, f.period_to or f.period_from
+    shelf = product.shelf_life_days
+    snapshots = list(
+        session.execute(
+            select(StockBalance.day, StockBalance.qty)
+            .where(
+                StockBalance.restaurant_id == restaurant.id,
+                StockBalance.product_id == product.id,
+                StockBalance.day >= start,
+                StockBalance.day <= end,
+            )
+            .order_by(StockBalance.day)
+        ).all()
+    )
+    lines = [
+        Line(r.menu_item_id or r.semi_product_id, r.product_id, r.gross_qty, r.valid_from)  # type: ignore[arg-type]
+        for r in session.execute(select(RecipeLine)).scalars()
+    ]
+    days = (end - start).days + 1
+    used = sum(_daily_use(session, restaurant.id, product, start, end, lines).values(), Decimal(0))
+    bought = session.execute(
+        select(func.coalesce(func.sum(Receipt.qty), 0), func.coalesce(func.sum(Receipt.amount), 0)).where(
+            Receipt.restaurant_id == restaurant.id,
+            Receipt.product_id == product.id,
+            Receipt.day >= start,
+            Receipt.day <= end,
+            Receipt.qty > 0,
+        )
+    ).one()
+    qty = sorted(q for _, q in snapshots)
+    typical = med(qty) if qty else Decimal(0)
+    by_recipes = used / days if days else Decimal(0)
+    need = Decimal(
+        ev["daily_need"]
+    )  # with the usual unexplained use (M1): the engine's figure, shown as such
+    price = Decimal(bought[1]) / Decimal(bought[0]) if bought[0] else Decimal(ev["price"])
+    cover = typical / need if need else Decimal(0)
+    excess = max(typical - need * shelf, Decimal(0))
+    over_bought = max(Decimal(bought[0]) - need * days, Decimal(0))
+    effect = (min(excess * 30 / shelf, over_bought * 30 / days) * price).quantize(Decimal(1))
+    # The engine's daily need is stored rounded to 0.001: the recomputation may differ by a ruble or so
+    close = f.effect_rub_month is not None and abs(effect - f.effect_rub_month) <= max(
+        Decimal(1), f.effect_rub_month / 100
+    )
+    unit = UNITS.get(product.base_unit, product.base_unit)
+    return {
+        "module": "M6",
+        "supported": True,
+        "object": product.name,
+        "restaurant": restaurant.name,
+        "period": [start.isoformat(), end.isoformat()],
+        "formula": "Запас сверх срока = медиана остатков − расход в день × срок годности; "
+        "риск в месяц = запас сверх срока × цена × 30 / срок годности, "
+        "но не больше купленного сверх расхода",
+        "steps": [
+            {
+                "id": "stock",
+                "label": f"Остатки на дату ({len(snapshots)} дн.)",
+                "value": _q(typical),
+                "unit": unit,
+                "rows": [{"day": d.isoformat(), "qty": _q(q)} for d, q in snapshots],
+            },
+            {
+                "id": "need",
+                "label": "Расход в день по техкартам (без обычных потерь)",
+                "value": _q(by_recipes),
+                "unit": unit,
+            },
+        ],
+        "result": [
+            {"label": "Расход в день с обычными потерями", "value": _q(need), "unit": unit},
+            {"label": "Остатка хватает", "value": _q(cover, Decimal("0.1")), "unit": "дн."},
+            {"label": "Сверх срока годности", "value": _q(excess), "unit": unit},
+            {"label": f"Куплено больше расхода за {days} дн.", "value": _q(over_bought), "unit": unit},
+            {"label": "Риск в месяц", "value": rub(effect), "unit": ""},
+        ],
+        "rules": [
+            {
+                "rule": f"Остатка хватает дольше {cfg.M6_OVERSTOCK_TIMES} × срок годности ({shelf} дн.)",
+                "value": _q(cover, Decimal("0.1")),
+                "threshold": _q(cfg.M6_OVERSTOCK_TIMES * shelf, Decimal("0.1")),
+                "passed": cover >= cfg.M6_OVERSTOCK_TIMES * shelf,
+            }
+        ],
+        "checks": [
+            {
+                "check": "Медиана остатков совпадает с тем, что посчитал движок",
+                "ok": abs(typical - Decimal(ev["stock"])) <= Q3,
+                "note": f"движок: {ev['stock']}, пересчет: {_q(typical)}",
+            },
+            {
+                "check": "Риск в месяц совпадает с находкой",
+                "ok": close,
+                "note": f"находка: {rub(f.effect_rub_month)}, пересчет: {rub(effect)}"
+                if f.effect_rub_month is not None
+                else "",
+            },
+        ],
+        "interpretation": [
+            "Остатки — из учетной системы: проверьте полку, лежит ли товар на самом деле.",
+            "Если поставщик возит только крупными партиями — договоритесь о меньшей фасовке.",
+        ],
+    }
+
+
+def _m8(session: Session, f: Finding) -> dict[str, Any]:
+    """The till recomputed from the stored rows: removals after printing or discounts of the cashier and of
+    every cashier of the network over the finding's period."""
+    ev = f.evidence or {}
+    cfg = params.load(session)
+    restaurant = session.get(Restaurant, f.restaurant_id)
+    if restaurant is None or not f.period_from or not f.period_to:
+        return {"module": "M8", "supported": False, "note": "Ресторана больше нет"}
+    start, end, cashier = f.period_from, f.period_to, ev.get("cashier")
+    if ev.get("kind") == "voids":
+        rows = session.execute(
+            select(Void.restaurant_id, Void.cashier, func.count(), func.sum(Void.amount))
+            .where(Void.day >= start, Void.day <= end, Void.after_print.is_(True), Void.cashier.is_not(None))
+            .group_by(Void.restaurant_id, Void.cashier)
+        ).all()
+        sums = {(r, c): (int(n), Decimal(a)) for r, c, n, a in rows}
+        for r, c in session.execute(
+            select(Sale.restaurant_id, Sale.cashier)
+            .where(Sale.day >= start, Sale.day <= end, Sale.cashier.is_not(None))
+            .distinct()
+        ).all():
+            sums.setdefault((r, c), (0, Decimal(0)))
+        count, amount = sums.get((restaurant.id, cashier), (0, Decimal(0)))
+        typical = med([a for _, a in sums.values()]) if sums else Decimal(0)
+        effect = per_month(max(amount - typical, Decimal(0)), start, end)
+        rules = [
+            {
+                "rule": f"Удалений после пречека не меньше {cfg.M8_VOIDS_MIN_COUNT}",
+                "value": str(count),
+                "threshold": str(cfg.M8_VOIDS_MIN_COUNT),
+                "passed": count >= cfg.M8_VOIDS_MIN_COUNT,
+            },
+            {
+                "rule": f"Сумма больше обычной в {cfg.M8_VOIDS_TIMES} раза",
+                "value": rub(amount),
+                "threshold": rub(cfg.M8_VOIDS_TIMES * max(typical, Decimal(1))),
+                "passed": amount >= cfg.M8_VOIDS_TIMES * max(typical, Decimal(1)),
+            },
+        ]
+        result = [
+            {"label": "Удалено после пречека", "value": rub(amount), "unit": ""},
+            {"label": "У обычного кассира сети", "value": rub(typical), "unit": ""},
+        ]
+        checks = [
+            {
+                "check": "Сумма удалений совпадает с тем, что посчитал движок",
+                "ok": _q(amount, Decimal("0.01")) == ev["amount"],
+                "note": f"движок: {ev['amount']}, пересчет: {_q(amount, Decimal('0.01'))}",
+            }
+        ]
+        formula = "Сверх обычного = удаления кассира − медиана кассиров сети, в пересчете на месяц"
+    else:
+        group = (Sale.restaurant_id, Sale.cashier) if cashier else (Sale.restaurant_id,)
+        sold = session.execute(
+            select(*group, func.sum(Sale.revenue), func.sum(Sale.discount))
+            .where(Sale.day >= start, Sale.day <= end, *([Sale.cashier.is_not(None)] if cashier else []))
+            .group_by(*group)
+        ).all()
+        shares: dict[tuple[Any, ...], tuple[Decimal, Decimal]] = {}
+        for row in sold:
+            revenue, discount = Decimal(row[-2]), Decimal(row[-1])
+            gross = revenue + discount
+            if gross > 0:
+                shares[tuple(row[:-2])] = (gross, discount / gross)
+        me_key = (restaurant.id, cashier) if cashier else (restaurant.id,)
+        gross, share = shares.get(me_key, (Decimal(0), Decimal(0)))
+        others = [s for k, (_, s) in shares.items() if cashier or k != me_key]
+        typical = med(others) if others else Decimal(0)
+        effect = per_month(gross * max(share - typical, Decimal(0)), start, end)
+        rules = [
+            {
+                "rule": f"Доля скидок выше обычной в {cfg.M8_DISCOUNT_TIMES} раза",
+                "value": pct(share),
+                "threshold": pct(cfg.M8_DISCOUNT_TIMES * typical),
+                "passed": share >= cfg.M8_DISCOUNT_TIMES * typical,
+            },
+            {
+                "rule": f"…и больше обычной на {pct(cfg.M8_DISCOUNT_EXCESS)}",
+                "value": pct(share - typical),
+                "threshold": pct(cfg.M8_DISCOUNT_EXCESS),
+                "passed": share - typical >= cfg.M8_DISCOUNT_EXCESS,
+            },
+        ]
+        result = [
+            {"label": "Продажи до скидок", "value": rub(gross), "unit": ""},
+            {"label": "Скидки от продаж", "value": pct(share), "unit": ""},
+            {"label": "Обычно", "value": pct(typical), "unit": ""},
+        ]
+        checks = [
+            {
+                "check": "Доля скидок совпадает с тем, что посчитал движок",
+                "ok": _q(share, Decimal("0.0001")) == ev["share"],
+                "note": f"движок: {ev['share']}, пересчет: {_q(share, Decimal('0.0001'))}",
+            }
+        ]
+        formula = "Сверх обычного = продажи до скидок × (доля скидок − обычная доля), в пересчете на месяц"
+    checks.append(
+        {
+            "check": "Сумма в месяц совпадает с находкой",
+            "ok": f.effect_rub_month is not None and effect == f.effect_rub_month,
+            "note": f"пересчет: {rub(effect)}",
+        }
+    )
+    return {
+        "module": "M8",
+        "supported": True,
+        "object": cashier or restaurant.name,
+        "restaurant": restaurant.name,
+        "period": [start.isoformat(), end.isoformat()],
+        "formula": formula,
+        "steps": [],
+        "result": [*result, {"label": "Сверх обычного в месяц", "value": rub(effect), "unit": ""}],
+        "rules": rules,
+        "checks": checks,
+        "interpretation": [
+            "Это риск, а не доказанная кража: разберите чеки с кассиром и менеджером смены.",
+            "Кассиры названы кодом из r_keeper; ФИО по коду знает ресторан.",
         ],
     }

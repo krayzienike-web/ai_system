@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.catalog.models import ContractPrice, MenuItem, Product, RecipeLine, Supplier
 from app.catalog.recipes import Line
-from app.operations.models import InventoryCount, Receipt, Sale, Transfer, WriteOff
+from app.operations.models import InventoryCount, Receipt, Sale, StockBalance, Transfer, Void, WriteOff
 from app.tenancy.models import Restaurant
 
 
@@ -39,6 +39,8 @@ class SaleRow:
     menu_item: UUID
     qty: Decimal
     revenue: Decimal
+    discount: Decimal = Decimal(0)
+    cashier: str | None = None  # stage 6.5: the till's discounts by cashier
 
 
 @dataclass(frozen=True)
@@ -79,6 +81,27 @@ class CountRow:
 
 
 @dataclass(frozen=True)
+class StockRow:
+    """«Остатки на дату»: the books' stock at the end of a day (stage 6.5)."""
+
+    restaurant: UUID
+    day: date
+    product: UUID
+    qty: Decimal
+
+
+@dataclass(frozen=True)
+class VoidRow:
+    """«Удаления и отмены»: a removed dish or a cancelled check at the till (stage 6.5)."""
+
+    restaurant: UUID
+    day: date
+    amount: Decimal
+    cashier: str | None
+    after_print: bool
+
+
+@dataclass(frozen=True)
 class ContractRow:
     supplier: UUID
     product: UUID
@@ -104,6 +127,8 @@ class Facts:
     write_offs: list[WriteOffRow] = field(default_factory=list)
     counts: list[CountRow] = field(default_factory=list)
     contracts: list[ContractRow] = field(default_factory=list)
+    stock: list[StockRow] = field(default_factory=list)
+    voids: list[VoidRow] = field(default_factory=list)
 
     def until(self, day: date) -> "Facts":
         """The facts as they were known at the end of `day`: for recomputing the past (the demo's history)."""
@@ -115,6 +140,8 @@ class Facts:
             write_offs=[r for r in self.write_offs if r.day <= day],
             counts=[r for r in self.counts if r.day <= day],
             contracts=[c for c in self.contracts if c.valid_from <= day],
+            stock=[r for r in self.stock if r.day <= day],
+            voids=[r for r in self.voids if r.day <= day],
             recipe_lines=[r for r in self.recipe_lines if r.valid_from <= day],
         )
 
@@ -135,7 +162,15 @@ def load_facts(session: Session) -> Facts:
     f.sales = [
         SaleRow(*row)
         for row in session.execute(
-            select(Sale.restaurant_id, Sale.day, Sale.menu_item_id, Sale.qty, Sale.revenue)
+            select(
+                Sale.restaurant_id,
+                Sale.day,
+                Sale.menu_item_id,
+                Sale.qty,
+                Sale.revenue,
+                Sale.discount,
+                Sale.cashier,
+            )
         ).all()
     ]
     f.receipts = [
@@ -193,6 +228,18 @@ def load_facts(session: Session) -> Facts:
                 ContractPrice.valid_from,
                 ContractPrice.valid_to,
             )
+        ).all()
+    ]
+    f.stock = [
+        StockRow(*row)
+        for row in session.execute(
+            select(StockBalance.restaurant_id, StockBalance.day, StockBalance.product_id, StockBalance.qty)
+        ).all()
+    ]
+    f.voids = [
+        VoidRow(*row)
+        for row in session.execute(
+            select(Void.restaurant_id, Void.day, Void.amount, Void.cashier, Void.after_print)
         ).all()
     ]
     return f

@@ -20,19 +20,30 @@ from app.imports.reader import detect_template, norm_header, read_table
 from app.imports.templates import TEMPLATES, Scope, Template
 from app.imports.validate import Lookups, Ref, Result, validate
 from app.norms.service import load_norms
-from app.operations.models import InventoryCount, Receipt, Sale, Transfer, WriteOff
+from app.operations.models import InventoryCount, Receipt, Sale, StockBalance, Transfer, Void, WriteOff
 from app.tenancy.audit import audit
 from app.tenancy.context import AccessContext
 from app.tenancy.models import Restaurant
 from app.tenancy.permissions import Permission
 
 MAX_BYTES = 20 * 1024 * 1024
-FACTS: dict[str, type[Sale] | type[Receipt] | type[WriteOff] | type[InventoryCount] | type[Transfer]] = {
+FACTS: dict[
+    str,
+    type[Sale]
+    | type[Receipt]
+    | type[WriteOff]
+    | type[InventoryCount]
+    | type[Transfer]
+    | type[StockBalance]
+    | type[Void],
+] = {
     "sales": Sale,
     "transfers": Transfer,
     "receipts": Receipt,
     "write_offs": WriteOff,
     "inventory_counts": InventoryCount,
+    "stock_balances": StockBalance,
+    "voids": Void,
 }
 REFERENCE: dict[str, type[Product] | type[Supplier] | type[MenuItem] | type[Restaurant]] = {
     "products": Product,

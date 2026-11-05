@@ -46,6 +46,18 @@ CAUSES = {
     "M4:mixed_up": ["Похожие товары хранятся вместе без подписей", "При пересчете перепутали названия"],
     "M4:paper": ["Остатки переписали из учета, не пересчитывая полки"],
     "M4:overdue": ["Инвентаризацию перенесли или забыли загрузить"],
+    "M6:overstock": [
+        "Заказ рассчитан на больший расход, чем есть",
+        "Поставщик возит только крупными партиями",
+    ],
+    "M8:voids": [
+        "Блюдо удаляют из оплаченного чека, а деньги не доходят до кассы",
+        "Кассир исправляет ошибки заказа после печати пречека, а не до",
+    ],
+    "M8:discounts": [
+        "Скидки даются без карты гостя или основания",
+        "Кассир проводит скидку сотрудника или промокод чаще других",
+    ],
     "M6:shortage": ["Последняя поставка меньше обычной", "Продажи выше, чем рассчитывали при заказе"],
     "M5:rate": [
         "Партии больше, чем кухня успевает использовать до конца срока годности",
@@ -521,6 +533,27 @@ def _m6(d: Draft, facts: Facts) -> dict[str, Any]:
     ev = d.evidence
     product = next(p for p in facts.products.values() if p.code == ev["product"])
     unit = UNIT.get(product.unit, product.unit)
+    if ev["kind"] == "overstock":
+        return {
+            "summary": d.headline,
+            "causes": CAUSES["M6:overstock"],
+            "confidence_note": f"Выгрузка «Остатки на дату» за {ev['snapshots']} дн. и расход по техкартам",
+            "metric": {
+                "label": "Остатка хватает на",
+                "value": _ru(_n(ev["cover_days"], 0) or 0, "дн."),
+                "benchmark": f"срок годности {ev['shelf_life_days']} дн.",
+            },
+            "table": {
+                "title": "Откуда цифры",
+                "columns": ["Показатель", "Значение"],
+                "rows": [
+                    ["Обычный остаток (медиана)", f"{_n(ev['stock'])} {unit}"],
+                    ["Расход в день", f"{_n(ev['daily_need'], 2)} {unit}"],
+                    ["Сверх срока годности", f"{_n(ev['excess'])} {unit}"],
+                    ["Цена закупки", f"{_n(ev['price'], 0)} ₽ за {unit}"],
+                ],
+            },
+        }
     days = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"]
     return {
         "summary": d.headline,
@@ -592,6 +625,55 @@ def _m7(d: Draft, facts: Facts) -> dict[str, Any]:
     }
 
 
+def _m8(d: Draft, facts: Facts) -> dict[str, Any]:
+    ev = d.evidence
+    if ev["kind"] == "voids":
+        return {
+            "summary": d.headline,
+            "causes": CAUSES["M8:voids"],
+            "confidence_note": f"Выгрузка r_keeper «Удаления и отмены», {ev['cashiers']} кассиров сети",
+            "metric": {
+                "label": "Удалено после пречека",
+                "value": _ru(_n(ev["amount"], 0) or 0, "₽"),
+                "benchmark": f"обычный кассир {_ru(_n(ev['network_median'], 0) or 0, '₽')}",
+            },
+            "table": {
+                "title": "Откуда цифры",
+                "columns": ["Показатель", "Значение"],
+                "rows": [
+                    ["Кассир", ev["cashier"]],
+                    ["Удалений после пречека", ev["count"]],
+                    ["Сумма удалений", _n(ev["amount"], 0)],
+                    ["У обычного кассира сети", _n(ev["network_median"], 0)],
+                ],
+            },
+        }
+    me, network = _pp(ev["share"]), _pp(ev["network_share"])
+    who = "Кассир" if ev["cashier"] else "Ресторан"
+    return {
+        "summary": d.headline,
+        "causes": CAUSES["M8:discounts"],
+        "confidence_note": "Продажи r_keeper со скидками" + (" по кассирам" if ev["cashier"] else ""),
+        "metric": {
+            "label": "Скидки от продаж",
+            "value": _ru(me or 0, "%"),
+            "benchmark": f"обычно {_ru(network or 0, '%')}",
+        },
+        "scale": _scale(
+            label=f"{who}: скидки от продаж", unit="%", me=me, network=network, lower_is_better=True
+        ),
+    }
+
+
 def build(d: Draft, facts: Facts) -> dict[str, Any] | None:
-    builder = {"M1": _m1, "M2": _m2, "M3": _m3, "M4": _m4, "M5": _m5, "M6": _m6, "M7": _m7}.get(d.module)
+    builder = {
+        "M1": _m1,
+        "M2": _m2,
+        "M3": _m3,
+        "M4": _m4,
+        "M5": _m5,
+        "M6": _m6,
+        "M7": _m7,
+        "M8": _m8,
+    }.get(d.module)
     return builder(d, facts) if builder else None

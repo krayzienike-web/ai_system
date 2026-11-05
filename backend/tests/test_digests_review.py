@@ -124,7 +124,7 @@ def test_p3_builds_at_once_never_fail_and_the_later_read_wins(network: Network, 
 @pytest.mark.usefixtures("demo")
 def test_p4_invented_counts_send_the_text_to_the_rules(network: Network, owner_engine: Engine) -> None:
     admin = _ctx(network, "admin@a.ru", owner_engine)
-    lie = _texts("На столе {total} в месяц. За неделю выполнено 7 задач, в зоне риска 4 процесса.")
+    lie = _texts("На столе {total} в месяц. За неделю выполнено 97 задач, в зоне риска 40 процессов.")
     fake = FakeModel([lie, lie])
     d = _digest(owner_engine, _assemble(admin, None, write=digest_writer.writer(Gateway(fake), admin)))
     assert d.source == "rules" and len(fake.requests) == 2

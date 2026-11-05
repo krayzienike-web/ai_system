@@ -65,7 +65,13 @@ def test_same_seed_same_bytes() -> None:
 def test_files_and_plan(net: DemoNetwork) -> None:
     plan = load_plan(net)
     assert [p[0] for p in plan[:5]] == ["restaurants", "products", "suppliers", "menu_items", "recipes"]
-    assert len(plan) == 5 + 6 * 4 + 2  # + transfers of the sender R05 and the receiver R06
+    # 6 facts a restaurant (stage 6.5: + stock on a date, + the till's voids) + transfers of R05 and R06
+    assert len(plan) == 5 + 6 * 6 + 2
+    assert ("stock_balances", "R01", "stock_balances_R01.csv") in plan and (
+        "voids",
+        "R01",
+        "voids_R01.csv",
+    ) in plan
     assert ("transfers", "R05", "transfers_R05.csv") in plan
     assert ("transfers", "R06", "transfers_R06.csv") in plan
     assert "п/ф" in net.files["products.csv"].decode("utf-8-sig")  # the tomato sauce is semi-finished
@@ -124,3 +130,34 @@ def test_names_from_another_system_are_suggested_correctly(net: DemoNetwork) -> 
     for source, code in net.name_matches.items():
         best = suggest(source, options)
         assert best and best[0].id == ids[code], (source, best)
+
+
+def test_the_stage_65_data_carry_their_planted_anomalies() -> None:
+    """The till and the stock of the last weeks: R08's cashier voids after printing, R05's discounts, R06's
+    cream outlives its shelf life — while the other restaurants' files stay as they were (own generator)."""
+    import csv
+    import io
+
+    full = generate(seed=42)
+
+    def rows(name: str) -> list[dict[str, str]]:
+        return list(csv.DictReader(io.StringIO(full.files[name].decode("utf-8-sig")), delimiter=";"))
+
+    voids = rows("voids_R08.csv")
+    by_cashier: dict[str, list[bool]] = {}
+    for v in voids:
+        by_cashier.setdefault(v["Кассир"], []).append(v["После пречека"] == "да")
+    suspect = by_cashier.pop("таб. 103")
+    others = [x for xs in by_cashier.values() for x in xs]
+    assert sum(suspect) > 5 * max(1, sum(others))  # far more after printing
+    sales = rows("sales_R05.csv")
+    share = {
+        c: sum(float(r["Скидка"].replace(",", ".")) for r in sales if r["Кассир"] == c)
+        / sum(float(r["Выручка"].replace(",", ".")) for r in sales if r["Кассир"] == c)
+        for c in {r["Кассир"] for r in sales}
+    }
+    assert share.pop("таб. 104") > 2 * max(share.values())
+    stock = [r for r in rows("stock_balances_R06.csv") if r["Код товара"] == "P04"]
+    assert len(stock) == 28 and max(float(r["Остаток"].replace(",", ".")) for r in stock) > 0
+    ids = {a["id"] for a in json.loads(full.files["anomalies.json"])["anomalies"]}
+    assert {"r06-cream-overstock", "r08-voids-after-print", "r05-cashier-discounts"} <= ids

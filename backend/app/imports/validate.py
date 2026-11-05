@@ -1,6 +1,7 @@
 """Turning rows of a file into typed records, with a report a non-IT person can act on:
 «строка 154: неизвестная единица «кг.» у товара «Сыр Моцарелла»». Pure functions, no database."""
 
+import hashlib
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -307,6 +308,7 @@ def _record(template: str, v: dict[str, Any], lk: Lookups, warn: list[str]) -> d
             "qty": v["qty"],
             "revenue": v["revenue"],
             "discount": v["discount"] or Decimal(0),
+            "cashier": cashier(v.get("cashier")),
         }
     if template == "name_sync":
         # Several names of 1С:ERP (one per supplier) become one product of iiko: network-wide matches.
@@ -395,7 +397,59 @@ def _record(template: str, v: dict[str, Any], lk: Lookups, warn: list[str]) -> d
             raise _RowError("Фактический остаток", "остаток не может быть отрицательным")
         book = _to_base(v["book_qty"], v["unit"], product) if v["book_qty"] is not None else None
         return {"day": v["day"], "product_id": product.id, "book_qty": book, "actual_qty": actual}
+    if template == "stock_balances":
+        product = _product(v, lk)
+        qty = _to_base(v["qty"], v["unit"], product)
+        if qty < 0:
+            raise _RowError("Остаток", "остаток не может быть отрицательным")
+        return {"day": v["day"], "product_id": product.id, "qty": qty}
+    if template == "voids":
+        dish: Ref | None = None
+        if v["menu_item_code"] or v["menu_item_name"]:
+            dish = _resolve(
+                "menu_item", v["menu_item_code"], v["menu_item_name"], lk.menu_items, lk.menu_item_names, lk
+            )
+        if v["amount"] < 0:
+            raise _RowError("Сумма", "сумма удаления не может быть отрицательной")
+        return {
+            "day": v["day"],
+            "check_no": _text(v["check_no"]),
+            "menu_item_id": dish.id if dish else None,
+            "qty": v["qty"] if v["qty"] is not None else Decimal(1),
+            "amount": v["amount"],
+            "cashier": cashier(v["cashier"]),
+            "after_print": after_print(v["after_print"]),
+            "reason": _text(v["reason"]),
+        }
     raise ValueError(template)
+
+
+AFTER_PRINT = ("да", "yes", "true", "1", "после", "после печати", "после пречека", "напечатан", "пречек")
+
+
+def after_print(value: object) -> bool:
+    """«После печати»: yes-words, «после пречека» and the like; empty, «нет», «до печати» — before."""
+    text = str(value or "").strip().lower()
+    return (
+        bool(text)
+        and not text.startswith(("нет", "no", "до", "0", "false"))
+        and any(w in text for w in AFTER_PRINT)
+    )
+
+
+def cashier(value: object) -> str | None:
+    """A cashier as the till names them. A code or a personnel number (has a digit) is kept; anything else is
+    a person's name — personal data (docs/09, «Персональные данные»): it becomes a stable code (the same
+    person, the same code), so the findings compare cashiers without storing who they are (Q26)."""
+    text = _text(value)
+    if text is None or re.search(r"\d", text):
+        return text
+    return "Кассир " + hashlib.sha256(text.lower().encode()).hexdigest()[:6].upper()
+
+
+def _text(value: object) -> str | None:
+    text = str(value).strip() if value is not None else ""
+    return text[:200] or None
 
 
 def validate(template: Template, table: Table, lookups: Lookups, *, today: date) -> Result:

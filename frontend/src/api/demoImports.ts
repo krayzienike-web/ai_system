@@ -92,6 +92,7 @@ export const DEMO_TEMPLATES: ImportTemplate[] = [
       col("Количество", true, "кол-во"),
       col("Выручка", true, "сумма"),
       col("Скидка"),
+      col("Кассир", false, "официант"),
     ],
   },
   {
@@ -150,6 +151,31 @@ export const DEMO_TEMPLATES: ImportTemplate[] = [
       col("Учетный остаток"),
       col("Фактический остаток", true, "факт"),
       col("Ед. изм."),
+    ],
+  },
+  // Stage 6.5 (docs/09): the stock by day (iiko) and the till's voids (r_keeper).
+  {
+    name: "stock_balances",
+    title: "Остатки на дату",
+    scope: "restaurant",
+    one_of: [["Код товара", "Товар"]],
+    columns: [col("Дата", true, "на дату"), ...PRODUCT, col("Остаток", true, "количество"), col("Ед. изм.")],
+  },
+  {
+    name: "voids",
+    title: "Удаления и отмены",
+    scope: "restaurant",
+    one_of: [],
+    columns: [
+      col("Дата", true),
+      col("№ чека", false, "номер чека"),
+      col("Код блюда", false, "код"),
+      col("Блюдо", false),
+      col("Количество", false, "кол-во"),
+      col("Сумма", true),
+      col("Кассир", false, "сотрудник"),
+      col("После печати", false, "после пречека"),
+      col("Причина", false),
     ],
   },
 ];

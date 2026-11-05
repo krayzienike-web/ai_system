@@ -12,7 +12,7 @@ from uuid import UUID
 from sqlalchemy import delete, select, text
 from sqlalchemy.orm import Session
 
-from app.analytics import kpi, m1, m2, m3, m4, m5, m6, m7, params, views
+from app.analytics import kpi, m1, m2, m3, m4, m5, m6, m7, m8, params, views
 from app.analytics.costs import CostBook
 from app.analytics.drafts import Draft
 from app.analytics.facts import Facts, load_facts
@@ -29,7 +29,7 @@ from app.tenancy.audit import audit
 from app.tenancy.context import AccessContext
 from app.tenancy.permissions import Permission
 
-ALGORITHM_VERSION = "engine-5"  # M6 shortages; paper and overdue counts; books below zero
+ALGORITHM_VERSION = "engine-6"  # M8 till; M6 overstock from «Остатки на дату»
 MODULES = (
     "M1",
     "M2",
@@ -38,6 +38,7 @@ MODULES = (
     "M5",
     "M6",
     "M7",
+    "M8",
 )  # modules this version runs; findings of other modules are left alone
 
 
@@ -65,6 +66,7 @@ def analyse(facts: Facts, norms: Norms, cfg: EngineParams = DEFAULT) -> tuple[li
         + m6.detect(facts, usage, m1_rows, cfg)
         + m7.detect(facts, cfg)
         + m7.detect_negative_stock(facts, usage, cfg)
+        + m8.detect(facts, cfg)
     )
     for d in drafts:
         d.view = views.build(d, facts)

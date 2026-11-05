@@ -102,6 +102,11 @@
 | TC-IMP-12 | Двойное нажатие «Опубликовать» не задваивает строки | `test_publishing_twice_at_once_writes_the_rows_once` | ✅ |
 | TC-IMP-13 | e2e: загрузка → сопоставление → публикация → свежесть данных | — | ⬜ |
 | TC-IMP-14 | Повторная обработка обновляет число строк и использованные соответствия в отчете о загрузке | `test_imports_api.py::test_reprocess_applies_the_fixed_match` | ✅ |
+| TC-IMP-20 | Этап 6.5: «Остатки на дату» загружаются в базовой единице, повтор заменяет, отрицательный остаток — ошибка строки | `test_imports_stage65.py::test_stock_on_a_date_is_loaded_in_the_base_unit_and_replaced_on_reload` | ✅ |
+| TC-IMP-21 | «Удаления и отмены»: кассир, после печати пречека, чек без блюда (отмена); слова кассы «да / после пречека / нет» | `::test_voids_keep_the_cashier_and_whether_the_check_was_printed`, `::test_after_print_reads_the_tills_words` | ✅ |
+| TC-IMP-22 | Кассир в продажах; ФИО кассира не хранится — устойчивый код, табельный номер — как есть (docs/09, Q26) | `::test_a_sale_keeps_its_cashier`, `::test_a_cashiers_name_is_kept_as_a_stable_code_and_a_number_as_it_is` | ✅ |
+| TC-IMP-23 | Новые факты — под RLS ресторана: другой директор и другая сеть их не видят; шаблоны описаны для экрана | `::test_the_new_facts_stay_in_their_restaurant`, `::test_the_templates_describe_the_new_exports` | ✅ |
+| TC-IMP-24 | Демо-сеть: остатки за 4 недели, удаления и кассиры с тремя заложенными аномалиями (R06 сливки, R08 удаления после пречека, R05 скидки); остальные рестораны — байт в байт как до этапа | `test_demo_generator.py::test_the_stage_65_data_carry_their_planted_anomalies`, `::test_files_and_plan` | ✅ |
 
 ### Справочники, нормы, периоды (CAT, NORM, PER)
 
@@ -145,6 +150,10 @@
 | TC-ENG-24 | Загрузка, присоединившаяся к ожидающему пересчету, держит его до своего коммита; зависший пересчет показывается и записывается прерванным | `test_runs.py::test_an_upload_joining_the_waiting_run_holds_it_until_its_data_is_committed`, `test_a_run_left_going_on_is_shown_and_then_written_as_interrupted` | ✅ |
 | TC-ENG-25 | Сверка не падает на измененных данных и повторяет правила движка: M4 после отката инвентаризаций, M7 — техкарта заведена внутри окна | `test_check_of_a_pre_count_finding_after_the_counts_were_rolled_back`, `test_m7_dish_without_a_recipe_and_missing_exports` | ✅ |
 | TC-ENG-26 | «Пересчитать» ставит пересчет в очередь (202), а не считает в запросе; нажатие при ждущем пересчете после загрузки делает его ручным | `test_analytics.py` (повторный пересчет), `test_runs.py::test_publishing_a_file_recomputes_the_findings`, `test_the_button_pressed_while_an_upload_waits_makes_the_run_manual`; прототип — как сервер: пересчет только у администратора УК (`demo.test.ts` «lets only the HQ admin press «Пересчитать»») | ✅ |
+| TC-ENG-27 | M8: кассир с удалениями после пречека намного больше обычного — находка с эффектом сверх медианы; удаления до пречека и редкие удаления — нет | `test_m8_till.py::test_a_cashier_removing_after_printing_far_more_than_the_others_is_found`, `test_a_few_removals_are_no_finding` | ✅ |
+| TC-ENG-28 | M8: доля скидок кассира выше обычной в 2 раза и на 3 п.п. — находка; без кассиров ресторан сравнивается с сетью; карточка показывает числа | `test_m8_till.py` (скидки, ресторан, показ) | ✅ |
+| TC-ENG-29 | M6 затоваривание по «Остаткам на дату»: медиана остатка дольше 1,5 × срока годности; риск не больше купленного сверх расхода; мало снимков, нет срока или закупок — нет находки | `test_m6_overstock.py` | ✅ |
+| TC-ENG-30 | Демо-сеть: движок находит заложенные аномалии этапа 6.5 (сливки R06, удаления «таб. 103» R08, скидки «таб. 104» R05), сверка каждой совпадает с движком | `test_analytics.py::test_engine_finds_planted_problems_and_review_gates_directors`, `test_ai_hypotheses.py::test_the_eval_finds_every_planted_anomaly_and_grades_the_top_three` | ✅ |
 
 ### Проверка находок (REV)
 
