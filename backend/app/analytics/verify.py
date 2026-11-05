@@ -43,6 +43,8 @@ def verify(session: Session, finding: Finding) -> dict[str, Any]:
         return _m1_network(session, finding)
     if finding.module == "M2":
         return _m2(session, finding)
+    if finding.module == "M3" and (finding.evidence or {}).get("kind") == "jump":
+        return _m3_jump(session, finding)
     if finding.module == "M3" and finding.restaurant_id is not None:
         return _m3(session, finding)
     if finding.module == "M3" and (finding.evidence or {}).get("kind") == "growth":
@@ -926,6 +928,120 @@ INTERPRETATION_M2 = [
     "Половина разницы — консервативная оценка: после подорожания часть гостей закажет другое блюдо.",
     "Прежде чем подтверждать: убедитесь, что рост цены ингредиента не разовый (одна дорогая поставка).",
 ]
+
+
+def _m3_jump(session: Session, f: Finding) -> dict[str, Any]:
+    """A jump against the restaurant's own history, recomputed from the stored receipts."""
+    cfg = params.load(session)
+    ev = f.evidence or {}
+    product = session.execute(select(Product).where(Product.code == ev["product"])).scalar_one()
+    assert f.period_from and f.period_to and f.restaurant_id
+    unit = UNITS.get(product.base_unit, product.base_unit)
+    base_start, base_end = (date.fromisoformat(d) for d in ev["before"])
+    codes = dict(session.execute(select(Restaurant.id, Restaurant.code)).all())
+
+    def per_restaurant(start: date, end: date) -> dict[UUID, tuple[Decimal, Decimal, int]]:
+        out: dict[UUID, list[Any]] = defaultdict(lambda: [Decimal(0), Decimal(0), 0])
+        for rid, amount, qty in session.execute(
+            select(Receipt.restaurant_id, Receipt.amount, Receipt.qty).where(
+                Receipt.product_id == product.id, Receipt.day >= start, Receipt.day <= end, Receipt.qty > 0
+            )
+        ).all():
+            out[rid][0] += amount
+            out[rid][1] += qty
+            out[rid][2] += 1
+        return {rid: (a, q, n) for rid, (a, q, n) in out.items()}
+
+    now, base = per_restaurant(f.period_from, f.period_to), per_restaurant(base_start, base_end)
+    growth = {
+        rid: (a / q) / (base[rid][0] / base[rid][1]) - 1
+        for rid, (a, q, n) in now.items()
+        if rid in base
+        and n >= cfg.M3_MIN_RECEIPTS
+        and base[rid][2] >= cfg.M3_MIN_RECEIPTS
+        and q
+        and base[rid][1]
+    }
+    own_now, own_base = now.get(f.restaurant_id), base.get(f.restaurant_id)
+    if own_now is None or own_base is None or f.restaurant_id not in growth:
+        return {"module": "M3", "supported": False, "note": "Закупок ресторана за эти периоды больше нет"}
+    p_now, p_base = own_now[0] / own_now[1], own_base[0] / own_base[1]
+    g = growth[f.restaurant_id]
+    others = [v for rid, v in growth.items() if rid != f.restaurant_id]
+    moved = med(others) if others else Decimal(0)
+    effect = per_month((p_now - p_base * (1 + moved)) * own_now[1], f.period_from, f.period_to)
+    engine_effect = f.effect_rub_month or Decimal(0)
+    steps = [
+        {
+            "id": "own",
+            "label": f"Закупки ресторана: {f.period_from:%d.%m}–{f.period_to:%d.%m} и раньше "
+            f"({base_start:%d.%m}–{base_end:%d.%m})",
+            "value": None,
+            "unit": "",
+            "rows": [
+                {
+                    "restaurant": codes.get(rid, "—"),
+                    "price_before": _q(base[rid][0] / base[rid][1], Decimal("0.01")),
+                    "price": _q(now[rid][0] / now[rid][1], Decimal("0.01")),
+                    "growth": pct(v),
+                }
+                for rid, v in sorted(growth.items(), key=lambda kv: codes.get(kv[0], ""))
+            ],
+        }
+    ]
+    result = [
+        {"label": "Цена ресторана сейчас", "value": _q(p_now, Decimal("0.01")), "unit": f"₽/{unit}"},
+        {"label": "Цена ресторана раньше", "value": _q(p_base, Decimal("0.01")), "unit": f"₽/{unit}"},
+        {"label": "Рост у ресторана", "value": pct(g), "unit": ""},
+        {"label": "Рост у остальных (медиана)", "value": pct(moved), "unit": ""},
+        {"label": "Сверх прежней цены в месяц", "value": rub(effect), "unit": ""},
+    ]
+    rules = [
+        {
+            "rule": "Рост цены сверх того, как она изменилась у остальных",
+            "value": pct(g - moved),
+            "threshold": pct(cfg.M3_JUMP, 0),
+            "passed": g - moved > cfg.M3_JUMP,
+        },
+        {
+            "rule": "Сумма существенная, ₽ в месяц",
+            "value": rub(effect),
+            "threshold": rub(cfg.M3_MATERIALITY_RUB_MONTH),
+            "passed": effect >= cfg.M3_MATERIALITY_RUB_MONTH,
+        },
+    ]
+    checks = [
+        {
+            "check": "Пересчет из исходных строк совпадает с тем, что посчитал движок",
+            "ok": abs(Decimal(ev["growth"]) - g) < Decimal("0.0005")
+            and abs(engine_effect - effect) <= max(Decimal(1), abs(effect) / 100),
+            "note": f"движок: {pct(Decimal(ev['growth']))}, {rub(engine_effect)}; "
+            f"пересчет: {pct(g)}, {rub(effect)}",
+        },
+        {
+            "check": f"Закупок ресторана: {own_now[2]} сейчас и {own_base[2]} раньше",
+            "ok": own_now[2] >= cfg.M3_MIN_RECEIPTS and own_base[2] >= cfg.M3_MIN_RECEIPTS,
+        },
+    ]
+    return {
+        "module": "M3",
+        "supported": True,
+        "object": product.name,
+        "restaurant": codes.get(f.restaurant_id, "—"),
+        "formula": "Рост = средняя цена ресторана за 4 недели / его же цена за 12 недель до них − 1; "
+        "сверх обычного = рост − медиана роста у остальных ресторанов; "
+        "сумма = (цена сейчас − прежняя цена × (1 + рост у остальных)) × количество",
+        "steps": steps,
+        "result": result,
+        "rules": rules,
+        "checks": checks,
+        "interpretation": [
+            "Цена выросла только у этого ресторана: у остальных она прежняя — значит, дело в условиях "
+            "поставщика для ресторана, а не в рынке.",
+            "С сетью цена может быть сопоставима: ресторан раньше покупал дешевле (скидка, другой договор).",
+            "Прежде чем подтверждать: проверьте, не сменилась ли позиция (фасовка, жирность, калибр).",
+        ],
+    }
 
 
 def _m3_growth(session: Session, f: Finding) -> dict[str, Any]:

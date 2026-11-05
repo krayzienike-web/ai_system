@@ -344,3 +344,128 @@ def detect_network_growth(facts: Facts, cfg: EngineParams = DEFAULT) -> list[Dra
             )
         )
     return drafts
+
+
+ACTIONS_JUMP = [
+    "Запросить у поставщика, почему цена выросла: прайс, скидка, условия договора",
+    "Сравнить с ценами этого товара в других ресторанах сети и у других поставщиков",
+]
+
+
+def _avg(rows: list[ReceiptRow]) -> Decimal | None:
+    qty = sum((r.qty for r in rows), Decimal(0))
+    amount = sum((r.amount for r in rows), Decimal(0))
+    return amount / qty if qty > 0 and amount > 0 else None
+
+
+def jump_windows(facts: Facts, cfg: EngineParams = DEFAULT) -> tuple[date, date, date, date] | None:
+    """The last weeks and the restaurant's own weeks before them: (start, end, base_start, base_end)."""
+    if not facts.receipts:
+        return None
+    end = max(r.day for r in facts.receipts)
+    start = end - timedelta(days=cfg.M3_JUMP_WINDOW_DAYS - 1)
+    base_end = start - timedelta(days=1)
+    return start, end, base_end - timedelta(days=cfg.M3_JUMP_BASE_DAYS - 1), base_end
+
+
+def detect_jumps(
+    facts: Facts, cfg: EngineParams = DEFAULT, covered: list[Draft] | None = None
+) -> list[Draft]:
+    """A restaurant pays noticeably more than it used to pay itself, beyond how the others' price moved.
+
+    Not shown when the restaurant's overpayment against the network is already a finding (`covered`) or the
+    product has contract prices (the contract check says it better)."""
+    span = jump_windows(facts, cfg)
+    if span is None:
+        return []
+    start, end, base_start, base_end = span
+    taken = {(d.restaurant, d.evidence.get("product")) for d in covered or [] if d.restaurant is not None}
+    with_contract = {c.product for c in facts.contracts}
+    now: dict[tuple[UUID, UUID], list[ReceiptRow]] = defaultdict(list)
+    base: dict[tuple[UUID, UUID], list[ReceiptRow]] = defaultdict(list)
+    history: dict[tuple[UUID, UUID], list[ReceiptRow]] = defaultdict(list)
+    for r in facts.receipts:
+        if r.qty <= 0 or r.day > end:
+            continue
+        history[(r.restaurant, r.product)].append(r)
+        if start <= r.day:
+            now[(r.restaurant, r.product)].append(r)
+        elif base_start <= r.day <= base_end:
+            base[(r.restaurant, r.product)].append(r)
+    growth: dict[tuple[UUID, UUID], tuple[Decimal, Decimal, Decimal]] = {}  # (growth, price, base price)
+    for pair, rows in now.items():
+        before = base.get(pair, [])
+        if len(rows) < cfg.M3_MIN_RECEIPTS or len(before) < cfg.M3_MIN_RECEIPTS:
+            continue
+        p_now, p_base = _avg(rows), _avg(before)
+        if p_now and p_base:
+            growth[pair] = (p_now / p_base - 1, p_now, p_base)
+    drafts = []
+    for (restaurant, product), (g, p_now, p_base) in growth.items():
+        if product in with_contract or product not in facts.products:
+            continue
+        info = facts.products[product]
+        if (restaurant, info.code) in taken:
+            continue
+        others = [v[0] for (r, p), v in growth.items() if p == product and r != restaurant]
+        moved = med(others) if others else Decimal(0)  # how the price moved for the rest of the network
+        excess = g - moved
+        if excess <= cfg.M3_JUMP:
+            continue
+        rows = now[(restaurant, product)]
+        qty = sum((r.qty for r in rows), Decimal(0))
+        expected = p_base * (1 + moved)
+        effect = per_month((p_now - expected) * qty, start, end)
+        if effect < cfg.M3_MATERIALITY_RUB_MONTH:
+            continue
+        by_supplier: dict[UUID | None, Decimal] = defaultdict(Decimal)
+        for r in rows:
+            by_supplier[r.supplier] += r.amount
+        main = max(by_supplier, key=lambda s: by_supplier[s])
+        name = facts.suppliers.get(main, "поставщик") if main else "поставщик"
+        start_day = since(history[(restaurant, product)], p_base * (1 + cfg.M3_JUMP / 2))
+        unit = {"kg": "кг", "l": "л", "pcs": "шт"}.get(info.unit, info.unit)
+        code = facts.restaurants[restaurant]
+        if not others:
+            network_text = "другие рестораны этот товар не закупают"
+        elif abs(moved) < Decimal("0.005"):
+            network_text = "у остальных ресторанов цена не изменилась"
+        else:
+            way = "выросла" if moved > 0 else "снизилась"
+            network_text = f"у остальных ресторанов цена {way} на {pct(abs(moved), 0)}"
+        drafts.append(
+            Draft(
+                key=f"M3:{code}:{info.code}:jump",
+                module="M3",
+                kind="problem",
+                process="purchasing",
+                restaurant=restaurant,
+                title=f"Цена выше, чем ресторан платил раньше: {info.name}",
+                headline=(
+                    f"С {dmy(start_day)} {info.name.lower()} у «{name}» обходится ресторану в "
+                    f"{rub(p_now)}/{unit} вместо прежних {rub(p_base)}/{unit} (+{pct(g, 0)}), а "
+                    f"{network_text}. Сверх прежней цены ≈ {rub(effect)} в месяц"
+                ),
+                effect_rub_month=effect,
+                effect_note=None,
+                confidence="high" if len(rows) >= 4 else "medium",
+                period_from=start,
+                period_to=end,
+                actions=list(ACTIONS_JUMP),
+                evidence={
+                    "kind": "jump",
+                    "product": info.code,
+                    "supplier": name,
+                    "price": str(p_now.quantize(Decimal("0.01"))),
+                    "price_before": str(p_base.quantize(Decimal("0.01"))),
+                    "before": [base_start.isoformat(), base_end.isoformat()],
+                    "growth": str(g.quantize(Decimal("0.0001"))),
+                    "network_growth": str(moved.quantize(Decimal("0.0001"))),
+                    "qty": str(qty.quantize(Decimal("0.001"))),
+                    "receipts": len(rows),
+                    "since": start_day.isoformat(),
+                    "restaurants": len(others),
+                },
+            )
+        )
+    return drafts

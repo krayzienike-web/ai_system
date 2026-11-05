@@ -46,6 +46,9 @@ class EngineParams:
     M3_NET_WINDOW_DAYS: int = 28  # network-wide growth: the last 4 weeks …
     M3_NET_COMPARE_DAYS: int = 91  # … against the same 4 weeks a quarter earlier
     M3_NET_GROWTH: Decimal = Decimal("0.10")  # 10 % more for the whole network
+    M3_JUMP_WINDOW_DAYS: int = 28  # a jump against the restaurant's own history: the last 4 weeks …
+    M3_JUMP_BASE_DAYS: int = 84  # … against its own 12 weeks before them
+    M3_JUMP: Decimal = Decimal("0.10")  # 10 % more than it paid, beyond how the rest of the network moved
     # M4 — stock counts
     M4_PRE_DAYS: int = 2  # write-offs dated this many days before a count …
     M4_PRE_SHARE: Decimal = Decimal("0.5")  # … holding at least half of them …
@@ -278,6 +281,18 @@ DEFS: tuple[ParamDef, ...] = (
         D(100),
         PCT,
     ),
+    ParamDef(
+        "M3_JUMP",
+        "M3",
+        "Скачок цены к своей истории",
+        "%",
+        "сверх того, как изменилась цена у остальных ресторанов",
+        D(1),
+        D(100),
+        PCT,
+    ),
+    ParamDef("M3_JUMP_WINDOW_DAYS", "M3", "Окно для скачка цены", "дней", "", D(7), D(90)),
+    ParamDef("M3_JUMP_BASE_DAYS", "M3", "Своя история цены — за", "дней до окна", "", D(28), D(365)),
     ParamDef("M3_NET_WINDOW_DAYS", "M3", "Окно для роста цены по сети", "дней", "", D(7), D(90)),
     ParamDef("M3_NET_COMPARE_DAYS", "M3", "Сравниваем с периодом", "дней назад", "", D(28), D(365)),
     ParamDef(

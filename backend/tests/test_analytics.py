@@ -444,15 +444,15 @@ def test_engine_finds_planted_problems_and_review_gates_directors(
         queued = client.post("/api/analytics/run", headers=hq)
         assert queued.status_code == 202 and queued.json()["status"] == "queued"
         latest = client.get("/api/analytics/runs/latest", headers=hq).json()
-        assert (latest["status"], latest["trigger"], latest["created"]) == ("done", "manual", 24)
+        assert (latest["status"], latest["trigger"], latest["created"]) == ("done", "manual", 25)
         # Idempotent: the same data gives the same findings, updated in place.
         client.post("/api/analytics/run", headers=hq)
         latest = client.get("/api/analytics/runs/latest", headers=hq).json()
-        assert (latest["created"], latest["updated"], latest["removed"]) == (0, 24, 0)
+        assert (latest["created"], latest["updated"], latest["removed"]) == (0, 25, 0)
 
         pending = client.get("/api/findings", headers=hq, params={"review": "pending"}).json()
         by_key = {(f["module"], f["title"]): f for f in pending}
-        assert len(pending) == 24 and all(f["review_status"] == "pending" for f in pending)
+        assert len(pending) == 25 and all(f["review_status"] == "pending" for f in pending)
         assert {t for _, t in by_key} == {
             "Перерасход по техкарте: Сыр Моцарелла",
             "Перерасход по техкарте: Лосось охлажденный",
@@ -479,6 +479,7 @@ def test_engine_finds_planted_problems_and_review_gates_directors(
             "Затоваривание: Руккола",
             "Затоваривание: Хлеб чиабатта",
             "Списания выше сети: Сливки 33%",
+            "Цена выше, чем ресторан платил раньше: Сыр Моцарелла",
         }
         # M4 and M5: the planted habits, each recomputed from the rows by the check.
         for module, title in (
@@ -495,6 +496,7 @@ def test_engine_finds_planted_problems_and_review_gates_directors(
             ("M8", "Скидки выше обычного: кассир таб. 104"),
             ("M6", "Затоваривание: Сливки 33%"),
             ("M6", "Затоваривание: Хлеб чиабатта"),
+            ("M3", "Цена выше, чем ресторан платил раньше: Сыр Моцарелла"),
         ):
             found = by_key[(module, title)]
             check = client.get(f"/api/findings/{found['id']}/verification", headers=analyst).json()

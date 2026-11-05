@@ -75,6 +75,11 @@ CAUSES = {
     ],
     "M3:contract": ["Поставщик выставляет цену выше договорной"],
     "M3:growth": ["Поставщик поднял цену для всей сети"],
+    "M3:jump": [
+        "Поставщик отменил скидку или поменял условия только для этого ресторана",
+        "Ресторан перешел на другую позицию или фасовку того же товара",
+        "Срочные дозаказы по разовой цене",
+    ],
 }
 
 
@@ -369,6 +374,25 @@ def _m3(d: Draft, facts: Facts) -> dict[str, Any]:
                     for code, v in ev["restaurants"].items()
                 ],
             },
+        }
+    if kind == "jump":
+        return {
+            "summary": d.headline,
+            "causes": CAUSES["M3:jump"],
+            "confidence_note": f"{ev['receipts']} накладных против закупок ресторана за прошлые недели",
+            "metric": {
+                "label": "Цена закупки ресторана",
+                "value": f"{ev['price']} {unit}",
+                "benchmark": f"раньше {ev['price_before']} {unit}",
+            },
+            "scale": _scale(
+                label="Цена закупки",
+                unit=unit,
+                me=_n(ev["price"], 2),
+                network=_n(ev["price_before"], 2),
+                network_label="Раньше",
+                lower_is_better=True,
+            ),
         }
     if kind == "growth":
         return {

@@ -120,6 +120,7 @@ TRANSFERS = [("R05", "R06", "P05", 5.0)]
 
 # Stage 6.5: the exports «Остатки на дату» (the last weeks), «Удаления и отмены» and the cashier of a sale.
 STOCK_DAYS = 28  # «Остатки на дату» covers the last four weeks
+PRICE_JUMP_FROM = date(2026, 9, 21)  # R07 loses its mozzarella discount: −12% → +3% to the base price
 OVERSTOCK_FROM = date(2026, 9, 28)  # R06 orders cream for 12 days while it keeps 7
 # Cashiers by personnel number, as r_keeper can export them: no names in the demo (docs/09, personal data).
 CASHIERS = ["таб. 101", "таб. 102", "таб. 103", "таб. 104", "таб. 105", "таб. 106"]
@@ -219,6 +220,7 @@ PLANTED_CAUSES = {
     "r12-paper-counts": "paper_count",
     "r08-count-overdue": "count_skipped",
     "r06-cream-overstock": "overordering",
+    "r07-mozzarella-price-jump": "supplier_overprice",
     "r08-voids-after-print": "theft",
     "r05-cashier-discounts": "theft",
 }
@@ -444,6 +446,18 @@ def generate(seed: int = 42, restaurants: int = 12, start: date = START, end: da
         description="С 28.09 сливки заказывают на 12 дней при сроке годности 7: запас переживает срок",
     )
     planted(
+        id="r07-mozzarella-price-jump",
+        restaurant="R07",
+        module="M3",
+        product="P01",
+        kind="problem",
+        description="С 21.09 «Сырный дом» отменил R07 скидку на моцареллу: цена +17% к прежней, "
+        "но лишь на 3% выше сети — сравнение с сетью этого не видит",
+        since=PRICE_JUMP_FROM.isoformat(),
+        price_premium=0.17,
+        supplier="S1",
+    )
+    planted(
         id="r08-voids-after-print",
         restaurant="R08",
         module="M8",
@@ -580,6 +594,8 @@ def generate(seed: int = 42, restaurants: int = 12, start: date = START, end: da
                             sup, unit_price = "S8", base_price * 1.11
                         if code == "R05" and p_code == "P04" and day >= date(2026, 8, 1):
                             unit_price = base_price * 1.14
+                        if code == "R07" and p_code == "P01":  # a discount, until it is lost (stage 6.5)
+                            unit_price *= 1.03 if day >= PRICE_JUMP_FROM else 0.88
                         if p_code == "P09" and day >= date(2026, 9, 1):
                             unit_price *= 1.40  # the market moved: the whole network pays more
                         doc += 1
