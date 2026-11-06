@@ -41,6 +41,8 @@ def verify(session: Session, finding: Finding) -> dict[str, Any]:
         return _m1_restaurant(session, finding)
     if finding.module == "M1":
         return _m1_network(session, finding)
+    if finding.module == "M2" and (finding.evidence or {}).get("kind") in ("plowhorse", "puzzle"):
+        return _m2_menu(session, finding)
     if finding.module == "M2":
         return _m2(session, finding)
     if finding.module == "M3" and (finding.evidence or {}).get("kind") == "jump":
@@ -770,6 +772,145 @@ def _network_prices(session: Session, start: date, end: date) -> dict[UUID, Deci
         totals[product][0] += amount
         totals[product][1] += qty
     return {p: a / q for p, (a, q) in totals.items() if q > 0}
+
+
+def _m2_menu(session: Session, f: Finding) -> dict[str, Any]:
+    """Menu engineering, recomputed from the stored sales, recipes and the network's purchase prices."""
+    cfg = params.load(session)
+    ev = f.evidence or {}
+    assert f.period_from and f.period_to
+    start, end = f.period_from, f.period_to
+    items = list(session.execute(select(MenuItem).where(MenuItem.category == ev["category"])).scalars())
+    lines = [
+        Line(r.menu_item_id or r.semi_product_id, r.product_id, r.gross_qty, r.valid_from)  # type: ignore[arg-type]
+        for r in session.execute(select(RecipeLine)).scalars()
+    ]
+    recipes = lines_on(lines, end)
+    prices = _network_prices(session, start, end)
+    sold: dict[UUID, Decimal] = defaultdict(Decimal)
+    for mid, qty in session.execute(
+        select(Sale.menu_item_id, Sale.qty).where(
+            Sale.menu_item_id.in_([i.id for i in items]), Sale.day >= start, Sale.day <= end
+        )
+    ).all():
+        sold[mid] += qty
+    dishes: list[tuple[MenuItem, Decimal, Decimal]] = []  # item, margin, portions
+    for i in items:
+        need = explode(i.id, Decimal(1), recipes) if i.id in recipes else {}
+        if not need or any(p not in prices for p in need) or not i.price or not sold[i.id]:
+            continue
+        dishes.append((i, i.price - sum((q * prices[p] for p, q in need.items()), Decimal(0)), sold[i.id]))
+    me = next((d for d in dishes if d[0].code == ev["menu_item"]), None)
+    if me is None or len(dishes) < 2:
+        return {
+            "module": "M2",
+            "supported": False,
+            "note": "Блюда или продаж категории за этот период больше нет",
+        }
+    total = sum((q for _, _, q in dishes), Decimal(0))
+    avg = sum((m * q for _, m, q in dishes), Decimal(0)) / total
+    fair = Decimal(1) / len(dishes)
+    item, margin, qty = me
+    assert item.price is not None
+    share = qty / total
+    if ev["kind"] == "plowhorse":
+        new_price = Decimal(ev["new_price"])
+        effect = per_month((new_price - item.price) * qty * cfg.M2_KEEP, start, end)
+        rules = [
+            {
+                "rule": "Популярное: доля продаж категории не меньше",
+                "value": pct(share),
+                "threshold": pct(cfg.M2_ME_POPULARITY * fair),
+                "passed": share >= cfg.M2_ME_POPULARITY * fair,
+            },
+            {
+                "rule": "Маржа ниже средней по категории",
+                "value": rub(margin),
+                "threshold": rub(cfg.M2_ME_LOW_MARGIN * avg),
+                "passed": margin < cfg.M2_ME_LOW_MARGIN * avg,
+            },
+        ]
+        formula = (
+            "Маржа = цена в меню − себестоимость порции по техкарте и ценам сети; "
+            "потенциал = (новая цена − цена) × порции × 0,5, в месяц"
+        )
+    else:
+        rest = [(m, q) for i, m, q in dishes if i.id != item.id]
+        others = sum((m * q for m, q in rest), Decimal(0)) / sum((q for _, q in rest), Decimal(0))
+        effect = per_month(qty * cfg.M2_ME_PROMO_GROWTH * (margin - others), start, end)
+        rules = [
+            {
+                "rule": "Редкое: доля продаж категории меньше",
+                "value": pct(share),
+                "threshold": pct(cfg.M2_ME_POPULARITY * fair),
+                "passed": share < cfg.M2_ME_POPULARITY * fair,
+            },
+            {
+                "rule": "Маржа выше средней по категории",
+                "value": rub(margin),
+                "threshold": rub(cfg.M2_ME_HIGH_MARGIN * avg),
+                "passed": margin > cfg.M2_ME_HIGH_MARGIN * avg,
+            },
+        ]
+        formula = (
+            "Маржа = цена в меню − себестоимость порции по техкарте и ценам сети; "
+            "потенциал = порции × рост продаж × (маржа блюда − средняя маржа других блюд категории), в месяц"
+        )
+    rules.append(
+        {
+            "rule": "Сумма существенная, ₽ в месяц",
+            "value": rub(effect),
+            "threshold": rub(cfg.M2_MATERIALITY_RUB_MONTH),
+            "passed": effect >= cfg.M2_MATERIALITY_RUB_MONTH,
+        }
+    )
+    engine_effect = f.effect_rub_month or Decimal(0)
+    return {
+        "module": "M2",
+        "supported": True,
+        "object": item.name,
+        "restaurant": "Вся сеть",
+        "formula": formula,
+        "steps": [
+            {
+                "id": "category",
+                "label": f"Блюда категории «{ev['category']}»: продажи сети за {start:%d.%m}–{end:%d.%m}",
+                "value": None,
+                "unit": "",
+                "rows": [
+                    {
+                        "dish": i.name,
+                        "portions": _q(q),
+                        "share": pct(q / total),
+                        "margin": _q(m, Decimal("0.01")),
+                    }
+                    for i, m, q in dishes
+                ],
+            }
+        ],
+        "result": [
+            {"label": "Маржа блюда", "value": _q(margin, Decimal("0.01")), "unit": "₽"},
+            {"label": "Средняя маржа категории", "value": _q(avg, Decimal("0.01")), "unit": "₽"},
+            {"label": "Доля продаж категории", "value": pct(share), "unit": ""},
+            {"label": "Потенциал в месяц", "value": rub(effect), "unit": ""},
+        ],
+        "rules": rules,
+        "checks": [
+            {
+                "check": "Пересчет из исходных строк совпадает с тем, что посчитал движок",
+                "ok": abs(Decimal(ev["margin"]) - margin) < Decimal("0.5")
+                and abs(engine_effect - effect) <= max(Decimal(1), abs(effect) / 100),
+                "note": f"движок: {rub(Decimal(ev['margin']))}, {rub(engine_effect)}; "
+                f"пересчет: {rub(margin)}, {rub(effect)}",
+            },
+            {"check": f"Блюд категории с техкартой и продажами: {len(dishes)}", "ok": len(dishes) >= 2},
+        ],
+        "interpretation": [
+            "Цена в меню едина для сети, поэтому находка — для управляющей компании, к следующему меню.",
+            "Потенциал — оценка: насколько изменится выбор гостей, покажет только проверка (эксперимент).",
+            "Маржа считается по текущим ценам закупки: если цена ингредиента скачет, сверьтесь с M3.",
+        ],
+    }
 
 
 def _m2(session: Session, f: Finding) -> dict[str, Any]:

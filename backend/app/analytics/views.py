@@ -75,6 +75,15 @@ CAUSES = {
     ],
     "M3:contract": ["Поставщик выставляет цену выше договорной"],
     "M3:growth": ["Поставщик поднял цену для всей сети"],
+    "M2:plowhorse": [
+        "Цена блюда ниже, чем у других блюд категории, а себестоимость сопоставима",
+        "Блюдо любят за цену: небольшое повышение гости обычно не замечают",
+    ],
+    "M2:puzzle": [
+        "Блюдо не видно в меню: место, название, описание",
+        "Официанты его не предлагают",
+        "Цена кажется высокой рядом с похожими блюдами",
+    ],
     "M3:jump": [
         "Поставщик отменил скидку или поменял условия только для этого ресторана",
         "Ресторан перешел на другую позицию или фасовку того же товара",
@@ -307,8 +316,37 @@ def _m1_under(
     }
 
 
+def _m2_menu(d: Draft) -> dict[str, Any]:
+    ev = d.evidence
+    return {
+        "summary": d.headline,
+        "causes": CAUSES[f"M2:{ev['kind']}"],
+        "confidence_note": f"Продажи сети за 4 недели и техкарты {len(ev['dishes'])} блюд категории",
+        "metric": {
+            "label": "Маржа с порции",
+            "value": _ru(_n(ev["margin"], 0) or 0, "₽"),
+            "benchmark": f"в среднем по категории {_ru(_n(ev['category_margin'], 0) or 0, '₽')}",
+        },
+        "scale": _scale(
+            label="Маржа с порции",
+            unit="₽",
+            me=_n(ev["margin"], 0),
+            network=_n(ev["category_margin"], 0),
+            network_label="Среднее по категории",
+            lower_is_better=False,
+        ),
+        "table": {
+            "title": f"Блюда категории «{ev['category']}»",
+            "columns": ["Блюдо", "Доля продаж, %", "Маржа с порции, ₽"],
+            "rows": [[x["name"], _pp(x["share"]), _n(x["margin"], 0)] for x in ev["dishes"]],
+        },
+    }
+
+
 def _m2(d: Draft, facts: Facts) -> dict[str, Any]:
     ev = d.evidence
+    if ev.get("kind") in ("plowhorse", "puzzle"):
+        return _m2_menu(d)
     codes = {p.code: p for p in facts.products.values()}
     return {
         "summary": d.headline,

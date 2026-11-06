@@ -255,7 +255,7 @@ def test_the_eval_finds_every_planted_anomaly_and_grades_the_top_three(
     with Session(owner_engine) as s:
         cases = eval_h.cases(s, network.a.id, anomalies)
         titles = {c.finding_id: s.get(Finding, c.finding_id).title for c in cases if c.finding_id}  # type: ignore[union-attr]
-    assert len(cases) == 20 and all(c.finding_id for c in cases), [
+    assert len(cases) == 22 and all(c.finding_id for c in cases), [
         c.anomaly for c in cases if not c.finding_id
     ]
     cause_of = {titles[c.finding_id]: c.cause for c in cases if c.finding_id}
@@ -276,9 +276,9 @@ def test_the_eval_finds_every_planted_anomaly_and_grades_the_top_three(
 
     with tool_session(network.a.users["admin@a.ru"], network.a.id) as (_, ctx):
         pass
-    right = eval_h.run(Gateway(FakeModel([oracle] * 20), per_user_day=1000), ctx, TODAY, cases)
+    right = eval_h.run(Gateway(FakeModel([oracle] * 22), per_user_day=1000), ctx, TODAY, cases)
     assert right.score == 1.0 and right.passed, right.summary()
-    wrong = eval_h.run(Gateway(FakeModel([theft] * 20), per_user_day=1000), ctx, TODAY, cases)
+    wrong = eval_h.run(Gateway(FakeModel([theft] * 22), per_user_day=1000), ctx, TODAY, cases)
     # Stage 6.5 planted two till anomalies whose cause is theft: «always theft» guesses only those
-    assert wrong.score == pytest.approx(2 / 20, abs=0.01) and not wrong.passed
+    assert wrong.score == pytest.approx(2 / 22, abs=0.01) and not wrong.passed
     assert "ждали portioning" in wrong.summary()

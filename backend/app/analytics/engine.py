@@ -29,7 +29,7 @@ from app.tenancy.audit import audit
 from app.tenancy.context import AccessContext
 from app.tenancy.permissions import Permission
 
-ALGORITHM_VERSION = "engine-7"  # M3 price jump against the own history (engine-6: M8 till, M6 overstock)
+ALGORITHM_VERSION = "engine-8"  # M2 menu engineering (7: M3 price jump; 6: M8 till, M6 overstock)
 MODULES = (
     "M1",
     "M2",
@@ -56,9 +56,11 @@ def analyse(facts: Facts, norms: Norms, cfg: EngineParams = DEFAULT) -> tuple[li
     costs = CostBook(facts.receipts)
     m1_rows = m1.rows(facts, usage, costs, cfg)
     prices = m3.detect(facts, cfg)
+    food_costs = m2.detect(facts, norms, cfg)
     drafts = (
         m1.detect(facts, m1_rows, norms, cfg)
-        + m2.detect(facts, norms, cfg)
+        + food_costs
+        + m2.detect_menu(facts, cfg, covered=food_costs)
         + prices
         + m3.detect_jumps(facts, cfg, covered=prices)
         + m3.detect_contracts(facts, cfg)

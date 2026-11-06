@@ -87,7 +87,7 @@ SUPPLIER = {s[0]: s for s in SUPPLIERS}
 # code, name, category, price ₽, daily base sales, recipe {product: gross per portion in base unit}
 MENU = [
     ("M01", "Пицца Маргарита", "Пицца", 580, 34, {"P01": 0.14, "P05": 0.18, "P17": 0.08, "P14": 0.01}),
-    ("M02", "Пицца Четыре сыра", "Пицца", 760, 16, {"P01": 0.10, "P02": 0.03, "P03": 0.03, "P05": 0.18}),
+    ("M02", "Пицца Четыре сыра", "Пицца", 920, 16, {"P01": 0.10, "P02": 0.03, "P03": 0.03, "P05": 0.18}),
     ("M03", "Паста Карбонара", "Паста", 640, 22, {"P15": 0.12, "P04": 0.08, "P13": 2, "P02": 0.02}),
     ("M04", "Паста с лососем", "Паста", 890, 12, {"P15": 0.12, "P09": 0.09, "P04": 0.07}),
     (
@@ -221,6 +221,8 @@ PLANTED_CAUSES = {
     "r08-count-overdue": "count_skipped",
     "r06-cream-overstock": "overordering",
     "r07-mozzarella-price-jump": "supplier_overprice",
+    "net-four-cheese-puzzle": "menu_mix",
+    "net-cutlets-plowhorse": "menu_mix",
     "r08-voids-after-print": "theft",
     "r05-cashier-discounts": "theft",
 }
@@ -456,6 +458,24 @@ def generate(seed: int = 42, restaurants: int = 12, start: date = START, end: da
         since=PRICE_JUMP_FROM.isoformat(),
         price_premium=0.17,
         supplier="S1",
+    )
+    planted(
+        id="net-four-cheese-puzzle",
+        restaurant=None,
+        module="M2",
+        menu_item="M02",
+        kind="opportunity",
+        description="«Пицца Четыре сыра» приносит с порции больше всех пицц (цена 920 ₽), "
+        "но ее берут вдвое реже «Маргариты» — блюдо стоит продвигать",
+    )
+    planted(
+        id="net-cutlets-plowhorse",
+        restaurant=None,
+        module="M2",
+        menu_item="M11",
+        kind="opportunity",
+        description="«Куриные котлеты» — самое популярное горячее, но с порции приносят меньше 60% "
+        "средней маржи горячего — кандидат на небольшое повышение цены в следующем меню",
     )
     planted(
         id="r08-voids-after-print",

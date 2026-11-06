@@ -35,6 +35,14 @@ class EngineParams:
     M2_KEEP: Decimal = Decimal("0.5")  # conservative: half of the extra margin survives guests ordering less
     M2_MATERIALITY_RUB_MONTH: Decimal = Decimal(3000)
     M2_PRICE_STEP: Decimal = Decimal(10)  # suggested menu prices are rounded up to 10 ₽
+    # Menu engineering (stage 6.5): popularity × margin within a menu category
+    M2_ME_POPULARITY: Decimal = Decimal("0.7")  # popular: at least 70 % of an equal share of the category
+    M2_ME_LOW_MARGIN: Decimal = Decimal("0.7")  # low margin: below 70 % of the category's average per portion
+    M2_ME_HIGH_MARGIN: Decimal = Decimal("1.3")  # high margin: above 130 % of the category's average
+    M2_ME_PRICE_RISE: Decimal = Decimal(
+        "0.05"
+    )  # a popular low-margin dish: +5 % to its price in the next menu
+    M2_ME_PROMO_GROWTH: Decimal = Decimal("0.10")  # a rare high-margin dish: +10 % sales from promotion
     # M3 — purchase prices
     M3_WINDOW_DAYS: int = 56  # the last 8 weeks of purchases are compared
     M3_MIN_RECEIPTS: int = 2  # fewer purchases of a product in the window: no conclusion
@@ -244,6 +252,42 @@ DEFS: tuple[ParamDef, ...] = (
         "",
         D(0),
         D(100000),
+    ),
+    ParamDef(
+        "M2_ME_POPULARITY",
+        "M2",
+        "Меню-инжиниринг: популярное блюдо — от",
+        "%",
+        "равной доли продаж своей категории",
+        D(10),
+        D(100),
+        PCT,
+    ),
+    ParamDef(
+        "M2_ME_LOW_MARGIN", "M2", "Низкая маржа — ниже", "%", "средней маржи категории", D(10), D(100), PCT
+    ),
+    ParamDef(
+        "M2_ME_HIGH_MARGIN", "M2", "Высокая маржа — выше", "%", "средней маржи категории", D(100), D(300), PCT
+    ),
+    ParamDef(
+        "M2_ME_PRICE_RISE",
+        "M2",
+        "Популярное с низкой маржой: рост цены",
+        "%",
+        "в следующем меню",
+        D(1),
+        D(30),
+        PCT,
+    ),
+    ParamDef(
+        "M2_ME_PROMO_GROWTH",
+        "M2",
+        "Выгодное, но редкое: рост продаж от продвижения",
+        "%",
+        "за счет других блюд категории",
+        D(1),
+        D(100),
+        PCT,
     ),
     ParamDef("M3_WINDOW_DAYS", "M3", "Окно сравнения цен ресторанов", "дней", "", D(14), D(180)),
     ParamDef("M3_OVERPAY", "M3", "Насколько дороже типичной цены сети", "%", "", D(1), D(50), PCT),
