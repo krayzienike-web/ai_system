@@ -120,6 +120,24 @@ Confidence = Literal["high", "medium", "low"]
 FindingStatusName = Literal["new", "in_work", "in_experiment", "resolved", "dismissed"]
 
 
+class StoryMemberOut(BaseModel):
+    id: UUID
+    title: str
+    module: str | None
+    kind: Kind
+    effect_rub_month: Decimal | None
+    restaurant_code: str | None
+
+
+class StoryOut(BaseModel):
+    """Linked findings (docs/12): one cause seen from several sides; the sum is the largest one's."""
+
+    key: str
+    title: str
+    effect_rub_month: Decimal | None
+    findings: list[StoryMemberOut]
+
+
 class FindingOut(BaseModel):
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -152,6 +170,7 @@ class FindingOut(BaseModel):
     restaurant_name: str | None = None
     # How it is shown: summary, causes, metric, confidence_note, scale, composition, chart, table (ADR 0007).
     view: FindingView | None = None
+    story: StoryOut | None = None  # the other findings of the same cause this user may see
 
 
 class FindingDetailOut(FindingOut):
@@ -162,8 +181,16 @@ class FindingDetailOut(FindingOut):
 
 def finding_out(v: VisibleFinding) -> FindingOut:
     """A finding for the screens: what `insights.visible` lets this user see, nothing more."""
-    fields = {k: getattr(v, k) for k in FindingOut.model_fields if k != "work"}
-    return FindingOut(**fields, work=WorkOut(**v.work.__dict__))
+    fields = {k: getattr(v, k) for k in FindingOut.model_fields if k not in ("work", "story")}
+    story = None
+    if v.story is not None:
+        story = StoryOut(
+            key=v.story.key,
+            title=v.story.title,
+            effect_rub_month=v.story.effect_rub_month,
+            findings=[StoryMemberOut(**m.__dict__) for m in v.story.findings],
+        )
+    return FindingOut(**fields, work=WorkOut(**v.work.__dict__), story=story)
 
 
 def findings_out(session: Session, ctx: AccessContext, items: list[FindingWork]) -> list[FindingOut]:

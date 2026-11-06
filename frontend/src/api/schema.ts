@@ -391,6 +391,7 @@ export interface FindingDetailOut {
   restaurant_code?: string | null;
   restaurant_name?: string | null;
   view?: FindingView | null;
+  story?: StoryOut | null;
   tasks: TaskOut[];
   check: CheckRef | null;
   result_answer: string | null;
@@ -423,6 +424,7 @@ export interface FindingOut {
   restaurant_code?: string | null;
   restaurant_name?: string | null;
   view?: FindingView | null;
+  story?: StoryOut | null;
   /** «около … в год»: the monthly effect × 12. */
   effect_rub_year: string | null;
 }
@@ -848,6 +850,23 @@ export interface SourceGroupOut {
 export interface SourcesOut {
   note: string;
   groups: SourceGroupOut[];
+}
+
+export interface StoryMemberOut {
+  id: string;
+  title: string;
+  module: string | null;
+  kind: "problem" | "opportunity";
+  effect_rub_month: string | null;
+  restaurant_code: string | null;
+}
+
+/** Linked findings (docs/12): one cause seen from several sides; the sum is the largest one's. */
+export interface StoryOut {
+  key: string;
+  title: string;
+  effect_rub_month: string | null;
+  findings: StoryMemberOut[];
 }
 
 export interface TableView {

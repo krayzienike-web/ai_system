@@ -94,10 +94,17 @@ def _open(session: Session, today: date, restaurant_id: UUID | None = None) -> l
 
 
 def _sum(items: list[FindingWork], kind: str | None = None) -> Decimal:
-    return sum(
-        (fw.finding.effect_rub_month or ZERO for fw in items if kind is None or fw.finding.kind == kind),
-        ZERO,
-    )
+    """The money of these findings; a story's findings (one cause, docs/12) count once — the largest one."""
+    total, stories = ZERO, dict[str, Decimal]()
+    for fw in items:
+        f = fw.finding
+        if kind is not None and f.kind != kind:
+            continue
+        if f.story_key:
+            stories[f.story_key] = max(stories.get(f.story_key, ZERO), f.effect_rub_month or ZERO)
+        else:
+            total += f.effect_rub_month or ZERO
+    return total + sum(stories.values(), ZERO)
 
 
 @dataclass

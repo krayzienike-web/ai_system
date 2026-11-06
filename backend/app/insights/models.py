@@ -67,6 +67,9 @@ class Finding(IdMixin, TenantMixin, TimestampMixin, Base):
     period_from: Mapped[date | None] = mapped_column(Date)
     period_to: Mapped[date | None] = mapped_column(Date)
     evidence: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    # Linked findings (docs/12): findings with one cause share a story; its sum is its largest finding's.
+    story_key: Mapped[str | None] = mapped_column(String(200))
+    story_title: Mapped[str | None] = mapped_column(String(300))
     # Manual review of engine findings (docs/12): pending → confirmed | rejected.
     # Directors see only confirmed ones (row-level security).
     review_status: Mapped[str | None] = mapped_column(String(20))

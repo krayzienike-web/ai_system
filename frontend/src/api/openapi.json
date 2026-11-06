@@ -2545,6 +2545,16 @@
       "title": "Status",
       "type": "string"
      },
+     "story": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/StoryOut"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
      "tasks": {
       "items": {
        "$ref": "#/components/schemas/TaskOut"
@@ -2835,6 +2845,16 @@
       ],
       "title": "Status",
       "type": "string"
+     },
+     "story": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/StoryOut"
+       },
+       {
+        "type": "null"
+       }
+      ]
      },
      "title": {
       "title": "Title",
@@ -5223,6 +5243,109 @@
      "groups"
     ],
     "title": "SourcesOut",
+    "type": "object"
+   },
+   "StoryMemberOut": {
+    "properties": {
+     "effect_rub_month": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Effect Rub Month"
+     },
+     "id": {
+      "format": "uuid",
+      "title": "Id",
+      "type": "string"
+     },
+     "kind": {
+      "enum": [
+       "problem",
+       "opportunity"
+      ],
+      "title": "Kind",
+      "type": "string"
+     },
+     "module": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Module"
+     },
+     "restaurant_code": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Restaurant Code"
+     },
+     "title": {
+      "title": "Title",
+      "type": "string"
+     }
+    },
+    "required": [
+     "id",
+     "title",
+     "module",
+     "kind",
+     "effect_rub_month",
+     "restaurant_code"
+    ],
+    "title": "StoryMemberOut",
+    "type": "object"
+   },
+   "StoryOut": {
+    "description": "Linked findings (docs/12): one cause seen from several sides; the sum is the largest one's.",
+    "properties": {
+     "effect_rub_month": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Effect Rub Month"
+     },
+     "findings": {
+      "items": {
+       "$ref": "#/components/schemas/StoryMemberOut"
+      },
+      "title": "Findings",
+      "type": "array"
+     },
+     "key": {
+      "title": "Key",
+      "type": "string"
+     },
+     "title": {
+      "title": "Title",
+      "type": "string"
+     }
+    },
+    "required": [
+     "key",
+     "title",
+     "effect_rub_month",
+     "findings"
+    ],
+    "title": "StoryOut",
     "type": "object"
    },
    "TableView": {

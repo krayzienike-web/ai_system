@@ -103,3 +103,15 @@ test("TC-UI-07: a network finding's task goes to the restaurants chosen, with th
   await expect(page.getByText("Задача поставлена директорам: 2")).toBeVisible();
   await expect(page.getByText("Цена выросла по всей сети: Лосось охлажденный")).toHaveCount(0);
 });
+
+test("TC-UI-24: linked findings show their story on the card and lead to each other (stage 6.5)", async ({ page }) => {
+  await signInAs(page, "admin@demo.local");
+  await open(page, /^Находки$/);
+  await page.getByRole("link", { name: /Затоваривание: Сливки 33%/ }).first().click();
+  await expect(page.getByText("Это одна история?")).toBeVisible();
+  await expect(page.getByText("Закупают больше, чем успевают использовать: Сливки 33%")).toBeVisible();
+  await expect(page.getByText(/в итогах — один раз/)).toBeVisible();
+  await page.getByRole("link", { name: "Списания выше сети: Сливки 33%" }).click();
+  await expect(page.getByRole("heading", { name: "Списания выше сети: Сливки 33%" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Затоваривание: Сливки 33%" })).toBeVisible();
+});

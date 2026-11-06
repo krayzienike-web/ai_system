@@ -32,6 +32,21 @@ from app.tenancy.models import Restaurant, Role, RoleAssignment, User
 from tests.conftest import PASSWORD, Network, hq_task, login
 
 D = Decimal
+
+
+def money(findings: list[dict[str, Any]]) -> Decimal:
+    """The findings' sum as the screens count it: a story's findings (docs/12) once — the largest."""
+    stories: dict[str, Decimal] = {}
+    single = D(0)
+    for f in findings:
+        if f["story"]:
+            key = f["story"]["key"]
+            stories[key] = max(stories.get(key, D(0)), D(f["effect_rub_month"] or 0))
+        else:
+            single += D(f["effect_rub_month"] or 0)
+    return single + sum(stories.values(), D(0))
+
+
 TODAY = date(2026, 10, 20)
 
 
@@ -181,7 +196,7 @@ def test_overview_screens_follow_the_access_rules(
     # The money on the table is the sum of the open checked findings, the most expensive restaurant first.
     findings = client.get("/api/findings", headers=hq).json()
     open_problems = [f for f in findings if f["status"] != "resolved" and f["kind"] == "problem"]
-    assert D(net["losses"]) == sum(D(f["effect_rub_month"] or 0) for f in open_problems)
+    assert D(net["losses"]) == money(open_problems)
     # R05's cashier with discounts far above the others' (M8) is the costliest since stage 6.5
     assert net["ranking"][0]["code"] == "R05" and net["ranking"][0]["top_problem"].endswith("таб. 104")
     assert net["checks_waiting"] == 1 and net["completed_checks"] == 2 and net["overdue_tasks"] == 2
@@ -363,9 +378,7 @@ def test_findings_board_filters_counts_and_sums(
     findings = client.get("/api/findings", headers=hq).json()
     assert board["stage_counts"]["all"] == len(findings)
     problems = next(k for k in board["kinds"] if k["kind"] == "problem")
-    assert D(problems["total"]) == sum(
-        D(f["effect_rub_month"] or 0) for f in findings if f["kind"] == "problem"
-    )
+    assert D(problems["total"]) == money([f for f in findings if f["kind"] == "problem"])
     # The most expensive first; findings without a ruble estimate in their own group, last.
     first = board["groups"][0]
     assert first["key"] == "problem"

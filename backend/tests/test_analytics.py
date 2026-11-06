@@ -634,6 +634,42 @@ def test_review_can_be_switched_off(
     }
 
 
+def test_linked_findings_show_their_story_to_those_who_may_see_it(
+    client: TestClient, network: Network, demo: dict[str, UUID], owner_engine: Engine
+) -> None:
+    """TC-ENG-33: one cause, one story — HQ sees all of it, a director only their restaurant's findings."""
+    hq = login(client, "admin@a.ru")
+    body = client.get("/api/settings/norms", headers=hq).json()
+    client.put("/api/settings/norms", headers=hq, json={**body, "review_findings": False})
+    client.post("/api/analytics/run", headers=hq)
+    every = client.get("/api/findings", headers=hq).json()
+    by_title = {(f["restaurant_code"], f["title"]): f for f in every}
+    salmon = by_title[(None, "Цена выросла по всей сети: Лосось охлажденный")]["story"]
+    assert salmon["title"] == "Подорожал лосось охлажденный: вырос фудкост блюд"
+    assert [m["title"] for m in salmon["findings"]] == ["Фудкост выше целевого: Лосось на гриле"]
+    cream = by_title[("R06", "Затоваривание: Сливки 33%")]
+    assert [m["title"] for m in cream["story"]["findings"]] == ["Списания выше сети: Сливки 33%"]
+    # One sum for the story: the larger of the two, not both.
+    assert Decimal(cream["story"]["effect_rub_month"]) == max(
+        Decimal(cream["effect_rub_month"]),
+        Decimal(by_title[("R06", "Списания выше сети: Сливки 33%")]["effect_rub_month"]),
+    )
+    for f in client.get("/api/overview/awaiting", headers=hq).json():
+        if f["restaurant_code"] == "R01":
+            hq_task(owner_engine, UUID(f["id"]))
+    director = login(client, "r01@a.ru")
+    mine = client.get("/api/findings", headers=director).json()
+    rucola = next(f for f in mine if f["title"] == "Списания выше сети: Руккола")
+    assert [(m["title"], m["restaurant_code"]) for m in rucola["story"]["findings"]] == [
+        ("Затоваривание: Руккола", "R01")
+    ]
+    # Nothing of another restaurant or of the network reaches a director through a story.
+    members = [m for f in mine if f["story"] for m in f["story"]["findings"]]
+    assert members and all(m["restaurant_code"] == "R01" for m in members)
+    card = client.get(f"/api/findings/{rucola['id']}", headers=director).json()
+    assert card["story"]["title"] == "Закупают больше, чем успевают использовать: Руккола"
+
+
 def test_engine_run_is_hq_admin_only(network: Network) -> None:
     with get_sessionmaker()() as session:
         ctx = load_access_context(session, network.a.users["director1@a.ru"], network.a.id)

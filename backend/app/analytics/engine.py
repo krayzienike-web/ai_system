@@ -12,7 +12,7 @@ from uuid import UUID
 from sqlalchemy import delete, select, text
 from sqlalchemy.orm import Session
 
-from app.analytics import kpi, m1, m2, m3, m4, m5, m6, m7, m8, params, views
+from app.analytics import kpi, links, m1, m2, m3, m4, m5, m6, m7, m8, params, views
 from app.analytics.costs import CostBook
 from app.analytics.drafts import Draft
 from app.analytics.facts import Facts, load_facts
@@ -29,7 +29,7 @@ from app.tenancy.audit import audit
 from app.tenancy.context import AccessContext
 from app.tenancy.permissions import Permission
 
-ALGORITHM_VERSION = "engine-8"  # M2 menu engineering (7: M3 price jump; 6: M8 till, M6 overstock)
+ALGORITHM_VERSION = "engine-9"  # linked findings (8: M2 menu engineering; 7: M3 jump; 6: M8, M6 overstock)
 MODULES = (
     "M1",
     "M2",
@@ -74,6 +74,7 @@ def analyse(facts: Facts, norms: Norms, cfg: EngineParams = DEFAULT) -> tuple[li
     )
     for d in drafts:
         d.view = views.build(d, facts)
+    links.link(drafts, facts)
     return drafts, kpi.compute(facts, m1_rows, costs)
 
 
@@ -184,6 +185,7 @@ def run(session: Session, ctx: AccessContext, today: date, *, as_of: date | None
         f.effect_rub_month, f.effect_note = d.effect_rub_month, d.effect_note
         f.confidence, f.period_from, f.period_to = d.confidence, d.period_from, d.period_to
         f.actions, f.evidence, f.view = d.actions, d.evidence, d.view
+        f.story_key, f.story_title = d.story_key, d.story_title
         f.algorithm_version = ALGORITHM_VERSION
     stale = [f.id for f in existing.values()]
     worked_on = set(session.execute(select(Task.finding_id).where(Task.finding_id.in_(stale))).scalars())

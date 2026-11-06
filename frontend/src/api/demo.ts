@@ -195,7 +195,17 @@ function tasksOf(v: Viewer, late: boolean): ApiTask[] {
 
 const GROUP_TITLE = { problem: "Где теряем", opportunity: "Где можно заработать", unestimated: "Без оценки в рублях — но важно для точности" };
 const PROCESS_ORDER = ["purchasing", "receiving", "storage", "production", "writeoffs", "inventory", "accounting", "planning"];
-const sum = (items: ApiFinding[]) => items.reduce((acc, f) => acc + Number(f.effect_rub_month ?? 0), 0).toFixed(2);
+/** The findings' money as the server counts it: a story's findings (one cause, docs/12) once — the largest. */
+const sum = (items: ApiFinding[]) => {
+  const stories = new Map<string, number>();
+  let single = 0;
+  for (const f of items) {
+    const effect = Number(f.effect_rub_month ?? 0);
+    if (f.story) stories.set(f.story.key, Math.max(stories.get(f.story.key) ?? 0, effect));
+    else single += effect;
+  }
+  return [...stories.values()].reduce((acc, v) => acc + v, single).toFixed(2);
+};
 
 export function board(scope: ApiFinding[], q: URLSearchParams): FindingBoard {
   const kind = q.get("kind");

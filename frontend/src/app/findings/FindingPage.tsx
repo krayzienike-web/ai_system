@@ -10,7 +10,7 @@ import { VerifiedNote } from "../../ds/ai";
 import { SourceDocuments } from "./Sources";
 import { Button, buttonClass, Card, EmptyState, Pill, QuestionBlock, Reveal, Skeleton } from "../../ds/primitives";
 import { BulletScale, CompositionBar, CycleSteps } from "../../ds/viz";
-import { ddmm, money, num, perMonth, rub } from "../../lib/format";
+import { ddmm, MODULE_TITLE, money, num, perMonth, rub } from "../../lib/format";
 import { useViewer } from "../../lib/useViewer";
 import { useUi } from "../../state/ui";
 import { QuickSteps, TaskTrace } from "../tasks/trace";
@@ -29,6 +29,41 @@ export function FindingPage() {
   }
   if (!finding.data) return <Skeleton className="mx-auto h-96 max-w-[1040px]" />;
   return <FindingView key={finding.data.id} f={finding.data} isHq={viewer.isHq} />;
+}
+
+/** Linked findings (docs/12): one cause seen from several sides, one sum — not their total. */
+function StoryBlock({ story, isHq }: { story: NonNullable<FindingDetail["story"]>; isHq: boolean }) {
+  const total = money(story.effect_rub_month);
+  return (
+    <Reveal index={1}>
+      <QuestionBlock
+        question="Это одна история?"
+        answer={story.title}
+        source={
+          <VerifiedNote>
+            {total
+              ? `находки считают одни и те же деньги: в итогах — один раз, ${perMonth(total)}`
+              : "находки с одной причиной: решаются вместе"}
+          </VerifiedNote>
+        }
+      >
+        <ul className="space-y-2 text-sm">
+          {story.findings.map((m) => (
+            <li key={m.id} className="flex flex-wrap items-baseline gap-x-2">
+              <Link to="/findings/$findingId" params={{ findingId: m.id }} className="font-medium text-brand-strong hover:underline">
+                {m.title}
+              </Link>
+              <span className="text-ink-3">
+                {[m.module ? MODULE_TITLE[m.module] : null, isHq ? m.restaurant_code ?? "вся сеть" : null, money(m.effect_rub_month) ? perMonth(money(m.effect_rub_month)!) : null]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </span>
+            </li>
+          ))}
+        </ul>
+      </QuestionBlock>
+    </Reveal>
+  );
 }
 
 function FindingView({ f, isHq }: { f: FindingDetail; isHq: boolean }) {
@@ -95,6 +130,8 @@ function FindingView({ f, isHq }: { f: FindingDetail; isHq: boolean }) {
           )}
         </section>
       </Reveal>
+
+      {f.story && <StoryBlock story={f.story} isHq={isHq} />}
 
       <div className="grid gap-6 lg:grid-cols-2">
         {scale && scale.me !== null && (
