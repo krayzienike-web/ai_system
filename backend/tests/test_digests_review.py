@@ -77,6 +77,10 @@ def test_p1_a_restaurants_digest_holds_no_network_revenue(
     assert shown["network_average"]["revenue"] is None and network_revenue not in json.dumps(
         shown, ensure_ascii=False
     )
+    # TC-ENG-35: the week's digest says how far its numbers can be trusted
+    assert shown["kpis"]["data_quality"] == "90 из 100" and shown["network_average"]["data_quality"].endswith(
+        "из 100"
+    )
 
 
 @pytest.mark.usefixtures("demo")

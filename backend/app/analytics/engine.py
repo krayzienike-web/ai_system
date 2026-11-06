@@ -5,14 +5,14 @@ status and the work (tasks, checks). A finding that is no longer detected disapp
 started working on it; otherwise it stays as it is for a person to close.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from uuid import UUID
 
 from sqlalchemy import delete, select, text
 from sqlalchemy.orm import Session
 
-from app.analytics import kpi, links, m1, m2, m3, m4, m5, m6, m7, m8, params, views
+from app.analytics import kpi, links, m1, m2, m3, m4, m5, m6, m7, m8, params, quality, views
 from app.analytics.costs import CostBook
 from app.analytics.drafts import Draft
 from app.analytics.facts import Facts, load_facts
@@ -29,7 +29,7 @@ from app.tenancy.audit import audit
 from app.tenancy.context import AccessContext
 from app.tenancy.permissions import Permission
 
-ALGORITHM_VERSION = "engine-9"  # linked findings (8: M2 menu engineering; 7: M3 jump; 6: M8, M6 overstock)
+ALGORITHM_VERSION = "engine-10"  # data quality score (9: links; 8: M2 menu; 7: M3 jump; 6: M8, M6 overstock)
 MODULES = (
     "M1",
     "M2",
@@ -75,7 +75,13 @@ def analyse(facts: Facts, norms: Norms, cfg: EngineParams = DEFAULT) -> tuple[li
     for d in drafts:
         d.view = views.build(d, facts)
     links.link(drafts, facts)
-    return drafts, kpi.compute(facts, m1_rows, costs)
+    scores = quality.score(drafts, facts)
+    quality.apply(drafts, scores, cfg)
+    kpis = [
+        replace(k, data_quality=q.score, data_quality_parts=q.parts) if (q := scores.get(k.restaurant)) else k
+        for k in kpi.compute(facts, m1_rows, costs)
+    ]
+    return drafts, kpis
 
 
 def detect(facts: Facts, norms: Norms, cfg: EngineParams = DEFAULT) -> list[Draft]:
@@ -114,6 +120,8 @@ def _store_kpis(session: Session, tenant_id: UUID, kpis: list[kpi.Kpi], today: d
             write_offs_from=k.write_offs_from,
             write_offs_to=k.write_offs_to,
             write_offs_share=k.write_offs_share,
+            data_quality=k.data_quality,
+            data_quality_parts=k.data_quality_parts,
         )
         for k in kpis
     )

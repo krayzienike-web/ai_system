@@ -222,6 +222,11 @@ export interface ContextOut {
   assistant?: boolean;
 }
 
+export interface DataQualityPartOut {
+  label: string;
+  points: number;
+}
+
 export interface DecisionIn {
   accepted: boolean;
   note?: string | null;
@@ -251,7 +256,8 @@ export interface DigestKpisOut {
   food_cost_theory: string | null;
   write_offs_share_of_revenue: string | null;
   food_cost_period: string | null;
-  revenue: string | null;
+  revenue?: string | null;
+  data_quality?: string | null;
 }
 
 export interface DigestOut {
@@ -544,6 +550,8 @@ export interface KpiOut {
   food_cost_to: string | null;
   write_offs_from?: string | null;
   write_offs_to?: string | null;
+  data_quality?: number | null;
+  data_quality_parts?: DataQualityPartOut[];
 }
 
 /** When the findings were last recomputed, and whether a run is waiting or going on now. */
@@ -994,6 +1002,7 @@ export interface WeekOut {
   kpi: KpiOut | null;
   network_kpi: KpiOut | null;
   kpi_answer: string | null;
+  data_quality_answer?: string | null;
   stock_risks: Record<string, string>[];
   done_tasks: TaskOut[];
   results_answer: string;

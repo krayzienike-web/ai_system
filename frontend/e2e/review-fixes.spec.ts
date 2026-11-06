@@ -115,3 +115,10 @@ test("TC-UI-24: linked findings show their story on the card and lead to each ot
   await expect(page.getByRole("heading", { name: "Списания выше сети: Сливки 33%" })).toBeVisible();
   await expect(page.getByRole("link", { name: "Затоваривание: Сливки 33%" })).toBeVisible();
 });
+
+test("TC-UI-25: the director's week says how far the numbers can be trusted (data quality score)", async ({ page }) => {
+  await signInAs(page, "director1@demo.local");
+  await expect(page.getByText("Можно ли верить цифрам?")).toBeVisible();
+  await expect(page.getByText(/Качество данных — \d+ из 100/)).toBeVisible();
+  await expect(page.getByText(/Продается блюдо без техкарты: −10/)).toBeVisible();
+});

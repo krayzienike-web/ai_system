@@ -126,6 +126,8 @@ def _kpis(row: KpiSnapshot | None, *, revenue: bool = True) -> dict[str, Any] | 
         "food_cost_period": f"{row.food_cost_from:%d.%m.%Y}–{row.food_cost_to:%d.%m.%Y}"
         if row.food_cost_from and row.food_cost_to
         else None,
+        # 0–100: how far the week's numbers can be trusted (docs/12, «Оценка качества данных»)
+        "data_quality": None if row.data_quality is None else f"{row.data_quality} из 100",
     }
     if revenue:
         out["revenue"] = money(row.revenue)

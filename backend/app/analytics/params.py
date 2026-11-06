@@ -93,6 +93,7 @@ class EngineParams:
     M7_NEGATIVE_DAYS: Decimal = Decimal(3)  # the books below zero by more than three days of use
     M7_HISTORY_DAYS: int = 56  # the usual pause: over the last 8 weeks of the restaurant's data
     M7_PRICE_TIMES: Decimal = Decimal(3)  # an invoice price 3 times off the network's typical is an error
+    M7_DQ_LOW: int = 60  # a data quality score below this lowers the confidence of the restaurant's findings
     M7_COUNT_HISTORY: int = 2  # «usually counted»: in each of the restaurant's 2 counts before the last one
     # M8 — the till (stage 6.5): removals after the check was printed and discounts, by cashier
     M8_WINDOW_DAYS: int = 28
@@ -478,6 +479,15 @@ DEFS: tuple[ParamDef, ...] = (
         "меньше — шум округлений и неточных техкарт",
         D(1),
         D(30),
+    ),
+    ParamDef(
+        "M7_DQ_LOW",
+        "M7",
+        "Низкое качество данных — оценка ниже",
+        "из 100",
+        "уверенность находок ресторана снижается на ступень",
+        D(10),
+        D(100),
     ),
     ParamDef(
         "M7_PRICE_TIMES",

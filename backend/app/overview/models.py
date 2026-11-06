@@ -1,8 +1,10 @@
 from datetime import date
 from decimal import Decimal
+from typing import Any
 from uuid import UUID
 
-from sqlalchemy import Date, ForeignKey, Numeric
+from sqlalchemy import Date, ForeignKey, Integer, Numeric
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.models import Base, IdMixin, TenantMixin, TimestampMixin
@@ -26,6 +28,9 @@ class KpiSnapshot(IdMixin, TenantMixin, TimestampMixin, Base):
     write_offs_from: Mapped[date | None] = mapped_column(Date)
     write_offs_to: Mapped[date | None] = mapped_column(Date)
     write_offs_share: Mapped[Decimal | None] = mapped_column(Numeric(8, 6))
+    # The data quality score, 0–100 (docs/12): what lowered it, by the data findings of the run.
+    data_quality: Mapped[int | None] = mapped_column(Integer)
+    data_quality_parts: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
 
 
 class TrendPoint(IdMixin, TenantMixin, TimestampMixin, Base):

@@ -57,7 +57,8 @@ class DigestKpisOut(BaseModel):
     food_cost_theory: str | None
     write_offs_share_of_revenue: str | None
     food_cost_period: str | None
-    revenue: str | None
+    revenue: str | None = None
+    data_quality: str | None = None  # «80 из 100»
 
 
 class OnTableOut(BaseModel):

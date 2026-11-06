@@ -218,6 +218,12 @@ def test_overview_screens_follow_the_access_rules(
     assert all(f["restaurant_code"] == "R01" for f in week["top"])
     assert week["network_kpi"]["food_cost_actual"] and week["kpi"]["food_cost_actual"]
     assert week["kpi_answer"].startswith("Фудкост на ")
+    # TC-ENG-35: the data quality score — R01 sells the soup without a recipe; what took points off, in words,
+    # with no finding keys (the network's soup finding is HQ's).
+    assert week["kpi"]["data_quality"] == 90
+    assert week["kpi"]["data_quality_parts"] == [{"label": "Продается блюдо без техкарты", "points": 10}]
+    assert week["network_kpi"]["data_quality_parts"] == [] and 0 < week["network_kpi"]["data_quality"] <= 100
+    assert week["data_quality_answer"].startswith("Качество данных — 90 из 100 (хорошее), в среднем по сети")
     assert week["results_answer"].startswith("Ваши задачи уже приносят +")  # the rocket task
     # Another restaurant of the network and another network: not found, like a missing one.
     assert client.get("/api/overview/restaurants/R02", headers=director).status_code == 404

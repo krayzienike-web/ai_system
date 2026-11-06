@@ -1460,6 +1460,24 @@
     "title": "ContextOut",
     "type": "object"
    },
+   "DataQualityPartOut": {
+    "properties": {
+     "label": {
+      "title": "Label",
+      "type": "string"
+     },
+     "points": {
+      "title": "Points",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "label",
+     "points"
+    ],
+    "title": "DataQualityPartOut",
+    "type": "object"
+   },
    "DecisionIn": {
     "properties": {
      "accepted": {
@@ -1603,6 +1621,17 @@
    },
    "DigestKpisOut": {
     "properties": {
+     "data_quality": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Data Quality"
+     },
      "food_cost_actual": {
       "anyOf": [
        {
@@ -1663,8 +1692,7 @@
      "food_cost_actual",
      "food_cost_theory",
      "write_offs_share_of_revenue",
-     "food_cost_period",
-     "revenue"
+     "food_cost_period"
     ],
     "title": "DigestKpisOut",
     "type": "object"
@@ -3457,6 +3485,25 @@
    },
    "KpiOut": {
     "properties": {
+     "data_quality": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Data Quality"
+     },
+     "data_quality_parts": {
+      "default": [],
+      "items": {
+       "$ref": "#/components/schemas/DataQualityPartOut"
+      },
+      "title": "Data Quality Parts",
+      "type": "array"
+     },
      "food_cost_actual": {
       "anyOf": [
        {
@@ -6029,6 +6076,17 @@
    },
    "WeekOut": {
     "properties": {
+     "data_quality_answer": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Data Quality Answer"
+     },
      "delta_week": {
       "anyOf": [
        {

@@ -214,6 +214,38 @@ export function WeekView({ code, readOnly = false }: { code: string; readOnly?: 
         </QuestionBlock>
       </Reveal>
 
+      {/* 4a. Can the numbers be trusted? (data quality score, docs/12) */}
+      {me?.data_quality !== null && me?.data_quality !== undefined && (
+        <Reveal index={4}>
+          <QuestionBlock
+            question="Можно ли верить цифрам?"
+            answer={w.data_quality_answer}
+            source={<VerifiedNote>оценку считает движок по найденным проблемам в данных ресторана; ниже 60 — уверенность находок снижается</VerifiedNote>}
+          >
+            <div className="max-w-md">
+              <div className="text-sm font-medium">Качество данных, из 100</div>
+              <BulletScale
+                me={me.data_quality}
+                network={net?.data_quality ?? undefined}
+                max={100}
+                lowerIsBetter={false}
+                format={(n) => `${n}`}
+                meLabel={readOnly ? "Ресторан" : "Вы"}
+              />
+            </div>
+            {!!me.data_quality_parts?.length && (
+              <ul className="mt-3 space-y-1 text-sm text-ink-2">
+                {me.data_quality_parts.map((p) => (
+                  <li key={p.label}>
+                    {p.label}: −{p.points}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </QuestionBlock>
+        </Reveal>
+      )}
+
       {/* 4. Me vs network */}
       {me && net && (
         <Reveal index={4}>

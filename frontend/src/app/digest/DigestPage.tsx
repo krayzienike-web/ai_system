@@ -235,6 +235,7 @@ function Kpis({ d }: { d: Digest }) {
     ["Фудкост по техкартам", "food_cost_theory"],
     ["Списания от выручки", "write_offs_share_of_revenue"],
     ["Выручка за период фудкоста", "revenue"],
+    ["Качество данных", "data_quality"],
   ];
   if (!d.kpis) return null;
   const net = d.network_average;

@@ -96,6 +96,11 @@ class CommonOut(BaseModel):
     finding_id: UUID | None
 
 
+class DataQualityPartOut(BaseModel):
+    label: str
+    points: int
+
+
 class KpiOut(BaseModel):
     food_cost_actual: Decimal | None
     food_cost_theory: Decimal | None
@@ -104,6 +109,8 @@ class KpiOut(BaseModel):
     food_cost_to: date | None
     write_offs_from: date | None = None
     write_offs_to: date | None = None
+    data_quality: int | None = None  # 0–100, as of the engine's last run (docs/12)
+    data_quality_parts: list[DataQualityPartOut] = []
 
 
 class ProcessTitleOut(BaseModel):
@@ -179,6 +186,7 @@ class WeekOut(BaseModel):
     kpi: KpiOut | None
     network_kpi: KpiOut | None
     kpi_answer: str | None
+    data_quality_answer: str | None = None  # «Можно ли верить цифрам?»
     stock_risks: list[dict[str, str]]  # M6 is not built yet: always empty
     done_tasks: list[TaskOut]
     results_answer: str
@@ -308,6 +316,7 @@ def get_restaurant(code: str, ctx: CanRead, session: SessionDep, today: TodayDep
         kpi=kpi(w.kpi),
         network_kpi=kpi(w.network_kpi),
         kpi_answer=w.kpi_answer,
+        data_quality_answer=w.data_quality_answer,
         stock_risks=[],
         done_tasks=tasks_out(session, w.done_tasks, today),
         results_answer=w.results_answer,

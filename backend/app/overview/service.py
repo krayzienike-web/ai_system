@@ -434,6 +434,8 @@ class Kpis:
     food_cost_to: date | None
     write_offs_from: date | None = None
     write_offs_to: date | None = None
+    data_quality: int | None = None  # 0–100 (analytics/quality.py, docs/12)
+    data_quality_parts: list[dict[str, Any]] = field(default_factory=list)  # {label, points}
 
 
 @dataclass
@@ -451,6 +453,7 @@ class RestaurantWeek:
     kpi: Kpis | None
     network_kpi: Kpis | None
     kpi_answer: str | None
+    data_quality_answer: str | None
     done_tasks: list[Task]
     results_answer: str
 
@@ -487,7 +490,24 @@ def _kpis(row: KpiSnapshot | None) -> Kpis | None:
         row.food_cost_to,
         row.write_offs_from,
         row.write_offs_to,
+        row.data_quality,
+        # what lowered it, in words and points: the finding keys stay on the server
+        [{"label": p["label"], "points": p["points"]} for p in row.data_quality_parts or []],
     )
+
+
+def _data_quality_answer(me: Kpis | None, net: Kpis | None) -> str | None:
+    """«Можно ли верить цифрам?» in words: the restaurant's score, what took points off, the network's."""
+    if me is None or me.data_quality is None:
+        return None
+    level = "хорошее" if me.data_quality >= 80 else "есть пробелы" if me.data_quality >= 60 else "низкое"
+    text = f"Качество данных — {me.data_quality} из 100 ({level})"
+    if net is not None and net.data_quality is not None:
+        text += f", в среднем по сети {net.data_quality}"
+    if me.data_quality_parts:
+        worst = sorted(me.data_quality_parts, key=lambda p: -int(p["points"]))[:2]
+        text += ". Снижают: " + "; ".join(f"{str(p['label']).lower()} (−{p['points']})" for p in worst)
+    return text + "."
 
 
 def _kpi_answer(me: Kpis | None, net: Kpis | None) -> str | None:
@@ -594,6 +614,7 @@ def restaurant(session: Session, code: str, today: date, *, hq: bool = True) -> 
         kpi=me,
         network_kpi=net,
         kpi_answer=_kpi_answer(me, net),
+        data_quality_answer=_data_quality_answer(me, net),
         done_tasks=done,
         results_answer=_results_answer(done),
     )

@@ -34,6 +34,8 @@ class Kpi:
     write_offs_from: date | None
     write_offs_to: date | None
     write_offs_share: Decimal | None
+    data_quality: int | None = None  # 0–100 (analytics/quality.py)
+    data_quality_parts: list[dict[str, object]] | None = None
 
 
 @dataclass
