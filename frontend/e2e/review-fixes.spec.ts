@@ -116,9 +116,34 @@ test("TC-UI-24: linked findings show their story on the card and lead to each ot
   await expect(page.getByRole("link", { name: "Затоваривание: Сливки 33%" })).toBeVisible();
 });
 
-test("TC-UI-25: the director's week says how far the numbers can be trusted (data quality score)", async ({ page }) => {
+test("TC-UI-25: the week says how far the numbers can be trusted; a director's score tells of nothing they are not shown", async ({ page }) => {
   await signInAs(page, "director1@demo.local");
   await expect(page.getByText("Можно ли верить цифрам?")).toBeVisible();
-  await expect(page.getByText(/Качество данных — \d+ из 100/)).toBeVisible();
-  await expect(page.getByText(/Продается блюдо без техкарты: −10/)).toBeVisible();
+  // the soup without a recipe is a network finding a director never sees: their score is without it
+  await expect(page.getByText("Качество данных — 100 из 100 (хорошее), в среднем по сети 83.")).toBeVisible();
+  await expect(page.getByText(/Продается блюдо без техкарты/)).toHaveCount(0);
+  // HQ's view of the same restaurant (90, with the soup) is checked on the server: test_overview.py, TC-ENG-35
+});
+
+test("TC-UI-26: the digest's KPI table has the data quality row", async ({ page }) => {
+  await signInAs(page, "director1@demo.local");
+  await open(page, /Сводка/);
+  const row = page.getByRole("row").filter({ hasText: "Качество данных" });
+  await expect(row).toContainText("100 из 100");
+  await expect(row).toContainText("83 из 100");
+});
+
+test("TC-UI-27: a story without a sum, and a director's story names only their own findings", async ({ page }) => {
+  await signInAs(page, "admin@demo.local");
+  await open(page, /^Находки$/);
+  await page.getByRole("link", { name: /Расход меньше техкарты: Сыр Моцарелла/ }).first().click();
+  await expect(page.getByText("Не все накладные загружены: Сыр Моцарелла")).toBeVisible();
+  await expect(page.getByText("находки с одной причиной: решаются вместе")).toBeVisible();
+  await page.getByRole("button", { name: /Выйти/ }).first().click();
+  await page.getByRole("button", { name: "Директор ресторана" }).click();
+  await page.getByRole("link", { name: /Все находки ресторана/ }).click();
+  await expect(page.getByRole("link", { name: /Руккола/ }).first()).toBeVisible();
+  for (const link of await page.getByRole("link", { name: /Затоваривание|Списания выше сети/ }).all()) {
+    await expect(link).not.toContainText("Сливки");
+  }
 });

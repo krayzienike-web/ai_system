@@ -67,6 +67,7 @@ def load_lookups(session: Session, restaurant_id: UUID | None = None) -> Lookups
         resolve_restaurant=resolve_restaurant,
         own_restaurant_id=restaurant_id,
         classify_reason=load_norms(session).classify,
+        salt=session.execute(text("SELECT current_setting('app.tenant_id', true)")).scalar_one() or "",
     )
     for p in session.execute(select(Product)).scalars():
         ref = Ref(p.id, p.name, p.base_unit, p.is_semi)

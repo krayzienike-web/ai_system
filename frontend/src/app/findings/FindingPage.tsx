@@ -41,9 +41,11 @@ function StoryBlock({ story, isHq }: { story: NonNullable<FindingDetail["story"]
         answer={story.title}
         source={
           <VerifiedNote>
-            {total
-              ? `находки считают одни и те же деньги: в итогах — один раз, ${perMonth(total)}`
-              : "находки с одной причиной: решаются вместе"}
+            {!total
+              ? "находки с одной причиной: решаются вместе"
+              : story.adds
+                ? `находки считают разные деньги и складываются: ${perMonth(total)}`
+                : `находки считают одни и те же деньги: в итогах — один раз, ${perMonth(total)}`}
           </VerifiedNote>
         }
       >

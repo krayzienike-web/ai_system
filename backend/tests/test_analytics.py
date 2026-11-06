@@ -3,6 +3,7 @@
 from dataclasses import replace
 from datetime import date, timedelta
 from decimal import Decimal
+from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
@@ -678,6 +679,36 @@ def test_linked_findings_show_their_story_to_those_who_may_see_it(
     assert members and all(m["restaurant_code"] == "R01" for m in members)
     card = client.get(f"/api/findings/{rucola['id']}", headers=director).json()
     assert card["story"]["title"] == "Закупают больше, чем успевают использовать: Руккола"
+
+
+def test_a_rejected_data_finding_takes_no_points_off_the_score(
+    client: TestClient, network: Network, demo: dict[str, UUID], owner_engine: Engine
+) -> None:
+    """TC-ENG-35 (code review of stage 6.5, p. 4): HQ rejects R03's «odd prices» — after the next run R03's
+    data quality score no longer loses the 5 points for it."""
+    hq = login(client, "admin@a.ru")
+    client.post("/api/analytics/run", headers=hq)
+
+    def r03() -> dict[str, Any]:
+        kpi: dict[str, Any] = client.get("/api/overview/restaurants/R03", headers=hq).json()["kpi"]
+        return kpi
+
+    before = r03()
+    assert {"label": "Ошибочные цены в накладных", "points": 5} in before["data_quality_parts"]
+    odd = next(
+        f
+        for f in client.get("/api/findings", headers=hq, params={"review": "pending"}).json()
+        if f["restaurant_code"] == "R03" and f["title"].startswith("Цены в накладных")
+    )
+    client.post(
+        f"/api/findings/{odd['id']}/review",
+        headers=hq,
+        json={"verdict": "reject", "reason": "false_alarm", "note": "Бесплатная поставка по акции"},
+    )
+    client.post("/api/analytics/run", headers=hq)
+    after = r03()
+    assert after["data_quality"] == before["data_quality"] + 5
+    assert all(p["label"] != "Ошибочные цены в накладных" for p in after["data_quality_parts"])
 
 
 def test_engine_run_is_hq_admin_only(network: Network) -> None:

@@ -3,7 +3,7 @@
 import { describe, expect, it } from "vitest";
 
 import { ApiError } from "./client";
-import { demoRequest } from "./demo";
+import { board, demoRequest } from "./demo";
 import snapshot from "./demo/snapshot.json";
 import type { ApiFinding, ApiTask, Check, Digest, Disagreement, EngineParam, ImportBatch, Restaurant } from "./types";
 
@@ -397,5 +397,75 @@ describe("demo «Поставить задачу» keeps the server's rules (tes
     expect(mine.finding_title).toBeNull();
     expect(mine.finding_effect_rub_month).toBeNull();
     expect(mine.source).toBe("Поставлено управляющей компанией");
+  });
+
+  it("builds a finding's story for whoever looks, like the server (stage 6.5 review, frontend p. 2)", () => {
+    const all = get<ApiFinding[]>("/findings", ADMIN);
+    const over = all.find((f) => f.title === "Затоваривание: Руккола")!;
+    expect(over.story?.findings.map((m) => m.title)).toEqual(["Списания выше сети: Руккола"]);
+    // The HQ sends both rucola findings to R01: the director sees the story on both cards, naming only these.
+    for (const f of all.filter((x) => x.restaurant_code === "R01" && x.story?.key === over.story?.key)) {
+      if (!get<ApiFinding[]>("/findings", DIRECTOR).some((m) => m.id === f.id))
+        send("/tasks", ADMIN, "POST", { title: f.actions[0] ?? f.title, due_on: "2026-11-10", finding_id: f.id });
+    }
+    const mine = get<ApiFinding[]>("/findings", DIRECTOR);
+    const ids = new Set(mine.map((f) => f.id));
+    const rucola = mine.filter((f) => f.story?.key === over.story?.key);
+    expect(rucola.map((f) => f.title).sort()).toEqual(["Затоваривание: Руккола", "Списания выше сети: Руккола"]);
+    for (const f of mine) for (const m of f.story?.findings ?? []) expect(ids.has(m.id) && m.restaurant_code === "R01").toBe(true);
+    const card = get<ApiFinding>(`/findings/${over.id}`, DIRECTOR);
+    expect(card.story?.findings.map((m) => m.title)).toEqual(["Списания выше сети: Руккола"]);
+  });
+
+  it("counts a story's money once across kinds, and a supplier story's findings add up (frontend p. 1)", () => {
+    const base = get<ApiFinding[]>("/findings", ADMIN)[0]!;
+    const make = (id: string, kind: "problem" | "opportunity", effect: number, key: string | null): ApiFinding => ({
+      ...base,
+      id,
+      kind,
+      process: "purchasing",
+      restaurant_id: null,
+      effect_rub_month: effect.toFixed(2),
+      story: key ? { key, title: key, adds: key.startsWith("supplier:"), effect_rub_month: null, findings: [] } : null,
+    });
+    const scope = [
+      make("a", "problem", 500, "price:net:P09"),
+      make("b", "opportunity", 40, "price:net:P09"), // the same money as «a»: counted 0
+      make("c", "problem", 30, "supplier:R02:P08"),
+      make("d", "problem", 20, "supplier:R02:P08"), // different money: adds up
+      make("e", "opportunity", 7, null),
+    ];
+    const totals = Object.fromEntries(board(scope, new URLSearchParams()).kinds.map((k) => [k.kind, Number(k.total)]));
+    expect(totals).toEqual({ problem: 550, opportunity: 7 });
+  });
+});
+
+describe("the prototype's data quality score follows the server's rules (stage 6.5, TC-UI-25, TC-UI-26)", () => {
+  type Quality = { data_quality: number | null; data_quality_parts: { label: string; points: number }[] };
+  type Week = { kpi: Quality; network_kpi: Quality; data_quality_low: number; data_quality_answer: string };
+  type Kpis = { kpis: { data_quality: string | null }; network_average: { data_quality: string | null } };
+  const week = (token: string) => get<Week>("/overview/restaurants/R01", token);
+
+  it("gives a director the score without the network finding they are not shown, HQ the whole one", () => {
+    const mine = week(DIRECTOR);
+    const whole = week(ADMIN);
+    // HQ: 100 − 10 for the soup sold without a recipe (a network finding); the director: without it
+    expect(whole.kpi.data_quality).toBe(90);
+    expect(whole.kpi.data_quality_parts).toEqual([{ label: "Продается блюдо без техкарты", points: 10 }]);
+    expect(mine.kpi.data_quality).toBe(100);
+    expect(mine.kpi.data_quality_parts).toEqual([]);
+    for (const w of [mine, whole])
+      expect(w.kpi.data_quality).toBe(100 - w.kpi.data_quality_parts.reduce((s, p) => s + p.points, 0));
+    expect(mine.network_kpi.data_quality).toBe(whole.network_kpi.data_quality); // the network's average is one
+  });
+
+  it("says the same on the week and in the digest, with the limit from the server", () => {
+    const mine = week(DIRECTOR);
+    const digest = get<Kpis>("/digests/latest", DIRECTOR);
+    expect(digest.kpis.data_quality).toBe(`${mine.kpi.data_quality} из 100`);
+    expect(digest.network_average.data_quality).toBe(`${mine.network_kpi.data_quality} из 100`);
+    expect(mine.data_quality_answer).toContain(`${mine.kpi.data_quality} из 100`);
+    const low = get<EngineParam[]>("/settings/engine", ADMIN).find((p) => p.key === "M7_DQ_LOW")!;
+    expect(mine.data_quality_low).toBe(Number(low.value));
   });
 });

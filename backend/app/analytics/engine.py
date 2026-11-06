@@ -50,7 +50,9 @@ class RunResult:
     drafts: int
 
 
-def analyse(facts: Facts, norms: Norms, cfg: EngineParams = DEFAULT) -> tuple[list[Draft], list[kpi.Kpi]]:
+def analyse(
+    facts: Facts, norms: Norms, cfg: EngineParams = DEFAULT, rejected: frozenset[str] = frozenset()
+) -> tuple[list[Draft], list[kpi.Kpi]]:
     """Findings of every module and the restaurants' KPIs, from one pass over the facts."""
     usage = Usage(facts)
     costs = CostBook(facts.receipts)
@@ -75,7 +77,8 @@ def analyse(facts: Facts, norms: Norms, cfg: EngineParams = DEFAULT) -> tuple[li
     for d in drafts:
         d.view = views.build(d, facts)
     links.link(drafts, facts)
-    scores = quality.score(drafts, facts)
+    # A finding HQ rejected is no data problem: it takes no points off (code review of stage 6.5, p. 4).
+    scores = quality.score([d for d in drafts if d.key not in rejected], facts)
     quality.apply(drafts, scores, cfg)
     kpis = [
         replace(k, data_quality=q.score, data_quality_parts=q.parts) if (q := scores.get(k.restaurant)) else k
@@ -149,7 +152,18 @@ def run(session: Session, ctx: AccessContext, today: date, *, as_of: date | None
     norms = load_norms(session)
     cfg = params.load(session)
     facts = load_facts(session)
-    drafts, kpis = analyse(facts.until(as_of) if as_of else facts, norms, cfg)
+    rejected = frozenset(
+        k
+        for (k,) in session.execute(
+            select(Finding.key).where(
+                Finding.tenant_id == ctx.tenant_id,
+                Finding.key.is_not(None),
+                Finding.review_status == ReviewStatus.REJECTED,
+            )
+        ).all()
+        if k
+    )
+    drafts, kpis = analyse(facts.until(as_of) if as_of else facts, norms, cfg, rejected)
     keys = [d.key for d in drafts]
     if len(keys) != len(set(keys)):
         raise RuntimeError(

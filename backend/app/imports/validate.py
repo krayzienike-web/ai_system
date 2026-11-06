@@ -55,6 +55,8 @@ class Lookups:
     # Write-off reason of the export → the network's reason code (norms); unknown ones become «other».
     classify_reason: Callable[[str | None], str] = lambda _text: "other"
     unknown_reasons: set[str] = field(default_factory=set)
+    # Salt of a cashier's code: the network's own, so one person's code tells nothing in another network
+    salt: str = ""
 
 
 @dataclass
@@ -308,7 +310,7 @@ def _record(template: str, v: dict[str, Any], lk: Lookups, warn: list[str]) -> d
             "qty": v["qty"],
             "revenue": v["revenue"],
             "discount": v["discount"] or Decimal(0),
-            "cashier": cashier(v.get("cashier")),
+            "cashier": cashier(v.get("cashier"), lk.salt),
         }
     if template == "name_sync":
         # Several names of 1С:ERP (one per supplier) become one product of iiko: network-wide matches.
@@ -399,9 +401,9 @@ def _record(template: str, v: dict[str, Any], lk: Lookups, warn: list[str]) -> d
         return {"day": v["day"], "product_id": product.id, "book_qty": book, "actual_qty": actual}
     if template == "stock_balances":
         product = _product(v, lk)
+        # The books' stock: it may be below zero (a document missing) — that is what M7 catches, not an error
+        # of the file (code review of stage 6.5, p. 5).
         qty = _to_base(v["qty"], v["unit"], product)
-        if qty < 0:
-            raise _RowError("Остаток", "остаток не может быть отрицательным")
         return {"day": v["day"], "product_id": product.id, "qty": qty}
     if template == "voids":
         dish: Ref | None = None
@@ -413,11 +415,11 @@ def _record(template: str, v: dict[str, Any], lk: Lookups, warn: list[str]) -> d
             raise _RowError("Сумма", "сумма удаления не может быть отрицательной")
         return {
             "day": v["day"],
-            "check_no": _text(v["check_no"]),
+            "check_no": _text(v["check_no"], 100),
             "menu_item_id": dish.id if dish else None,
             "qty": v["qty"] if v["qty"] is not None else Decimal(1),
             "amount": v["amount"],
-            "cashier": cashier(v["cashier"]),
+            "cashier": cashier(v["cashier"], lk.salt),
             "after_print": after_print(v["after_print"]),
             "reason": _text(v["reason"]),
         }
@@ -428,28 +430,32 @@ AFTER_PRINT = ("да", "yes", "true", "1", "после", "после печат�
 
 
 def after_print(value: object) -> bool:
-    """«После печати»: yes-words, «после пречека» and the like; empty, «нет», «до печати» — before."""
+    """«После печати»: yes-words, «после пречека» and the like; empty, «нет», «не …», «до печати» — before."""
     text = str(value or "").strip().lower()
-    return (
-        bool(text)
-        and not text.startswith(("нет", "no", "до", "0", "false"))
-        and any(w in text for w in AFTER_PRINT)
-    )
+    negative = text.startswith(("нет", "no", "до", "0", "false")) or re.match(r"не\b", text) is not None
+    return bool(text) and not negative and any(w in text for w in AFTER_PRINT)
 
 
-def cashier(value: object) -> str | None:
-    """A cashier as the till names them. A code or a personnel number (has a digit) is kept; anything else is
-    a person's name — personal data (docs/09, «Персональные данные»): it becomes a stable code (the same
-    person, the same code), so the findings compare cashiers without storing who they are (Q26)."""
-    text = _text(value)
-    if text is None or re.search(r"\d", text):
+# A code or a personnel number as a whole («таб. 104», «№ 17», «K12»): kept as it is; anything else is a name
+PERSONNEL_NUMBER = re.compile(r"(таб\.?|№)?\s*[A-Za-zА-Яа-я]{0,2}-?\d{1,10}", re.IGNORECASE)
+
+
+def cashier(value: object, salt: str = "") -> str | None:
+    """A cashier as the till names them. A code or a personnel number as a whole is kept; anything else
+    («Иванова Е.», «Иванова Е. (12)») is a person's name — personal data (docs/09, «Персональные данные»): it
+    becomes a stable code (the same person, the same code), salted with the network, so the findings compare
+    cashiers without storing who they are (Q26; code review of stage 6.5, p. 12)."""
+    text = _text(value, 100)
+    if text is None or PERSONNEL_NUMBER.fullmatch(text):
         return text
-    return "Кассир " + hashlib.sha256(text.lower().encode()).hexdigest()[:6].upper()
+    digest = hashlib.sha256(f"{salt}:{text.lower()}".encode()).hexdigest()[:6].upper()
+    return "Кассир " + digest
 
 
-def _text(value: object) -> str | None:
+def _text(value: object, limit: int = 200) -> str | None:
+    """A text cell, cut to the column it goes to."""
     text = str(value).strip() if value is not None else ""
-    return text[:200] or None
+    return text[:limit] or None
 
 
 def validate(template: Template, table: Table, lookups: Lookups, *, today: date) -> Result:

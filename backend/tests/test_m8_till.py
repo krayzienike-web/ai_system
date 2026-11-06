@@ -110,3 +110,15 @@ def test_till_findings_are_shown_with_their_numbers() -> None:
     places = m8.detect(_facts([], _sales(R1, None, "0.12") + _sales(R2, None) + _sales(R3, None, "0.02")))
     r = views.build(places[0], f)
     assert r is not None and r["confidence_note"] == "Продажи r_keeper со скидками"
+
+
+def test_restaurants_without_the_export_are_not_the_typical_cashier() -> None:
+    """Code review of stage 6.5, p. 2: only R01 loads «Удаления и отмены»; the cashiers of R02 and R03 have no
+    voids because nobody exported them — they must not make R01's ordinary cashiers look suspicious."""
+    voids = _voids(R1, "таб. 101", 2) + _voids(R1, "таб. 102", 2)
+    sales = _sales(R1, "таб. 101") + _sales(R1, "таб. 102") + _sales(R2, "таб. 201") + _sales(R3, "таб. 301")
+    assert [d for d in m8.detect(_facts(voids, sales)) if d.evidence["kind"] == "voids"] == []
+    # Without a discount column (all zeros) a restaurant is no benchmark for the discounts either.
+    no_discounts = _sales(R2, "таб. 201", "0") + _sales(R3, "таб. 301", "0")
+    sales = _sales(R1, "таб. 101", "0.12") + _sales(R1, "таб. 102", "0.03") + no_discounts
+    assert m8.detect(_facts([], sales)) == []

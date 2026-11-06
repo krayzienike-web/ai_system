@@ -135,6 +135,7 @@ class StoryOut(BaseModel):
     key: str
     title: str
     effect_rub_month: Decimal | None
+    adds: bool = False  # the findings are different money and add up (supplier); otherwise counted once
     findings: list[StoryMemberOut]
 
 
@@ -188,6 +189,7 @@ def finding_out(v: VisibleFinding) -> FindingOut:
             key=v.story.key,
             title=v.story.title,
             effect_rub_month=v.story.effect_rub_month,
+            adds=v.story.adds,
             findings=[StoryMemberOut(**m.__dict__) for m in v.story.findings],
         )
     return FindingOut(**fields, work=WorkOut(**v.work.__dict__), story=story)

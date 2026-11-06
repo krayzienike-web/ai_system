@@ -42,7 +42,7 @@ def test_a_line_with_no_amount_and_one_priced_per_gram_are_found() -> None:
         ReceiptRow(R2, END - timedelta(days=1), CHEESE, None, D(2), D(4500)),  # dearer, but within 3 times
     ]
     drafts = [d for d in m7.detect(f) if d.evidence["kind"] == "prices"]
-    assert [d.key for d in drafts] == ["M7:R01:prices:P02-P14"]
+    assert [d.key for d in drafts] == ["M7:R01:prices"]
     d = drafts[0]
     assert d.title == "Цены в накладных похожи на ошибку: 2 строки" and d.effect_rub_month is None
     why = {x["product"]: x["why"] for x in d.evidence["lines"]}
@@ -65,7 +65,7 @@ def test_a_count_without_products_counted_every_time_before_is_found() -> None:
     days = [END - timedelta(days=d) for d in (70, 40, 10)]
     f.counts = _counts({days[0]: [CHEESE, OIL], days[1]: [CHEESE, OIL], days[2]: [OIL]})
     (d,) = [d for d in m7.detect(f) if d.evidence["kind"] == "partial"]
-    assert d.key == "M7:R01:partial:P02" and d.evidence["missing"] == ["P02"]
+    assert d.key == f"M7:R01:partial:{days[2].isoformat()}" and d.evidence["missing"] == ["P02"]
     assert d.title == "Инвентаризация 08.10 без части товаров: 1" and "сыр пармезан" in d.headline
     v = views.build(d, f)
     assert v is not None and v["table"]["rows"] == [["Сыр Пармезан"]]
@@ -81,3 +81,13 @@ def test_a_product_counted_only_sometimes_or_no_longer_bought_is_no_finding() ->
     assert [d for d in m7.detect(f) if d.evidence["kind"] == "partial"] == []
     f.counts = _counts({days[1]: [CHEESE, OIL], days[2]: [OIL]})  # one count before: too little to know
     assert [d for d in m7.detect(f) if d.evidence["kind"] == "partial"] == []
+
+
+def test_the_key_stays_when_lines_come_and_go() -> None:
+    """Code review of stage 6.5, p. 3: one more odd line keeps the finding (its review and task stay)."""
+    f = _facts()
+    f.receipts.append(ReceiptRow(R1, END - timedelta(days=2), OIL, None, D(5), D(0)))
+    first = [d.key for d in m7.detect(f) if d.evidence["kind"] == "prices"]
+    f.receipts.append(ReceiptRow(R1, END - timedelta(days=1), CHEESE, None, D(2), D("3.30")))
+    again = [d for d in m7.detect(f) if d.evidence["kind"] == "prices"]
+    assert first == [d.key for d in again] == ["M7:R01:prices"] and len(again[0].evidence["lines"]) == 2

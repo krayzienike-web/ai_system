@@ -23,6 +23,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core import words
+from app.insights.money import counted
 from app.insights.service import FindingWork
 from app.operations.models import InventoryCount
 from app.overview import service as overview
@@ -114,11 +115,19 @@ def _pick(ranked: list[FindingWork], kind: str, taken: set[str]) -> list[Finding
     return out
 
 
-def _kpis(row: KpiSnapshot | None, *, revenue: bool = True) -> dict[str, Any] | None:
+def _kpis(
+    row: KpiSnapshot | None,
+    session: Session | None = None,
+    only: set[UUID] | None = None,
+    *,
+    revenue: bool = True,
+) -> dict[str, Any] | None:
     """The network's snapshot has the sum of all restaurants' revenue, not an average: a director must not get
     it — their own subtracted, it is the others' (code review 03.11.2026, p. 1). Shares only."""
     if row is None:
         return None
+    # the restaurant's score as its director may see it (overview.visible_quality); the network's: an average
+    score = overview.visible_quality(session, row, only)[0] if session is not None else row.data_quality
     out = {
         "food_cost_actual": pct(row.food_cost_actual),
         "food_cost_theory": pct(row.food_cost_theory),
@@ -127,7 +136,7 @@ def _kpis(row: KpiSnapshot | None, *, revenue: bool = True) -> dict[str, Any] | 
         if row.food_cost_from and row.food_cost_to
         else None,
         # 0–100: how far the week's numbers can be trusted (docs/12, «Оценка качества данных»)
-        "data_quality": None if row.data_quality is None else f"{row.data_quality} из 100",
+        "data_quality": None if score is None else f"{score} из 100",
     }
     if revenue:
         out["revenue"] = money(row.revenue)
@@ -141,6 +150,7 @@ def build(
     for_director = restaurant_id is not None
     places = {r.id: r for r in session.execute(select(Restaurant)).scalars()}
     items = overview.open_findings(session, today, restaurant_id)
+    tasked: set[UUID | None] = set()
     if restaurant_id is not None:
         # What the director sees (ADR 0009): the restaurant's findings with a task on it — built under the
         # system's context, so the findings' row-level security does not do it here.
@@ -156,10 +166,11 @@ def build(
     threshold = overview.PROCESS_CRITICAL_RUB * (1 if restaurant_id else max(1, len(places)))
 
     before = {p["process"]: p for p in (previous or {}).get("processes", [])}
+    story_money = counted(fw.finding for fw in items)  # a story once (docs/12, «Связанные находки»)
     processes = []
     for code, title in overview.PROCESSES:
         mine = [fw for fw in items if fw.finding.kind == "problem" and fw.finding.process == code]
-        losses = sum((fw.finding.effect_rub_month or ZERO for fw in mine), ZERO)
+        losses = sum((story_money[fw.finding.id] for fw in mine), ZERO)
         idx = index(losses, any(fw.finding.effect_rub_month for fw in mine), bool(mine), threshold)
         was = before.get(code, {}).get("index")
         processes.append(
@@ -177,13 +188,12 @@ def build(
     taken: set[str] = set()
     problems = _pick(ranked, "problem", taken)
     opportunities = _pick(ranked, "opportunity", taken)
-    losses = sum((fw.finding.effect_rub_month or ZERO for fw in items if fw.finding.kind == "problem"), ZERO)
-    potential = sum(
-        (fw.finding.effect_rub_month or ZERO for fw in items if fw.finding.kind == "opportunity"), ZERO
-    )
+    losses = sum((story_money[fw.finding.id] for fw in items if fw.finding.kind == "problem"), ZERO)
+    potential = sum((story_money[fw.finding.id] for fw in items if fw.finding.kind == "opportunity"), ZERO)
 
     snapshots = {k.restaurant_id: k for k in session.execute(select(KpiSnapshot)).scalars()}
-    kpis = _kpis(snapshots.get(restaurant_id))
+    shown = {t for t in tasked if t is not None} if restaurant_id is not None else None
+    kpis = _kpis(snapshots.get(restaurant_id), session, shown)
 
     tasks = (
         select(Task)

@@ -41,8 +41,9 @@ def test_stock_on_a_date_is_loaded_in_the_base_unit_and_replaced_on_reload(
         8.0,
         12.5,
     ]
-    bad = upload(client, hq, "stock_balances", STOCK.replace("12,5", "-1"), a1).json()
-    assert bad["status"] == "failed" and any("отрицательн" in e["message"] for e in bad["errors"])
+    # The books' stock may be below zero (a document missing — M7 catches it): the file loads (review p. 5)
+    minus = upload(client, hq, "stock_balances", STOCK.replace("12,5", "-1"), a1).json()
+    assert minus["status"] != "failed" and not minus["errors"]
 
 
 def test_voids_keep_the_cashier_and_whether_the_check_was_printed(
@@ -101,11 +102,19 @@ def test_a_cashiers_name_is_kept_as_a_stable_code_and_a_number_as_it_is() -> Non
     assert code is not None and code.startswith("Кассир ") and "Иванова" not in code
     assert cashier("иванова е.") == code and cashier("Петров С.") != code
     assert cashier("таб. 104") == "таб. 104" and cashier("17") == "17" and cashier("") is None
+    assert cashier("№ 17") == "№ 17" and cashier("K12") == "K12"
+    # a name with a number in it is still a name; another network, another code (review of stage 6.5, p. 12)
+    assert cashier("Иванова Е. (12)", "A") is not None and "Иванова" not in (
+        cashier("Иванова Е. (12)", "A") or ""
+    )
+    assert cashier("Иванова Е.", "A") != cashier("Иванова Е.", "B")
+    assert len(cashier("x" * 300) or "") <= 100
 
 
 def test_after_print_reads_the_tills_words() -> None:
     assert [after_print(w) for w in ("да", "Да", "после пречека", "напечатан", "1")] == [True] * 5
     assert [after_print(w) for w in ("нет", "", None, "до печати", "0")] == [False] * 5
+    assert [after_print(w) for w in ("не напечатан", "не после печати", "Не после пречека")] == [False] * 3
 
 
 def test_the_templates_describe_the_new_exports(client: TestClient, network: Network) -> None:

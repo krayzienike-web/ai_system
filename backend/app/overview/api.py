@@ -187,6 +187,7 @@ class WeekOut(BaseModel):
     network_kpi: KpiOut | None
     kpi_answer: str | None
     data_quality_answer: str | None = None  # «Можно ли верить цифрам?»
+    data_quality_low: int = 60  # below it the restaurant's findings lose a level of confidence (M7_DQ_LOW)
     stock_risks: list[dict[str, str]]  # M6 is not built yet: always empty
     done_tasks: list[TaskOut]
     results_answer: str
@@ -317,6 +318,7 @@ def get_restaurant(code: str, ctx: CanRead, session: SessionDep, today: TodayDep
         network_kpi=kpi(w.network_kpi),
         kpi_answer=w.kpi_answer,
         data_quality_answer=w.data_quality_answer,
+        data_quality_low=w.data_quality_low,
         stock_risks=[],
         done_tasks=tasks_out(session, w.done_tasks, today),
         results_answer=w.results_answer,

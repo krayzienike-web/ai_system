@@ -487,7 +487,7 @@ def generate(seed: int = 42, restaurants: int = 12, start: date = START, end: da
         id="r03-olive-oil-zero-price",
         restaurant="R03",
         module="M7",
-        product="P14",
+        products=["P14"],
         kind="problem",
         description="07.10 в накладной на оливковое масло нет суммы: строка с нулевой ценой",
     )
@@ -495,7 +495,7 @@ def generate(seed: int = 42, restaurants: int = 12, start: date = START, end: da
         id="r11-parmesan-gram-price",
         restaurant="R11",
         module="M7",
-        product="P02",
+        products=["P02"],
         kind="problem",
         description="09.10 пармезан в накладной по цене за грамм (1,65 ₽ вместо 1 650 ₽ за кг)",
     )
@@ -503,7 +503,7 @@ def generate(seed: int = 42, restaurants: int = 12, start: date = START, end: da
         id="r05-partial-count",
         restaurant="R05",
         module="M7",
-        product="P02",
+        products=["P02", "P03"],
         kind="problem",
         description="В последней инвентаризации R05 не пересчитали пармезан и грана падано",
     )

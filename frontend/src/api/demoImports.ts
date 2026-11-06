@@ -1,4 +1,5 @@
 import { ApiError } from "./client";
+import snapshot from "./demo/snapshot.json";
 // Data import in the standalone demo (no backend). A small copy of the server's rules
 // (backend/app/imports): the header is found by column names, totals are skipped, the file type is
 // recognised by its header. The server stays the source of truth; this only lets the prototype be clicked.
@@ -12,173 +13,12 @@ import type {
   UnmatchedName,
 } from "./types";
 
-const col = (title: string, required = false, ...synonyms: string[]) => ({
-  title,
-  required,
-  synonyms,
-});
-const PRODUCT = [
-  col("Код товара", false, "артикул"),
-  col("Товар", false, "номенклатура", "наименование товара"),
-];
-
-export const DEMO_TEMPLATES: ImportTemplate[] = [
-  {
-    name: "restaurants",
-    title: "Рестораны",
-    scope: "network",
-    one_of: [],
-    columns: [
-      col("Код", true),
-      col("Название", true, "ресторан"),
-      col("Город"),
-    ],
-  },
-  {
-    name: "products",
-    title: "Номенклатура",
-    scope: "network",
-    one_of: [],
-    columns: [
-      col("Код", true),
-      col("Наименование", true, "товар"),
-      col("Категория"),
-      col("Базовая ед.", true, "ед. изм."),
-      col("Срок годности, дней"),
-      col("Тип", false, "вид"),
-    ],
-  },
-  {
-    name: "suppliers",
-    title: "Поставщики",
-    scope: "network",
-    one_of: [],
-    columns: [col("Код", true), col("Название", true, "поставщик"), col("ИНН")],
-  },
-  {
-    name: "menu_items",
-    title: "Блюда",
-    scope: "network",
-    one_of: [],
-    columns: [
-      col("Код", true),
-      col("Блюдо", true, "наименование"),
-      col("Категория"),
-      col("Цена"),
-    ],
-  },
-  {
-    name: "recipes",
-    title: "Технологические карты (ТТК)",
-    scope: "network",
-    one_of: [["Код товара", "Товар"]],
-    columns: [
-      col("Код блюда", true, "код блюда или п/ф", "код полуфабриката"),
-      ...PRODUCT,
-      col("Брутто", true, "кол-во брутто"),
-      col("Ед. изм."),
-      col("Действует с", true),
-    ],
-  },
-  {
-    name: "sales",
-    title: "Продажи",
-    scope: "restaurant",
-    one_of: [["Код блюда", "Блюдо"]],
-    columns: [
-      col("Дата", true),
-      col("Код блюда", false, "код"),
-      col("Блюдо", false),
-      col("Количество", true, "кол-во"),
-      col("Выручка", true, "сумма"),
-      col("Скидка"),
-      col("Кассир", false, "официант"),
-    ],
-  },
-  {
-    name: "receipts",
-    title: "Приходы (накладные)",
-    scope: "restaurant",
-    one_of: [["Код товара", "Товар"]],
-    columns: [
-      col("Дата", true),
-      col("№ накладной"),
-      col("Код поставщика"),
-      col("Поставщик", false, "контрагент"),
-      ...PRODUCT,
-      col("Количество", true, "кол-во"),
-      col("Ед. изм."),
-      col("Цена"),
-      col("Сумма", true, "сумма с ндс"),
-      col("НДС"),
-    ],
-  },
-  {
-    name: "transfers",
-    title: "Перемещения",
-    scope: "restaurant",
-    one_of: [["Код товара", "Товар"]],
-    columns: [
-      col("Дата", true),
-      col("Откуда", true, "отправитель"),
-      col("Куда", true, "получатель"),
-      ...PRODUCT,
-      col("Количество", true, "кол-во"),
-      col("Ед. изм."),
-    ],
-  },
-  {
-    name: "write_offs",
-    title: "Списания",
-    scope: "restaurant",
-    one_of: [["Код товара", "Товар"]],
-    columns: [
-      col("Дата", true),
-      ...PRODUCT,
-      col("Количество", true, "кол-во"),
-      col("Ед. изм."),
-      col("Причина", false, "статья списания"),
-    ],
-  },
-  {
-    name: "inventory_counts",
-    title: "Инвентаризации",
-    scope: "restaurant",
-    one_of: [["Код товара", "Товар"]],
-    columns: [
-      col("Дата", true),
-      ...PRODUCT,
-      col("Учетный остаток"),
-      col("Фактический остаток", true, "факт"),
-      col("Ед. изм."),
-    ],
-  },
-  // Stage 6.5 (docs/09): the stock by day (iiko) and the till's voids (r_keeper).
-  {
-    name: "stock_balances",
-    title: "Остатки на дату",
-    scope: "restaurant",
-    one_of: [["Код товара", "Товар"]],
-    columns: [col("Дата", true, "на дату"), ...PRODUCT, col("Остаток", true, "количество"), col("Ед. изм.")],
-  },
-  {
-    name: "voids",
-    title: "Удаления и отмены",
-    scope: "restaurant",
-    one_of: [],
-    columns: [
-      col("Дата", true),
-      col("№ чека", false, "номер чека"),
-      col("Код блюда", false, "код"),
-      col("Блюдо", false),
-      col("Количество", false, "кол-во"),
-      col("Сумма", true),
-      col("Кассир", false, "сотрудник"),
-      col("После печати", false, "после пречека"),
-      col("Причина", false),
-    ],
-  },
-];
+/** The import templates exactly as the server answers them (recorded with the rest of the snapshot): their
+ * columns and synonyms are what the header is matched by, so a file the server takes the prototype takes too
+ * (code review of stage 6.5, frontend p. 5). */
+export const DEMO_TEMPLATES: ImportTemplate[] = (
+  snapshot.users as unknown as Record<string, { answers: Record<string, unknown> }>
+)["admin@demo.local"]?.answers["/imports/templates"] as ImportTemplate[] | undefined ?? [];
 
 const batches: ImportBatch[] = [];
 let seq = 0;

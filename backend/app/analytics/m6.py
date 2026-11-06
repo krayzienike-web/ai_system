@@ -26,7 +26,7 @@ from statistics import median
 from uuid import UUID
 
 from app.analytics.drafts import Draft, dmy, rub
-from app.analytics.facts import Facts
+from app.analytics.facts import Facts, ReceiptRow
 from app.analytics.m1 import M1Row
 from app.analytics.params import DEFAULT, EngineParams
 from app.analytics.usage import Usage
@@ -174,7 +174,12 @@ def overstocks(
 ) -> list[Overstock]:
     snapshots: dict[tuple[UUID, UUID], dict[date, Decimal]] = defaultdict(dict)
     for st in facts.stock:
-        snapshots[(st.restaurant, st.product)][st.day] = st.qty
+        # the books may go below zero (a missing invoice, M7): nothing lies on the shelf then
+        snapshots[(st.restaurant, st.product)][st.day] = max(st.qty, Decimal(0))
+    bought_by: dict[tuple[UUID, UUID], list[ReceiptRow]] = defaultdict(list)  # once, not per product
+    for rc in facts.receipts:
+        if rc.qty > 0:
+            bought_by[(rc.restaurant, rc.product)].append(rc)
     loss: dict[tuple[UUID, UUID], Decimal] = {}
     for r in sorted(m1_rows, key=lambda r: r.end):
         loss[(r.restaurant, r.product)] = min(max(r.share, Decimal(0)), cfg.M6_MAX_LOSS)
@@ -191,12 +196,7 @@ def overstocks(
             continue
         used = usage.total(restaurant, product, start, end) * (1 + loss.get(key, Decimal(0)))
         daily = used / cfg.M6_HISTORY_DAYS
-        bought = [
-            rc
-            for rc in facts.receipts
-            if rc.restaurant == restaurant and rc.product == product and rc.qty > 0
-        ]
-        recent = [rc for rc in bought if start <= rc.day <= end]
+        recent = [rc for rc in bought_by.get(key, []) if start <= rc.day <= end]
         qty = sum((rc.qty for rc in recent), Decimal(0))
         if daily <= 0 or qty <= 0:
             continue

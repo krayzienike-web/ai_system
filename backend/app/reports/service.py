@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.core.period import Period
 from app.experiments.models import Experiment, ExperimentStatus, Verdict
 from app.insights.models import Finding, FindingStatus
+from app.insights.money import counted
 from app.insights.work import TaskFacts, is_late
 from app.tasks.models import OutcomeVerdict, Task, TaskStatus
 
@@ -60,7 +61,8 @@ def head_report(session: Session, period: Period, *, today: date) -> HeadReport:
     experiments = list(session.execute(select(Experiment)).scalars())
 
     def effect(fs: list[Finding]) -> Decimal:
-        return sum((f.effect_rub_month or ZERO for f in fs), ZERO)
+        money = counted(fs)  # a story once (docs/12, «Связанные находки»)
+        return sum((money[f.id] for f in fs), ZERO)
 
     before, end = period.date_from - timedelta(days=1), period.date_to
     open_now = [f for f in findings if f.status in OPEN]

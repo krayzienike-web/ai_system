@@ -57,3 +57,12 @@ test("TC-UI-20: the director opens the week's digest from the phone's tab bar", 
   await expect(page.getByRole("heading", { name: /Сводка · R01/ })).toBeVisible();
   await expectNoOverflow(page);
 });
+
+test("TC-UI-01: a finding's card with its story fits 390 px (stage 6.5)", async ({ page }) => {
+  await signIn(page, "Управляющая компания");
+  await page.getByRole("link", { name: /Еще/ }).or(page.getByRole("button", { name: /Еще/ })).first().click();
+  await page.getByRole("link", { name: /^Находки$/ }).first().click();
+  await page.getByRole("link", { name: /Затоваривание: Сливки 33%/ }).first().click();
+  await expect(page.getByText("Это одна история?")).toBeVisible();
+  await expectNoOverflow(page);
+});

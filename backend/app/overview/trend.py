@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from app.core.period import last_full_week_end
 from app.experiments.models import Experiment, Verdict
 from app.insights.models import Finding, FindingStatus
+from app.insights.money import counted
 from app.overview.models import TrendPoint
 from app.tasks.models import OutcomeVerdict, Task
 
@@ -39,9 +40,10 @@ def record_week(session: Session, tenant_id: UUID, today: date) -> date:
     losses: dict[UUID | None, Decimal] = defaultdict(lambda: ZERO)
     potential: dict[UUID | None, Decimal] = defaultdict(lambda: ZERO)
     count: dict[UUID | None, int] = defaultdict(int)
+    money = counted(findings)  # a story once (docs/12, «Связанные находки»)
     for f in findings:
         for where in {None, f.restaurant_id}:
-            effect = f.effect_rub_month or ZERO
+            effect = money[f.id]
             if f.kind == "problem":
                 losses[where] += effect
             else:

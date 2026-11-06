@@ -874,6 +874,7 @@ export interface StoryOut {
   key: string;
   title: string;
   effect_rub_month: string | null;
+  adds?: boolean;
   findings: StoryMemberOut[];
 }
 
@@ -1003,6 +1004,7 @@ export interface WeekOut {
   network_kpi: KpiOut | null;
   kpi_answer: string | null;
   data_quality_answer?: string | null;
+  data_quality_low?: number;
   stock_risks: Record<string, string>[];
   done_tasks: TaskOut[];
   results_answer: string;

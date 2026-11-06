@@ -400,6 +400,9 @@ def detect_jumps(
         p_now, p_base = _avg(rows), _avg(before)
         if p_now and p_base:
             growth[pair] = (p_now / p_base - 1, p_now, p_base)
+    by_product: dict[UUID, list[tuple[UUID, Decimal]]] = defaultdict(list)  # once, not per pair
+    for (place, item), v in growth.items():
+        by_product[item].append((place, v[0]))
     drafts = []
     for (restaurant, product), (g, p_now, p_base) in growth.items():
         if product in with_contract or product not in facts.products:
@@ -407,7 +410,7 @@ def detect_jumps(
         info = facts.products[product]
         if (restaurant, info.code) in taken:
             continue
-        others = [v[0] for (r, p), v in growth.items() if p == product and r != restaurant]
+        others = [x for place, x in by_product[product] if place != restaurant]
         moved = med(others) if others else Decimal(0)  # how the price moved for the rest of the network
         excess = g - moved
         if excess <= cfg.M3_JUMP:

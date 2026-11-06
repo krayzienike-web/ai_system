@@ -71,9 +71,16 @@ def score(drafts: list[Draft], facts: Facts) -> dict[UUID | None, Quality]:
 
 
 def apply(drafts: list[Draft], scores: dict[UUID | None, Quality], cfg: EngineParams = DEFAULT) -> None:
-    """A restaurant with a low score: its findings (but the data's own, M7) lose one level of confidence."""
+    """A restaurant with a low score: its findings lose one level of confidence — but not the data problems
+    themselves (the kinds that take the points: M7, M4 «на бумаге», «просрочена»), they say exactly what is
+    wrong. The card says why (code review of stage 6.5, p. 13). Runs after the views are built."""
     for d in drafts:
         q = scores.get(d.restaurant) if d.restaurant is not None else None
-        if q is not None and q.score < cfg.M7_DQ_LOW and d.module != "M7":
-            d.confidence = DOWNGRADE.get(d.confidence, d.confidence)
-            d.evidence = {**d.evidence, "data_quality": q.score}
+        if q is None or q.score >= cfg.M7_DQ_LOW or d.module == "M7" or d.evidence.get("kind") in PENALTIES:
+            continue
+        d.confidence = DOWNGRADE.get(d.confidence, d.confidence)
+        d.evidence = {**d.evidence, "data_quality": q.score}
+        if d.view is not None:
+            why = f"уверенность снижена: качество данных ресторана {q.score} из 100"
+            note = d.view.get("confidence_note")
+            d.view = {**d.view, "confidence_note": f"{note}; {why}" if note else why.capitalize()}

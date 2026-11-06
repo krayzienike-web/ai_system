@@ -73,12 +73,18 @@ let seq = 0;
 
 /** Every finding / task / check any demo user can see, by id: the pool the actions work on. */
 const pool = { findings: new Map<string, ApiFinding>(), tasks: new Map<string, ApiTask>(), checks: new Map<string, Check>() };
+/** Each finding's story as the HQ's recording has it (key, title): a director's copy may have none. */
+const stories = new Map<string, { key: string; title: string }>();
 function collect(value: unknown) {
   if (Array.isArray(value)) value.forEach(collect);
   else if (value && typeof value === "object") {
     const o = value as Record<string, unknown>;
     if (typeof o.id === "string") {
-      if ("work" in o && "kind" in o) pool.findings.set(o.id, (pool.findings.get(o.id) ?? o) as unknown as ApiFinding);
+      if ("work" in o && "kind" in o) {
+        pool.findings.set(o.id, (pool.findings.get(o.id) ?? o) as unknown as ApiFinding);
+        const story = o.story as { key: string; title: string } | null | undefined;
+        if (story) stories.set(o.id, { key: story.key, title: story.title });
+      }
       else if ("checklist_done" in o) pool.tasks.set(o.id, o as unknown as ApiTask);
       else if ("hypothesis" in o) pool.checks.set(o.id, (pool.checks.get(o.id) ?? o) as unknown as Check);
     }
@@ -174,7 +180,8 @@ function findingsOf(v: Viewer): ApiFinding[] {
       f.status !== "dismissed" &&
       (v.hq || (f.restaurant_id !== null && f.restaurant_id === v.restaurantId && tasked(f))),
   );
-  return overlay(v, clone([...recorded, ...extra])).filter(checked);
+  const list = overlay(v, clone([...recorded, ...extra])).filter(checked);
+  return list.map((f) => ({ ...f, story: storyFor(f, storyScope(v, list)) }));
 }
 
 function tasksOf(v: Viewer, late: boolean): ApiTask[] {
@@ -195,17 +202,58 @@ function tasksOf(v: Viewer, late: boolean): ApiTask[] {
 
 const GROUP_TITLE = { problem: "Где теряем", opportunity: "Где можно заработать", unestimated: "Без оценки в рублях — но важно для точности" };
 const PROCESS_ORDER = ["purchasing", "receiving", "storage", "production", "writeoffs", "inventory", "accounting", "planning"];
-/** The findings' money as the server counts it: a story's findings (one cause, docs/12) once — the largest. */
-const sum = (items: ApiFinding[]) => {
-  const stories = new Map<string, number>();
-  let single = 0;
+/** What each finding adds to a sum, as the server counts it (insights/money.py): a story's findings (one cause,
+ * docs/12) once — its largest one; a `supplier:` story's are different money and add up. Over the whole set,
+ * filtered after (code review of stage 6.5, frontend p. 1). */
+const ADDING = "supplier:";
+function counted(items: ApiFinding[]): Map<string, number> {
+  const out = new Map<string, number>();
+  const stories = new Map<string, ApiFinding[]>();
   for (const f of items) {
-    const effect = Number(f.effect_rub_month ?? 0);
-    if (f.story) stories.set(f.story.key, Math.max(stories.get(f.story.key) ?? 0, effect));
-    else single += effect;
+    const key = storyKey(f);
+    if (key && !key.startsWith(ADDING)) stories.set(key, [...(stories.get(key) ?? []), f]);
+    else out.set(f.id, Number(f.effect_rub_month ?? 0));
   }
-  return [...stories.values()].reduce((acc, v) => acc + v, single).toFixed(2);
-};
+  for (const members of stories.values()) {
+    const largest = members.reduce((a, b) => (Number(b.effect_rub_month ?? 0) > Number(a.effect_rub_month ?? 0) ? b : a));
+    for (const f of members) out.set(f.id, f === largest ? Number(f.effect_rub_month ?? 0) : 0);
+  }
+  return out;
+}
+const sum = (items: ApiFinding[], money: Map<string, number> = counted(items)) =>
+  items.reduce((acc, f) => acc + (money.get(f.id) ?? 0), 0).toFixed(2);
+
+/** A finding's story key: the recording of the HQ (the pool) knows it even where this viewer's has none. */
+const storyKey = (f: ApiFinding): string | null => stories.get(f.id)?.key ?? f.story?.key ?? null;
+const OPEN = ["new", "in_work", "in_experiment"];
+
+/** Whom a story may name, as the server reads it (row-level security): the HQ — every finding of the network
+ * but the rejected ones (also those still awaiting the review); a director — the findings they are shown. */
+function storyScope(v: Viewer, shown: ApiFinding[]): ApiFinding[] {
+  return v.hq ? overlay(v, clone([...pool.findings.values()])).filter((f) => reviewOf(f) !== "rejected") : shown;
+}
+
+/** The story of a finding as the server builds it for this viewer (insights/visible.py): only the other
+ * findings they can see, its sum over the open ones (code review of stage 6.5, frontend p. 2). */
+function storyFor(f: ApiFinding, visible: ApiFinding[]): ApiFinding["story"] {
+  const key = storyKey(f);
+  if (!key) return null;
+  const members = visible.filter((m) => storyKey(m) === key && m.status !== "dismissed");
+  const others = members.filter((m) => m.id !== f.id);
+  if (!others.length) return null;
+  const effects = members.filter((m) => OPEN.includes(m.status) && m.effect_rub_month !== null).map((m) => Number(m.effect_rub_month));
+  const adds = key.startsWith(ADDING);
+  const total = effects.length ? (adds ? effects.reduce((a, b) => a + b, 0) : Math.max(...effects)) : null;
+  return {
+    key,
+    title: stories.get(f.id)?.title ?? f.story?.title ?? f.title,
+    adds,
+    effect_rub_month: total === null ? null : total.toFixed(2),
+    findings: others
+      .sort((a, b) => (a.module ?? "").localeCompare(b.module ?? "") || a.title.localeCompare(b.title))
+      .map((m) => ({ id: m.id, title: m.title, module: m.module, kind: m.kind, effect_rub_month: m.effect_rub_month, restaurant_code: m.restaurant_code ?? null })),
+  };
+}
 
 export function board(scope: ApiFinding[], q: URLSearchParams): FindingBoard {
   const kind = q.get("kind");
@@ -215,12 +263,13 @@ export function board(scope: ApiFinding[], q: URLSearchParams): FindingBoard {
     (!q.get("stage") || f.work.stage === q.get("stage")) &&
     (q.get("late") !== "true" || f.work.tasks_late > 0);
   const filtered = scope.filter(keep);
+  const money = counted(filtered);
   const shown = (["problem", "opportunity"] as const).filter((k) => !kind || kind === k);
   type Group = FindingBoard["groups"][number];
   const groups: Group[] = shown
     .map((k): Group => {
       const items = filtered.filter((f) => f.kind === k && f.effect_rub_month !== null);
-      return { key: k, title: GROUP_TITLE[k], count: items.length, total: sum(items), items };
+      return { key: k, title: GROUP_TITLE[k], count: items.length, total: sum(items, money), items };
     })
     .concat([
       ((): Group => {
@@ -233,7 +282,7 @@ export function board(scope: ApiFinding[], q: URLSearchParams): FindingBoard {
   return {
     kinds: (["problem", "opportunity"] as const).map((k) => {
       const items = filtered.filter((f) => f.kind === k);
-      return { kind: k, count: items.length, total: sum(items) };
+      return { kind: k, count: items.length, total: sum(items, money) };
     }),
     stage_counts: { all: scope.length, ...Object.fromEntries(stages.map((s) => [s, scope.filter((f) => f.work.stage === s).length])) },
     late_count: scope.filter((f) => f.work.tasks_late > 0).length,
@@ -588,6 +637,7 @@ export function demoRequest(path: string, init: RequestInit, token: string | nul
       check: unknown;
     };
     detail.tasks = [...detail.tasks, ...newTasks.filter((t) => t.finding_id === finding[1] && visibleTask(v, t))];
+    detail.story = storyFor(detail as unknown as ApiFinding, storyScope(v, findingsOf(v)));
     const started = v.hq ? newChecks.filter((c) => c.finding_id === finding[1]).at(-1) : undefined;
     if (started) {
       const { id, title, status, verdict, effect_rub_month, expected_rub_month, starts_on, ends_on, progress_text } = started;

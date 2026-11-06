@@ -769,8 +769,9 @@ INTERPRETATION_M3 = [
 def _network_prices(session: Session, start: date, end: date) -> dict[UUID, Decimal]:
     totals: dict[UUID, list[Decimal]] = defaultdict(lambda: [Decimal(0), Decimal(0)])
     for product, amount, qty in session.execute(
+        # returns (qty below zero) out, like the engine's prices (m2.unit_prices; code review 6.5, p. 9)
         select(Receipt.product_id, Receipt.amount, Receipt.qty).where(
-            Receipt.day >= start, Receipt.day <= end
+            Receipt.day >= start, Receipt.day <= end, Receipt.qty > 0
         )
     ).all():
         totals[product][0] += amount
@@ -1106,6 +1107,8 @@ def _m3_jump(session: Session, f: Finding) -> dict[str, Any]:
         and base[rid][2] >= cfg.M3_MIN_RECEIPTS
         and q
         and base[rid][1]
+        and a > 0  # like m3._avg: no prices, no growth (code review of stage 6.5, p. 10)
+        and base[rid][0] > 0
     }
     own_now, own_base = now.get(f.restaurant_id), base.get(f.restaurant_id)
     if own_now is None or own_base is None or f.restaurant_id not in growth:
@@ -2534,7 +2537,7 @@ def _m6_overstock(session: Session, f: Finding) -> dict[str, Any]:
             Receipt.qty > 0,
         )
     ).one()
-    qty = sorted(q for _, q in snapshots)
+    qty = sorted(max(q, Decimal(0)) for _, q in snapshots)  # the books below zero: nothing on the shelf
     typical = med(qty) if qty else Decimal(0)
     by_recipes = used / days if days else Decimal(0)
     need = Decimal(
@@ -2587,9 +2590,31 @@ def _m6_overstock(session: Session, f: Finding) -> dict[str, Any]:
                 "value": _q(cover, Decimal("0.1")),
                 "threshold": _q(cfg.M6_OVERSTOCK_TIMES * shelf, Decimal("0.1")),
                 "passed": cover >= cfg.M6_OVERSTOCK_TIMES * shelf,
-            }
+            },
+            {
+                "rule": "Дней с остатками в окне",
+                "value": str(len(snapshots)),
+                "threshold": str(cfg.M6_OVERSTOCK_MIN_DAYS),
+                "passed": len(snapshots) >= cfg.M6_OVERSTOCK_MIN_DAYS,
+            },
+            {
+                "rule": "Риск существенный, ₽ в месяц",
+                "value": rub(effect),
+                "threshold": rub(cfg.M6_MATERIALITY_RUB_MONTH),
+                "passed": effect >= cfg.M6_MATERIALITY_RUB_MONTH,
+            },
         ],
         "checks": [
+            {
+                # The need with the usual losses is the engine's figure (M1's last period): check at least
+                # that it is the recipes' use plus a loss the engine allows (code review of stage 6.5, p. 8).
+                "check": "Расход с обычными потерями — расход по техкартам плюс допустимые потери",
+                "ok": bool(by_recipes)
+                and by_recipes <= need * (1 + Q3)
+                and need <= by_recipes * (1 + cfg.M6_MAX_LOSS) * (1 + Q3),
+                "note": f"по техкартам {_q(by_recipes)}, с потерями {_q(need)} {unit} в день "
+                f"(потери до {pct(cfg.M6_MAX_LOSS, 0)})",
+            },
             {
                 "check": "Медиана остатков совпадает с тем, что посчитал движок",
                 "ok": abs(typical - Decimal(ev["stock"])) <= Q3,
@@ -2632,8 +2657,14 @@ def _m8(session: Session, f: Finding) -> dict[str, Any]:
             .distinct()
         ).all():
             sums.setdefault((r, c), (0, Decimal(0)))
+        # like the engine: only restaurants that loaded «Удаления и отмены» (code review 6.5, p. 2, 10)
+        loaded = set(
+            session.execute(select(Void.restaurant_id).where(Void.day >= start, Void.day <= end)).scalars()
+        )
+        sums = {k: v for k, v in sums.items() if k[0] in loaded}
         count, amount = sums.get((restaurant.id, cashier), (0, Decimal(0)))
         typical = med([a for _, a in sums.values()]) if sums else Decimal(0)
+        compared = len(sums)
         effect = per_month(max(amount - typical, Decimal(0)), start, end)
         rules = [
             {
@@ -2668,6 +2699,13 @@ def _m8(session: Session, f: Finding) -> dict[str, Any]:
             .where(Sale.day >= start, Sale.day <= end, *([Sale.cashier.is_not(None)] if cashier else []))
             .group_by(*group)
         ).all()
+        # like the engine: only restaurants with any discount in the period (code review 6.5, p. 2, 10)
+        discounting = set(
+            session.execute(
+                select(Sale.restaurant_id).where(Sale.day >= start, Sale.day <= end, Sale.discount > 0)
+            ).scalars()
+        )
+        sold = [row for row in sold if row[0] in discounting]
         shares: dict[tuple[Any, ...], tuple[Decimal, Decimal]] = {}
         for row in sold:
             revenue, discount = Decimal(row[-2]), Decimal(row[-1])
@@ -2679,6 +2717,7 @@ def _m8(session: Session, f: Finding) -> dict[str, Any]:
         others = [s for k, (_, s) in shares.items() if cashier or k != me_key]
         typical = med(others) if others else Decimal(0)
         effect = per_month(gross * max(share - typical, Decimal(0)), start, end)
+        compared = len(shares)
         rules = [
             {
                 "rule": f"Доля скидок выше обычной в {cfg.M8_DISCOUNT_TIMES} раза",
@@ -2711,6 +2750,14 @@ def _m8(session: Session, f: Finding) -> dict[str, Any]:
             "check": "Сумма в месяц совпадает с находкой",
             "ok": f.effect_rub_month is not None and effect == f.effect_rub_month,
             "note": f"пересчет: {rub(effect)}",
+        }
+    )
+    rules.append(
+        {
+            "rule": "Есть с кем сравнить: кассиров или ресторанов с этими данными",
+            "value": str(compared),
+            "threshold": "3",
+            "passed": compared >= 3,
         }
     )
     return {

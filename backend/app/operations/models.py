@@ -109,7 +109,7 @@ class StockBalance(_Fact, Base):
     __table_args__ = (
         Index("ix_stock_balances_restaurant_day", "restaurant_id", "day"),
         Index("ix_stock_balances_tenant_day", "tenant_id", "day"),
-        CheckConstraint("qty >= 0", name="qty_nonnegative"),
+        # no sign check: the books' stock goes below zero when a document is missing (migration 0029)
     )
 
     product_id: Mapped[UUID] = mapped_column(ForeignKey("products.id", ondelete="RESTRICT"))

@@ -79,10 +79,16 @@ def detect(facts: Facts, cfg: EngineParams = DEFAULT) -> list[Draft]:
         return []
     start, end = span
     rows = cashiers(facts, start, end)
+    # Only restaurants that loaded the export can be compared: a restaurant without «Удаления и отмены» or
+    # without a discount column has zeros that are not real (code review of stage 6.5, p. 2).
+    with_voids = {v.restaurant for v in facts.voids if start <= v.day <= end}
+    with_discounts = {s.restaurant for s in facts.sales if start <= s.day <= end and s.discount > 0}
     named = [c for c in rows.values() if c.name is not None]
-    drafts = _removals(facts, named, start, end, cfg) + _discounts(facts, named, start, end, cfg)
+    drafts = _removals(facts, [c for c in named if c.restaurant in with_voids], start, end, cfg)
+    drafts += _discounts(facts, [c for c in named if c.restaurant in with_discounts], start, end, cfg)
     flagged = {d.restaurant for d in drafts if d.evidence["kind"] == "discounts"}
-    return drafts + _restaurant_discounts(facts, list(rows.values()), flagged, start, end, cfg)
+    places = [c for c in rows.values() if c.restaurant in with_discounts]
+    return drafts + _restaurant_discounts(facts, places, flagged, start, end, cfg)
 
 
 def _removals(facts: Facts, named: list[Cashier], start: date, end: date, cfg: EngineParams) -> list[Draft]:

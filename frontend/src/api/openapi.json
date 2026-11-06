@@ -5359,6 +5359,11 @@
    "StoryOut": {
     "description": "Linked findings (docs/12): one cause seen from several sides; the sum is the largest one's.",
     "properties": {
+     "adds": {
+      "default": false,
+      "title": "Adds",
+      "type": "boolean"
+     },
      "effect_rub_month": {
       "anyOf": [
        {
@@ -6086,6 +6091,11 @@
        }
       ],
       "title": "Data Quality Answer"
+     },
+     "data_quality_low": {
+      "default": 60,
+      "title": "Data Quality Low",
+      "type": "integer"
      },
      "delta_week": {
       "anyOf": [

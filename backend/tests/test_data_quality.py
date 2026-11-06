@@ -63,13 +63,16 @@ def test_a_low_score_lowers_the_confidence_of_the_restaurants_findings_but_not_o
     paper = _d("M4:R01:paper", "M4", R1, kind="paper")
     overdue = _d("M4:R01:overdue", "M4", R1, kind="overdue")
     loss = _d("M1:R01:P01", "M1", R1, confidence="high")
+    loss.view = {"confidence_note": "Инвентаризации и продажи"}
     elsewhere = _d("M1:R02:P01", "M1", R2, confidence="high")
     drafts = [gap, paper, overdue, loss, elsewhere]
     scores = quality.score(drafts, _facts())
     assert scores[R1].score == 40  # 100 − 25 − 20 − 15
     quality.apply(drafts, scores)
     assert loss.confidence == "medium" and loss.evidence["data_quality"] == 40
-    assert paper.confidence == "medium"  # M4 is about the money too: its numbers stand on the same data
+    note = "Инвентаризации и продажи; уверенность снижена: качество данных ресторана 40 из 100"
+    assert loss.view == {"confidence_note": note}
+    assert paper.confidence == "high"  # «на бумаге» is a data problem itself: it says what is wrong (p. 13)
     assert gap.confidence == "high"  # the data's own finding says exactly what is wrong
     assert elsewhere.confidence == "high"  # R02: 100
 

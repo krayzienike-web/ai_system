@@ -39,10 +39,10 @@ def money(findings: list[dict[str, Any]]) -> Decimal:
     stories: dict[str, Decimal] = {}
     single = D(0)
     for f in findings:
-        if f["story"]:
+        if f["story"] and not f["story"]["key"].startswith("supplier:"):
             key = f["story"]["key"]
             stories[key] = max(stories.get(key, D(0)), D(f["effect_rub_month"] or 0))
-        else:
+        else:  # supplier stories add up: overuse and overpayment are different money
             single += D(f["effect_rub_month"] or 0)
     return single + sum(stories.values(), D(0))
 
@@ -218,12 +218,18 @@ def test_overview_screens_follow_the_access_rules(
     assert all(f["restaurant_code"] == "R01" for f in week["top"])
     assert week["network_kpi"]["food_cost_actual"] and week["kpi"]["food_cost_actual"]
     assert week["kpi_answer"].startswith("Фудкост на ")
-    # TC-ENG-35: the data quality score — R01 sells the soup without a recipe; what took points off, in words,
-    # with no finding keys (the network's soup finding is HQ's).
-    assert week["kpi"]["data_quality"] == 90
-    assert week["kpi"]["data_quality_parts"] == [{"label": "Продается блюдо без техкарты", "points": 10}]
-    assert week["network_kpi"]["data_quality_parts"] == [] and 0 < week["network_kpi"]["data_quality"] <= 100
-    assert week["data_quality_answer"].startswith("Качество данных — 90 из 100 (хорошее), в среднем по сети")
+    # TC-ENG-35: the data quality score as the director may see it — R01 lost 10 points for the soup sold
+    # without a recipe, but that is a network finding a director never sees: no word of it, the score
+    # without it (code review of stage 6.5, p. 4). HQ sees the whole score with the reason.
+    assert week["kpi"]["data_quality"] == 100 and week["kpi"]["data_quality_parts"] == []
+    assert week["data_quality_answer"].startswith("Качество данных — 100 из 100 (хорошее), в среднем по сети")
+    hq_week = client.get("/api/overview/restaurants/R01", headers=login(client, "admin@a.ru")).json()
+    assert hq_week["kpi"]["data_quality"] == 90
+    assert hq_week["kpi"]["data_quality_parts"] == [{"label": "Продается блюдо без техкарты", "points": 10}]
+    assert (
+        hq_week["network_kpi"]["data_quality_parts"] == []
+        and 0 < hq_week["network_kpi"]["data_quality"] <= 100
+    )
     assert week["results_answer"].startswith("Ваши задачи уже приносят +")  # the rocket task
     # Another restaurant of the network and another network: not found, like a missing one.
     assert client.get("/api/overview/restaurants/R02", headers=director).status_code == 404
@@ -690,11 +696,28 @@ def test_restaurants_by_processes_and_the_networks_figures(
     # Each cell: the open checked problems of that restaurant and process, summed from the list itself.
     findings = client.get("/api/findings", headers=hq).json()
     places = {r["id"]: r["code"] for r in client.get("/api/restaurants", headers=hq).json()}
+    # A story (one cause, docs/12) counts once, in the process of its largest finding (TC-ENG-36).
+    open_problems = [
+        f for f in findings if f["kind"] == "problem" and f["status"] != "resolved" and f["restaurant_id"]
+    ]
+    largest: dict[str, dict[str, Any]] = {}
+    for f in open_problems:
+        if f["story"] and not f["story"]["key"].startswith("supplier:"):
+            k = f["story"]["key"]
+            if k not in largest or Decimal(f["effect_rub_month"] or 0) > Decimal(
+                largest[k]["effect_rub_month"] or 0
+            ):
+                largest[k] = f
     expected: dict[tuple[str, str], Decimal] = {}
-    for f in findings:
-        if f["kind"] == "problem" and f["status"] != "resolved" and f["restaurant_id"]:
-            key = (places[f["restaurant_id"]], f["process"])
-            expected[key] = expected.get(key, Decimal(0)) + Decimal(f["effect_rub_month"] or 0)
+    for f in open_problems:
+        if (
+            f["story"]
+            and not f["story"]["key"].startswith("supplier:")
+            and largest[f["story"]["key"]] is not f
+        ):
+            continue
+        key = (places[f["restaurant_id"]], f["process"])
+        expected[key] = expected.get(key, Decimal(0)) + Decimal(f["effect_rub_month"] or 0)
     for row in net["matrix"]:
         assert [c["process"] for c in row["cells"]] == processes
         for c in row["cells"]:
@@ -905,3 +928,22 @@ def test_one_read_path_shows_a_director_nothing_of_other_restaurants(
         assert ctx is not None
         reviewed = [f for f in visible_findings(session, ctx, today=TODAY) if f.reviewed_on]
         assert reviewed and all(f.reviewed_by_name for f in reviewed)
+
+
+def test_a_storys_money_agrees_on_every_screen(
+    client: TestClient, network: Network, demo: dict[str, UUID]
+) -> None:
+    """TC-ENG-36 (code review of stage 6.5, p. 1): R06's cream is both overstock and write-offs — the header,
+    the processes, the matrix and the ranking count it once, in the process of its larger finding."""
+    hq = login(client, "admin@a.ru")
+    week = client.get("/api/overview/restaurants/R06", headers=hq).json()
+    assert D(week["losses"]) == sum((D(p["losses"]) for p in week["processes"]), D(0))
+    net = client.get("/api/overview/network", headers=hq, params={"preset": "4w"}).json()
+    row = next(r for r in net["matrix"] if r["code"] == "R06")
+    assert D(row["total"]) == sum((D(c["losses"]) for c in row["cells"]), D(0)) == D(week["losses"])
+    assert D(next(r for r in net["ranking"] if r["code"] == "R06")["losses"]) == D(week["losses"])
+    findings = client.get(
+        "/api/findings", headers=hq, params={"restaurant_id": week["restaurant"]["id"]}
+    ).json()
+    open_problems = [f for f in findings if f["status"] != "resolved" and f["kind"] == "problem"]
+    assert D(week["losses"]) == money(open_problems)

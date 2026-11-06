@@ -220,13 +220,18 @@ export function WeekView({ code, readOnly = false }: { code: string; readOnly?: 
           <QuestionBlock
             question="Можно ли верить цифрам?"
             answer={w.data_quality_answer}
-            source={<VerifiedNote>оценку считает движок по найденным проблемам в данных ресторана; ниже 60 — уверенность находок снижается</VerifiedNote>}
+            source={
+              <VerifiedNote>
+                оценку считает движок по найденным проблемам в данных ресторана; ниже {w.data_quality_low} — уверенность находок снижается
+              </VerifiedNote>
+            }
           >
             <div className="max-w-md">
               <div className="text-sm font-medium">Качество данных, из 100</div>
               <BulletScale
                 me={me.data_quality}
                 network={net?.data_quality ?? undefined}
+                norm={w.data_quality_low}
                 max={100}
                 lowerIsBetter={false}
                 format={(n) => `${n}`}

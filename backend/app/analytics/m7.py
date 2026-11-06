@@ -92,7 +92,8 @@ def _prices(facts: Facts, cfg: EngineParams) -> list[Draft]:
         more = f" и еще {len(lines) - 1}" if len(lines) > 1 else ""
         drafts.append(
             Draft(
-                key=f"M7:{code}:prices:{'-'.join(products)}",
+                # one per restaurant, whatever lines come and go: the review and the task stay with it
+                key=f"M7:{code}:prices",
                 module="M7",
                 kind="problem",
                 process="accounting",
@@ -163,7 +164,7 @@ def _partial_counts(facts: Facts, cfg: EngineParams) -> list[Draft]:
         codes = [facts.products[p].code for p in missing]
         drafts.append(
             Draft(
-                key=f"M7:{code}:partial:{'-'.join(codes)}",
+                key=f"M7:{code}:partial:{last.isoformat()}",  # the count, not its list of products
                 module="M7",
                 kind="problem",
                 process="inventory",

@@ -78,9 +78,10 @@ def test_p1_a_restaurants_digest_holds_no_network_revenue(
         shown, ensure_ascii=False
     )
     # TC-ENG-35: the week's digest says how far its numbers can be trusted
-    assert shown["kpis"]["data_quality"] == "90 из 100" and shown["network_average"]["data_quality"].endswith(
-        "из 100"
-    )
+    # (the soup's network finding is not the director's: their score is without it, code review 6.5, p. 4)
+    assert shown["kpis"]["data_quality"] == "100 из 100" and shown["network_average"][
+        "data_quality"
+    ].endswith("из 100")
 
 
 @pytest.mark.usefixtures("demo")

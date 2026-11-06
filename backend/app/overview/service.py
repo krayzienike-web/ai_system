@@ -24,12 +24,15 @@ from uuid import UUID
 from sqlalchemy import exists, func, or_, select
 from sqlalchemy.orm import Session
 
+from app.analytics import params
+from app.analytics.quality import PENALTIES
 from app.core import words
 from app.core.errors import NotFoundError
 from app.core.period import Period
 from app.experiments.models import Experiment, ExperimentStatus, Verdict
 from app.imports.service import freshness
 from app.insights.models import Finding, FindingStatus
+from app.insights.money import counted
 from app.insights.service import FindingWork, list_findings
 from app.insights.work import WorkStage
 from app.operations.models import InventoryCount, Sale
@@ -93,18 +96,18 @@ def _open(session: Session, today: date, restaurant_id: UUID | None = None) -> l
     ]
 
 
-def _sum(items: list[FindingWork], kind: str | None = None) -> Decimal:
-    """The money of these findings; a story's findings (one cause, docs/12) count once — the largest one."""
-    total, stories = ZERO, dict[str, Decimal]()
-    for fw in items:
-        f = fw.finding
-        if kind is not None and f.kind != kind:
-            continue
-        if f.story_key:
-            stories[f.story_key] = max(stories.get(f.story_key, ZERO), f.effect_rub_month or ZERO)
-        else:
-            total += f.effect_rub_month or ZERO
-    return total + sum(stories.values(), ZERO)
+def _sum(items: list[FindingWork], kind: str | None = None, process: str | None = None) -> Decimal:
+    """The money of these findings, a story once (insights.money): pass the whole set, filter here."""
+    money = counted(fw.finding for fw in items)
+    return sum(
+        (
+            money[fw.finding.id]
+            for fw in items
+            if (kind is None or fw.finding.kind == kind)
+            and (process is None or fw.finding.process == process)
+        ),
+        ZERO,
+    )
 
 
 @dataclass
@@ -283,9 +286,10 @@ class Network:
 
 def _process_losses(items: list[FindingWork]) -> dict[str, Decimal]:
     out: dict[str, Decimal] = defaultdict(lambda: ZERO)
+    money = counted(fw.finding for fw in items)
     for fw in items:
         if fw.finding.kind == "problem":
-            out[fw.finding.process] += fw.finding.effect_rub_month or ZERO
+            out[fw.finding.process] += money[fw.finding.id]
     return out
 
 
@@ -293,7 +297,7 @@ def _status(items: list[FindingWork], process: str) -> str:
     problems = [fw for fw in items if fw.finding.kind == "problem" and fw.finding.process == process]
     if not problems:
         return "good"
-    return "critical" if _sum(problems) >= PROCESS_CRITICAL_RUB else "warning"
+    return "critical" if _sum(items, "problem", process) >= PROCESS_CRITICAL_RUB else "warning"
 
 
 def _matrix_answer(matrix: list[MatrixRow]) -> str:
@@ -329,7 +333,7 @@ def network(session: Session, period: Period, today: date) -> Network:
         mine = by_place[r.id]
         problems = [fw for fw in mine if fw.finding.kind == "problem"]
         _, before = _last_two(session, r.id)
-        losses = _sum(problems)
+        losses = _sum(mine, "problem")
         ranking.append(
             RankRow(
                 r.id,
@@ -377,8 +381,10 @@ def network(session: Session, period: Period, today: date) -> Network:
         cells = []
         for process, _ in PROCESSES:
             problems = [fw for fw in mine if fw.finding.kind == "problem" and fw.finding.process == process]
-            cells.append(MatrixCell(process, _sum(problems), len(problems), _status(mine, process)))
-        matrix.append(MatrixRow(r.id, r.code, r.name, sum((c.losses for c in cells), ZERO), cells))
+            cells.append(
+                MatrixCell(process, _sum(mine, "problem", process), len(problems), _status(mine, process))
+            )
+        matrix.append(MatrixRow(r.id, r.code, r.name, _sum(mine, "problem"), cells))
     matrix.sort(key=lambda row: (-row.total, -sum(c.count for c in row.cells), row.code))
     matrix_answer = _matrix_answer(matrix)
     network_kpi = session.execute(
@@ -408,9 +414,7 @@ def network(session: Session, period: Period, today: date) -> Network:
         matrix=matrix,
         matrix_answer=matrix_answer,
         kpi=_kpis(network_kpi),
-        overpay=_sum(
-            [fw for fw in items if fw.finding.kind == "problem" and fw.finding.process == "purchasing"]
-        ),
+        overpay=_sum(items, "problem", "purchasing"),
     )
 
 
@@ -454,6 +458,7 @@ class RestaurantWeek:
     network_kpi: Kpis | None
     kpi_answer: str | None
     data_quality_answer: str | None
+    data_quality_low: int  # M7_DQ_LOW: below it the restaurant's findings lose confidence (docs/12)
     done_tasks: list[Task]
     results_answer: str
 
@@ -479,9 +484,42 @@ def _rank(items: list[FindingWork]) -> list[FindingWork]:
     )
 
 
-def _kpis(row: KpiSnapshot | None) -> Kpis | None:
+def visible_quality(
+    session: Session, row: KpiSnapshot, only: set[UUID] | None = None
+) -> tuple[int | None, list[dict[str, Any]]]:
+    """The data quality score as this user may see it (code review of stage 6.5, p. 4): only the parts whose
+    findings the caller can read (row-level security — a director: checked, with the HQ's task) count, so
+    the score never tells of a finding the caller is not shown. HQ sees the whole score. `only`: the findings
+    a director is shown, when this runs in the system's context (the digest, ADR 0009)."""
+    if row.data_quality is None:
+        return None, []
+    parts = row.data_quality_parts or []
+    keys = {k for p in parts for k in p.get("findings", [])}
+    query = select(Finding.key).where(Finding.key.in_(keys))
+    if only is not None:
+        query = query.where(Finding.id.in_(only))
+    seen = set(session.execute(query).scalars()) if keys else set()
+    kept = []
+    for p in parts:
+        shown = seen & set(p.get("findings", []))
+        if not shown:
+            continue
+        if len(shown) < len(p.get("findings", [])) and p.get("kind") in PENALTIES:
+            # only the findings shown count, at the engine's rate and cap (test-engineer pass 6.5, TC-ENG-43);
+            # «prices» is one finding a restaurant, whole or not at all
+            _, each, cap = PENALTIES[str(p["kind"])]
+            p = {**p, "points": min(len(shown) * each, cap), "findings": sorted(shown)}
+        kept.append(p)
+    if kept == parts:
+        return row.data_quality, kept
+    return max(0, 100 - sum(int(p["points"]) for p in kept)), kept
+
+
+def _kpis(row: KpiSnapshot | None, session: Session | None = None) -> Kpis | None:
+    """`session`: the restaurant's own snapshot, read by this user (its data quality as they may see it)."""
     if row is None:
         return None
+    score, parts = visible_quality(session, row) if session is not None else (row.data_quality, [])
     return Kpis(
         row.food_cost_actual,
         row.food_cost_theory,
@@ -490,9 +528,12 @@ def _kpis(row: KpiSnapshot | None) -> Kpis | None:
         row.food_cost_to,
         row.write_offs_from,
         row.write_offs_to,
-        row.data_quality,
-        # what lowered it, in words and points: the finding keys stay on the server
-        [{"label": p["label"], "points": p["points"]} for p in row.data_quality_parts or []],
+        score,
+        # what lowered it, in words and points, the largest first: the finding keys stay on the server
+        [
+            {"label": p["label"], "points": p["points"]}
+            for p in sorted(parts, key=lambda p: -int(p["points"]))
+        ],
     )
 
 
@@ -504,10 +545,7 @@ def _data_quality_answer(me: Kpis | None, net: Kpis | None) -> str | None:
     text = f"Качество данных — {me.data_quality} из 100 ({level})"
     if net is not None and net.data_quality is not None:
         text += f", в среднем по сети {net.data_quality}"
-    if me.data_quality_parts:
-        worst = sorted(me.data_quality_parts, key=lambda p: -int(p["points"]))[:2]
-        text += ". Снижают: " + "; ".join(f"{str(p['label']).lower()} (−{p['points']})" for p in worst)
-    return text + "."
+    return text + "."  # what lowered it: the list under the answer (code review of stage 6.5, frontend p. 6)
 
 
 def _kpi_answer(me: Kpis | None, net: Kpis | None) -> str | None:
@@ -596,7 +634,7 @@ def restaurant(session: Session, code: str, today: date, *, hq: bool = True) -> 
     processes.sort(key=lambda x: -x.losses)
     fine = [title for p, title in PROCESSES if not by_process.get(p)]
     snapshots = {k.restaurant_id: k for k in session.execute(select(KpiSnapshot)).scalars()}
-    me, net = _kpis(snapshots.get(r.id)), _kpis(snapshots.get(None))
+    me, net = _kpis(snapshots.get(r.id), session), _kpis(snapshots.get(None))
     done = sorted(
         (t for t in tasks if t.status == TaskStatus.DONE), key=lambda t: t.done_on or today, reverse=True
     )
@@ -615,6 +653,7 @@ def restaurant(session: Session, code: str, today: date, *, hq: bool = True) -> 
         network_kpi=net,
         kpi_answer=_kpi_answer(me, net),
         data_quality_answer=_data_quality_answer(me, net),
+        data_quality_low=params.load(session).M7_DQ_LOW,
         done_tasks=done,
         results_answer=_results_answer(done),
     )
@@ -793,13 +832,14 @@ def board(
         (
             k,
             sum(1 for fw in filtered if fw.finding.kind == k),
-            _sum([fw for fw in filtered if fw.finding.kind == k]),
+            _sum(filtered, k),
         )
         for k in ("problem", "opportunity")
     ]
+    money = counted(fw.finding for fw in filtered)
     shown = [k for k in ("problem", "opportunity") if kind in (None, k)]
     groups = [
-        Group(k, GROUP_TITLE[k], len(items), _sum(items), items)
+        Group(k, GROUP_TITLE[k], len(items), sum((money[fw.finding.id] for fw in items), ZERO), items)
         for k in shown
         for items in [
             [fw for fw in filtered if fw.finding.kind == k and fw.finding.effect_rub_month is not None]

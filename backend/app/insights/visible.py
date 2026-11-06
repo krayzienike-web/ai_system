@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 
 from app.insights import service
 from app.insights.models import Finding, ReviewStatus
+from app.insights.money import ADDING, story_sum
 from app.insights.service import FindingWork
 from app.insights.work import Work, WorkStage
 from app.tenancy.context import AccessContext
@@ -46,6 +47,7 @@ class Story:
     key: str
     title: str
     effect_rub_month: Decimal | None
+    adds: bool  # its findings are different money and add up (insights.money); else they count once
     findings: list[StoryMember]  # the others, as this user may see them
 
 
@@ -121,11 +123,15 @@ def _story(f: Finding, stories: dict[str, list[Finding]], places: dict[UUID, Res
     others = [m for m in members if m.id != f.id]
     if not f.story_key or not others:
         return None
-    effects = [m.effect_rub_month for m in members if m.effect_rub_month is not None]
     return Story(
         key=f.story_key,
         title=f.story_title or f.title,
-        effect_rub_month=max(effects) if effects else None,
+        # the sum of what is still open, like the screens' totals (code review of stage 6.5, p. 14)
+        adds=f.story_key.startswith(ADDING),
+        effect_rub_month=story_sum(
+            f.story_key,
+            [m.effect_rub_month for m in members if m.status in ("new", "in_work", "in_experiment")],
+        ),
         findings=[
             StoryMember(
                 id=m.id,
