@@ -444,15 +444,15 @@ def test_engine_finds_planted_problems_and_review_gates_directors(
         queued = client.post("/api/analytics/run", headers=hq)
         assert queued.status_code == 202 and queued.json()["status"] == "queued"
         latest = client.get("/api/analytics/runs/latest", headers=hq).json()
-        assert (latest["status"], latest["trigger"], latest["created"]) == ("done", "manual", 27)
+        assert (latest["status"], latest["trigger"], latest["created"]) == ("done", "manual", 30)
         # Idempotent: the same data gives the same findings, updated in place.
         client.post("/api/analytics/run", headers=hq)
         latest = client.get("/api/analytics/runs/latest", headers=hq).json()
-        assert (latest["created"], latest["updated"], latest["removed"]) == (0, 27, 0)
+        assert (latest["created"], latest["updated"], latest["removed"]) == (0, 30, 0)
 
         pending = client.get("/api/findings", headers=hq, params={"review": "pending"}).json()
         by_key = {(f["module"], f["title"]): f for f in pending}
-        assert len(pending) == 27 and all(f["review_status"] == "pending" for f in pending)
+        assert len(pending) == 30 and all(f["review_status"] == "pending" for f in pending)
         assert {t for _, t in by_key} == {
             "Перерасход по техкарте: Сыр Моцарелла",
             "Перерасход по техкарте: Лосось охлажденный",
@@ -482,6 +482,8 @@ def test_engine_finds_planted_problems_and_review_gates_directors(
             "Цена выше, чем ресторан платил раньше: Сыр Моцарелла",
             "Выгодное, но редко берут: Пицца Четыре сыра",
             "Популярное, но мало зарабатывает: Куриные котлеты",
+            "Цены в накладных похожи на ошибку: 1 строка",
+            "Инвентаризация 01.10 без части товаров: 2",
         }
         # M4 and M5: the planted habits, each recomputed from the rows by the check.
         for module, title in (
@@ -501,11 +503,19 @@ def test_engine_finds_planted_problems_and_review_gates_directors(
             ("M3", "Цена выше, чем ресторан платил раньше: Сыр Моцарелла"),
             ("M2", "Выгодное, но редко берут: Пицца Четыре сыра"),
             ("M2", "Популярное, но мало зарабатывает: Куриные котлеты"),
+            ("M7", "Инвентаризация 01.10 без части товаров: 2"),
         ):
             found = by_key[(module, title)]
             check = client.get(f"/api/findings/{found['id']}/verification", headers=analyst).json()
             assert check["supported"] and all(c["ok"] for c in check["checks"]), check
             assert all(r["passed"] for r in check["rules"]), check
+        # M7, stage 6.5: both price errors (R03, R11) share a title; each is recomputed from the rows.
+        price_errors = [f for f in pending if f["title"] == "Цены в накладных похожи на ошибку: 1 строка"]
+        assert sorted(f["restaurant_code"] for f in price_errors) == ["R03", "R11"]
+        for f in price_errors:
+            v = client.get(f"/api/findings/{f['id']}/verification", headers=analyst).json()
+            assert v["supported"] and all(c["ok"] for c in v["checks"])
+            assert all(r["passed"] for r in v["rules"])
         # M7: both planted data problems, each recomputed from the rows by the check.
         for title in (
             "«Тыквенный суп» продается без техкарты",

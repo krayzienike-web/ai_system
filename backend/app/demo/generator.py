@@ -30,6 +30,9 @@ COUNT_DAYS = (
     date(2026, 10, 1),
 )  # full stock counts after the opening one
 
+ZERO_PRICE_DAY = date(2026, 10, 7)  # R03: an olive oil invoice line came in with no amount (stage 6.5)
+GRAM_PRICE_DAY = date(2026, 10, 9)  # R11: parmesan priced per gram instead of per kilo (stage 6.5)
+PARTIAL_COUNT = ("R05", ("P02", "P03"))  # R05's last count skipped the hard cheeses (stage 6.5)
 SHORT_DELIVERY = date(2026, 10, 14)  # R04: the last pasta delivery is about half of what is needed
 MISSING_INVOICES = (
     date(2026, 9, 11),
@@ -223,6 +226,9 @@ PLANTED_CAUSES = {
     "r07-mozzarella-price-jump": "supplier_overprice",
     "net-four-cheese-puzzle": "menu_mix",
     "net-cutlets-plowhorse": "menu_mix",
+    "r03-olive-oil-zero-price": "data_entry",
+    "r11-parmesan-gram-price": "data_entry",
+    "r05-partial-count": "count_skipped",
     "r08-voids-after-print": "theft",
     "r05-cashier-discounts": "theft",
 }
@@ -478,6 +484,30 @@ def generate(seed: int = 42, restaurants: int = 12, start: date = START, end: da
         "средней маржи горячего — кандидат на небольшое повышение цены в следующем меню",
     )
     planted(
+        id="r03-olive-oil-zero-price",
+        restaurant="R03",
+        module="M7",
+        product="P14",
+        kind="problem",
+        description="07.10 в накладной на оливковое масло нет суммы: строка с нулевой ценой",
+    )
+    planted(
+        id="r11-parmesan-gram-price",
+        restaurant="R11",
+        module="M7",
+        product="P02",
+        kind="problem",
+        description="09.10 пармезан в накладной по цене за грамм (1,65 ₽ вместо 1 650 ₽ за кг)",
+    )
+    planted(
+        id="r05-partial-count",
+        restaurant="R05",
+        module="M7",
+        product="P02",
+        kind="problem",
+        description="В последней инвентаризации R05 не пересчитали пармезан и грана падано",
+    )
+    planted(
         id="r08-voids-after-print",
         restaurant="R08",
         module="M8",
@@ -618,6 +648,10 @@ def generate(seed: int = 42, restaurants: int = 12, start: date = START, end: da
                             unit_price *= 1.03 if day >= PRICE_JUMP_FROM else 0.88
                         if p_code == "P09" and day >= date(2026, 9, 1):
                             unit_price *= 1.40  # the market moved: the whole network pays more
+                        if code == "R03" and p_code == "P14" and day == ZERO_PRICE_DAY:
+                            unit_price = 0.0  # data errors (stage 6.5): no price in the line …
+                        if code == "R11" and p_code == "P02" and day == GRAM_PRICE_DAY:
+                            unit_price /= 1000  # … and a price per gram
                         doc += 1
                         amount = _q(float(delivered) * unit_price, "0.01")
                         vat_rate = VAT.get(category, Decimal("0.20"))
@@ -679,7 +713,10 @@ def generate(seed: int = 42, restaurants: int = 12, start: date = START, end: da
                 if (end - day).days < STOCK_DAYS:  # «Остатки на дату»: the books at the end of the day
                     stock_rows.append([day, p_code, p_name, _q(max(book_stock, 0.0)), unit_title[unit]])
 
-                if day in count_days and not (code == "R08" and day == count_days[-1]):  # R08 skipped it
+                partial = (code, p_code in PARTIAL_COUNT[1]) == (PARTIAL_COUNT[0], True) and day == max(
+                    count_days, default=None
+                )
+                if day in count_days and not (code == "R08" and day == count_days[-1]) and not partial:
                     actual = shelf_stock
                     if code == "R12" and day >= count_days[1]:
                         actual = book_stock  # «counted» by copying the books: no difference at all

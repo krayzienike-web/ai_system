@@ -92,6 +92,8 @@ class EngineParams:
     M7_GAP_TIMES: Decimal = Decimal(2)  # … and longer than twice the restaurant's usual pause between days
     M7_NEGATIVE_DAYS: Decimal = Decimal(3)  # the books below zero by more than three days of use
     M7_HISTORY_DAYS: int = 56  # the usual pause: over the last 8 weeks of the restaurant's data
+    M7_PRICE_TIMES: Decimal = Decimal(3)  # an invoice price 3 times off the network's typical is an error
+    M7_COUNT_HISTORY: int = 2  # «usually counted»: in each of the restaurant's 2 counts before the last one
     # M8 — the till (stage 6.5): removals after the check was printed and discounts, by cashier
     M8_WINDOW_DAYS: int = 28
     M8_VOIDS_MIN_COUNT: int = 8  # fewer removals after printing in the window: no conclusion
@@ -476,6 +478,24 @@ DEFS: tuple[ParamDef, ...] = (
         "меньше — шум округлений и неточных техкарт",
         D(1),
         D(30),
+    ),
+    ParamDef(
+        "M7_PRICE_TIMES",
+        "M7",
+        "Цена в накладной — ошибка, если отличается от обычной в",
+        "раз",
+        "от типичной цены сети за 8 недель",
+        D("1.5"),
+        D(100),
+    ),
+    ParamDef(
+        "M7_COUNT_HISTORY",
+        "M7",
+        "Обычно пересчитываемый товар — был в последних",
+        "инвентаризациях",
+        "до последней",
+        D(1),
+        D(6),
     ),
     ParamDef(
         "M7_GAP_TIMES",

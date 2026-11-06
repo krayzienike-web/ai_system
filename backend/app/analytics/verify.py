@@ -59,6 +59,10 @@ def verify(session: Session, finding: Finding) -> dict[str, Any]:
         return _m6(session, finding)
     if finding.module == "M8" and finding.restaurant_id is not None:
         return _m8(session, finding)
+    if finding.module == "M7" and (finding.evidence or {}).get("kind") == "prices":
+        return _m7_prices(session, finding)
+    if finding.module == "M7" and (finding.evidence or {}).get("kind") == "partial":
+        return _m7_partial(session, finding)
     if finding.module == "M7" and (finding.evidence or {}).get("kind") == "negative":
         return _m7_negative(session, finding)
     if finding.module == "M4" and finding.restaurant_id is not None:
@@ -2071,6 +2075,165 @@ def _m4_overdue(session: Session, f: Finding, restaurant: Restaurant) -> dict[st
         "interpretation": [
             "Пока нет пересчета, потери по техкартам (M1) за это время не видны.",
             "Если инвентаризация была, но не загружена, — загрузите файл.",
+        ],
+    }
+
+
+def _m7_prices(session: Session, f: Finding) -> dict[str, Any]:
+    """Invoice lines with an odd price, recomputed from the stored receipts of the network."""
+    cfg = params.load(session)
+    ev = f.evidence or {}
+    assert f.period_from and f.period_to and f.restaurant_id
+    end = f.period_to
+    history_start = end - timedelta(days=cfg.M7_HISTORY_DAYS - 1)
+    codes = {
+        p.code: p for p in session.execute(select(Product).where(Product.code.in_(ev["products"]))).scalars()
+    }
+    rows, ok = [], True
+    for product in codes.values():
+        all_prices = [
+            a / q
+            for a, q in session.execute(
+                select(Receipt.amount, Receipt.qty).where(
+                    Receipt.product_id == product.id,
+                    Receipt.day >= history_start,
+                    Receipt.day <= end,
+                    Receipt.qty > 0,
+                    Receipt.amount > 0,
+                )
+            ).all()
+        ]
+        if len(all_prices) < 3:
+            ok = False
+            continue
+        usual = med(all_prices)
+        for day, qty, amount in session.execute(
+            select(Receipt.day, Receipt.qty, Receipt.amount).where(
+                Receipt.restaurant_id == f.restaurant_id,
+                Receipt.product_id == product.id,
+                Receipt.day >= f.period_from,
+                Receipt.day <= end,
+                Receipt.qty > 0,
+            )
+        ).all():
+            price = amount / qty
+            odd = price <= 0 or price * cfg.M7_PRICE_TIMES < usual or price > usual * cfg.M7_PRICE_TIMES
+            if odd:
+                rows.append(
+                    {
+                        "day": day.isoformat(),
+                        "product": product.name,
+                        "qty": _q(qty),
+                        "amount": _q(amount, Decimal("0.01")),
+                        "price": _q(price, Decimal("0.01")),
+                        "typical": _q(usual, Decimal("0.01")),
+                    }
+                )
+    found = len(ev.get("lines", []))
+    return {
+        "module": "M7",
+        "supported": True,
+        "object": ", ".join(p.name for p in codes.values()),
+        "restaurant": session.get(Restaurant, f.restaurant_id).code,  # type: ignore[union-attr]
+        "formula": "Цена строки = сумма / количество; типичная = медиана цен строк сети за 8 недель; "
+        f"ошибка — нет суммы или цена отличается от типичной больше чем в {cfg.M7_PRICE_TIMES} раза",
+        "steps": [
+            {
+                "id": "lines",
+                "label": "Строки накладных с такой ценой",
+                "value": None,
+                "unit": "",
+                "rows": rows,
+            }
+        ],
+        "result": [{"label": "Строк с ошибочной ценой", "value": str(len(rows)), "unit": ""}],
+        "rules": [
+            {
+                "rule": "Есть строки с нулевой или ошибочной ценой",
+                "value": str(len(rows)),
+                "threshold": "1",
+                "passed": len(rows) >= 1,
+            }
+        ],
+        "checks": [
+            {
+                "check": "Пересчет из исходных строк совпадает с тем, что нашел движок",
+                "ok": ok and len(rows) == found,
+                "note": f"движок: {found}, пересчет: {len(rows)}",
+            }
+        ],
+        "interpretation": [
+            "Денег у находки нет: это ошибка в данных, но она искажает себестоимость, цены и фудкост.",
+            "Цена в тысячу раз ниже обычной — почти всегда цена за грамм вместо килограмма.",
+        ],
+    }
+
+
+def _m7_partial(session: Session, f: Finding) -> dict[str, Any]:
+    """The latest count without products counted before, recomputed from the stored count lines."""
+    cfg = params.load(session)
+    ev = f.evidence or {}
+    assert f.restaurant_id
+    by_day: dict[date, set[UUID]] = defaultdict(set)
+    for day, pid in session.execute(
+        select(InventoryCount.day, InventoryCount.product_id).where(
+            InventoryCount.restaurant_id == f.restaurant_id
+        )
+    ).all():
+        by_day[day].add(pid)
+    ordered = sorted(by_day)
+    if len(ordered) < cfg.M7_COUNT_HISTORY + 1:
+        return {"module": "M7", "supported": False, "note": "Инвентаризаций ресторана меньше, чем нужно"}
+    last, before = ordered[-1], ordered[-1 - cfg.M7_COUNT_HISTORY : -1]
+    usual = set.intersection(*(by_day[d] for d in before))
+    bought = set(
+        session.execute(
+            select(Receipt.product_id).where(
+                Receipt.restaurant_id == f.restaurant_id, Receipt.day > before[-1], Receipt.day <= last
+            )
+        ).scalars()
+    )
+    missing_ids = (usual - by_day[last]) & bought
+    products = {
+        p.id: p for p in session.execute(select(Product).where(Product.id.in_(missing_ids))).scalars()
+    }
+    missing = sorted(p.code for p in products.values())
+    return {
+        "module": "M7",
+        "supported": True,
+        "object": ", ".join(products[i].name for i in sorted(products, key=lambda i: products[i].code)),
+        "restaurant": session.get(Restaurant, f.restaurant_id).code,  # type: ignore[union-attr]
+        "formula": "Обычно пересчитываемые — товары, которые были в каждой из предыдущих "
+        f"{cfg.M7_COUNT_HISTORY} инвентаризаций; не хватает — их нет в последней, хотя их закупали после "
+        "предыдущей",
+        "steps": [
+            {
+                "id": "counts",
+                "label": "Товаров в инвентаризациях",
+                "value": None,
+                "unit": "",
+                "rows": [{"day": d.isoformat(), "products": len(by_day[d])} for d in [*before, last]],
+            }
+        ],
+        "result": [{"label": "Не пересчитано", "value": ", ".join(missing), "unit": ""}],
+        "rules": [
+            {
+                "rule": "В последней инвентаризации нет обычно пересчитываемых товаров",
+                "value": str(len(missing)),
+                "threshold": "1",
+                "passed": len(missing) >= 1,
+            }
+        ],
+        "checks": [
+            {
+                "check": "Пересчет из исходных строк совпадает с тем, что нашел движок",
+                "ok": last.isoformat() == ev["count_day"] and missing == ev["missing"],
+                "note": f"движок: {', '.join(ev['missing'])}; пересчет: {', '.join(missing) or '—'}",
+            }
+        ],
+        "interpretation": [
+            "Денег у находки нет: пока товары не пересчитаны, потери по ним (M1) не посчитать.",
+            "Если эти товары пересчитывают в другом месте хранения — загрузите обе части инвентаризации.",
         ],
     }
 

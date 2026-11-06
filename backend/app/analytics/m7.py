@@ -4,6 +4,10 @@
 - A restaurant's export stopped: the other restaurants have newer days, this one has a gap much longer than
   its usual pause between days with data.
 - The books go below zero between counts: more was used than there was and came in — a document is missing.
+- Invoice lines with no price or a price many times off the network's typical (a price per gram, a typo):
+  costs, prices and food cost read them as they are (stage 6.5).
+- The latest count without products the restaurant usually counts: until a full count their losses cannot
+  be computed (stage 6.5).
 """
 
 from collections import defaultdict
@@ -36,7 +40,161 @@ SOURCES = {
 
 
 def detect(facts: Facts, cfg: EngineParams = DEFAULT) -> list[Draft]:
-    return _no_recipe(facts, cfg) + _gaps(facts, cfg)
+    return _no_recipe(facts, cfg) + _gaps(facts, cfg) + _prices(facts, cfg) + _partial_counts(facts, cfg)
+
+
+def _prices(facts: Facts, cfg: EngineParams) -> list[Draft]:
+    """Invoice lines of the last weeks with no amount or a price far off the network's typical one."""
+    if not facts.receipts:
+        return []
+    end = max(r.day for r in facts.receipts)
+    start = end - timedelta(days=cfg.M7_WINDOW_DAYS - 1)
+    history_start = end - timedelta(days=cfg.M7_HISTORY_DAYS - 1)
+    prices: dict[UUID, list[Decimal]] = defaultdict(list)
+    for r in facts.receipts:
+        if history_start <= r.day <= end and r.qty > 0 and r.amount > 0:
+            prices[r.product].append(r.amount / r.qty)
+    typical = {p: Decimal(median(v)) for p, v in prices.items() if len(v) >= 3}
+    odd: dict[UUID, list[dict[str, str]]] = defaultdict(list)
+    for r in sorted(facts.receipts, key=lambda r: (r.day, str(r.product))):
+        if not (start <= r.day <= end) or r.qty <= 0 or r.product not in typical:
+            continue
+        info = facts.products.get(r.product)
+        if info is None:
+            continue
+        price, usual = r.amount / r.qty, typical[r.product]
+        if price <= 0:
+            why = "нет суммы"
+        elif price * cfg.M7_PRICE_TIMES < usual:
+            why = f"в {(usual / price).quantize(Decimal(1))} раз дешевле обычной"
+        elif price > usual * cfg.M7_PRICE_TIMES:
+            why = f"в {(price / usual).quantize(Decimal(1))} раз дороже обычной"
+        else:
+            continue
+        odd[r.restaurant].append(
+            {
+                "day": r.day.isoformat(),
+                "product": info.code,
+                "name": info.name,
+                "qty": str(r.qty.quantize(Decimal("0.001"))),
+                "amount": str(r.amount.quantize(Decimal("0.01"))),
+                "price": str(price.quantize(Decimal("0.01"))),
+                "typical": str(usual.quantize(Decimal("0.01"))),
+                "why": why,
+                "unit": {"kg": "кг", "l": "л", "pcs": "шт"}.get(info.unit, info.unit),
+            }
+        )
+    drafts = []
+    for restaurant, lines in odd.items():
+        code = facts.restaurants[restaurant]
+        products = sorted({x["product"] for x in lines})
+        first = lines[0]
+        more = f" и еще {len(lines) - 1}" if len(lines) > 1 else ""
+        drafts.append(
+            Draft(
+                key=f"M7:{code}:prices:{'-'.join(products)}",
+                module="M7",
+                kind="problem",
+                process="accounting",
+                restaurant=restaurant,
+                title=f"Цены в накладных похожи на ошибку: {len(lines)} {_lines(len(lines))}",
+                headline=(
+                    f"{dmy(date.fromisoformat(first['day']))} «{first['name']}»: "
+                    f"{_money(first['price'])}\u00a0₽ за "
+                    f"{first['unit']} — {first['why']} ({_money(first['typical'])}\u00a0₽ по сети){more}. "
+                    "Себестоимость, цены "
+                    "закупки и фудкост считают эти строки как есть — исправьте накладные в учетной системе "
+                    "и загрузите заново"
+                ),
+                effect_rub_month=None,
+                effect_note="себестоимость и цены по товарам искажены",
+                confidence="high",
+                period_from=start,
+                period_to=end,
+                actions=[
+                    "Проверить накладные: цена, единица измерения (грамм или килограмм), сумма",
+                    "Исправить в учетной системе и загрузить закупки заново",
+                ],
+                evidence={"kind": "prices", "lines": lines, "products": products},
+            )
+        )
+    return drafts
+
+
+def _money(value: str) -> str:
+    """1099.85 → «1 099,85»."""
+    return f"{Decimal(value):,.2f}".replace(",", "\u00a0").replace(".", ",")
+
+
+def _lines(n: int) -> str:
+    return (
+        "строка"
+        if n % 10 == 1 and n % 100 != 11
+        else "строки"
+        if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14
+        else "строк"
+    )
+
+
+def _partial_counts(facts: Facts, cfg: EngineParams) -> list[Draft]:
+    """The latest count of a restaurant without products it counted in each of the counts before."""
+    by_day: dict[UUID, dict[date, set[UUID]]] = defaultdict(lambda: defaultdict(set))
+    for c in facts.counts:
+        by_day[c.restaurant][c.day].add(c.product)
+    bought_since: dict[UUID, set[UUID]] = defaultdict(set)
+    drafts = []
+    for restaurant, days in by_day.items():
+        ordered = sorted(days)
+        if len(ordered) < cfg.M7_COUNT_HISTORY + 1:
+            continue
+        last, before = ordered[-1], ordered[-1 - cfg.M7_COUNT_HISTORY : -1]
+        usual = set.intersection(*(days[d] for d in before))
+        bought_since[restaurant] = {
+            r.product for r in facts.receipts if r.restaurant == restaurant and before[-1] < r.day <= last
+        }
+        missing = sorted(
+            (p for p in usual - days[last] if p in bought_since[restaurant] and p in facts.products),
+            key=lambda p: facts.products[p].code,
+        )
+        if not missing:
+            continue
+        code = facts.restaurants[restaurant]
+        names = [facts.products[p].name for p in missing]
+        codes = [facts.products[p].code for p in missing]
+        drafts.append(
+            Draft(
+                key=f"M7:{code}:partial:{'-'.join(codes)}",
+                module="M7",
+                kind="problem",
+                process="inventory",
+                restaurant=restaurant,
+                title=f"Инвентаризация {dmy(last)} без части товаров: {len(missing)}",
+                headline=(
+                    f"В инвентаризации {dmy(last)} нет товаров, которые ресторан пересчитывает всегда: "
+                    + ", ".join(n.lower() for n in names)
+                    + ". Их закупали, но остаток не пересчитан — потери по ним до следующей полной "
+                    "инвентаризации не посчитать"
+                ),
+                effect_rub_month=None,
+                effect_note="потери по этим товарам не считаются",
+                confidence="high",
+                period_from=before[-1] + timedelta(days=1),
+                period_to=last,
+                actions=[
+                    "Проверить, пересчитаны ли эти товары и не потерялись ли строки при выгрузке",
+                    "Досчитать товары и загрузить инвентаризацию заново",
+                ],
+                evidence={
+                    "kind": "partial",
+                    "count_day": last.isoformat(),
+                    "before": [d.isoformat() for d in before],
+                    "missing": codes,
+                    "product": codes[0],
+                    "counted": len(days[last]),
+                },
+            )
+        )
+    return drafts
 
 
 def _has_recipe(facts: Facts) -> dict[UUID, date]:

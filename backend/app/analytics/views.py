@@ -74,6 +74,15 @@ CAUSES = {
         "Выгрузка из учетной системы упала с ошибкой",
     ],
     "M3:contract": ["Поставщик выставляет цену выше договорной"],
+    "M7:prices": [
+        "Цена введена за грамм или штуку вместо килограмма",
+        "Сумму в накладной не заполнили или обнулили при исправлении",
+        "Опечатка при вводе цены",
+    ],
+    "M7:partial": [
+        "Товары не пересчитали: другое место хранения, не хватило времени",
+        "Строки потерялись при выгрузке инвентаризации",
+    ],
     "M3:growth": ["Поставщик поднял цену для всей сети"],
     "M2:plowhorse": [
         "Цена блюда ниже, чем у других блюд категории, а себестоимость сопоставима",
@@ -664,6 +673,49 @@ def _m7(d: Draft, facts: Facts) -> dict[str, Any]:
                 "label": "Расчетный остаток в худший день",
                 "value": f"{_n(ev['lowest'])} {unit}",
                 "benchmark": f"расход ≈ {_n(ev['daily_use'])} {unit} в день",
+            },
+        }
+    if ev["kind"] == "prices":
+        return {
+            "summary": d.headline,
+            "causes": CAUSES["M7:prices"],
+            "confidence_note": "Строки накладных за 4 недели и типичная цена сети за 8 недель",
+            "metric": {
+                "label": "Строк с ошибочной ценой",
+                "value": str(len(ev["lines"])),
+                "benchmark": f"товаров: {len(ev['products'])}",
+            },
+            "table": {
+                "title": "Строки накладных",
+                "columns": ["Дата", "Товар", "Количество", "Сумма, ₽", "Цена, ₽", "Обычно по сети, ₽"],
+                "rows": [
+                    [
+                        f"{x['day'][8:10]}.{x['day'][5:7]}",
+                        x["name"],
+                        _n(x["qty"], 3),
+                        _n(x["amount"], 2),
+                        _n(x["price"], 2),
+                        _n(x["typical"], 2),
+                    ]
+                    for x in ev["lines"]
+                ],
+            },
+        }
+    if ev["kind"] == "partial":
+        names = {p.code: p.name for p in facts.products.values()}
+        return {
+            "summary": d.headline,
+            "causes": CAUSES["M7:partial"],
+            "confidence_note": "Строки инвентаризаций ресторана и накладные после предыдущей",
+            "metric": {
+                "label": "Не пересчитано товаров",
+                "value": str(len(ev["missing"])),
+                "benchmark": f"пересчитано {ev['counted']}",
+            },
+            "table": {
+                "title": "Не пересчитаны",
+                "columns": ["Товар"],
+                "rows": [[names.get(c, c)] for c in ev["missing"]],
             },
         }
     last, network_last = ev["last"], ev["network_last"]
