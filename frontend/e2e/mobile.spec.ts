@@ -66,3 +66,19 @@ test("TC-UI-01: a finding's card with its story fits 390 px (stage 6.5)", async 
   await expect(page.getByText("Это одна история?")).toBeVisible();
   await expectNoOverflow(page);
 });
+
+test("TC-UI-01: a measured check and the wizard's ways to compare fit 390 px (stage 7)", async ({ page }) => {
+  await signIn(page, "Управляющая компания");
+  await page.getByRole("button", { name: /Еще/ }).click();
+  await page.getByRole("dialog", { name: "Еще разделы" }).getByRole("link", { name: "Отчет для руководителя" }).click();
+  await page.getByRole("link", { name: "Малые партии томатов" }).click();
+  await expect(page.getByText("Эффект подтвержден")).toBeVisible();
+  await expectNoOverflow(page);
+  await page.getByRole("link", { name: /Еще/ }).or(page.getByRole("button", { name: /Еще/ })).first().click();
+  await page.getByRole("link", { name: /^Находки$/ }).first().click();
+  await page.getByRole("link", { name: /Списания выше сети: Руккола/ }).first().click();
+  await page.getByRole("link", { name: /Проверить на части ресторанов/ }).click();
+  await page.getByRole("button", { name: "Дальше" }).click();
+  await expect(page.getByRole("group", { name: "Как сравниваем" })).toBeVisible();
+  await expectNoOverflow(page);
+});

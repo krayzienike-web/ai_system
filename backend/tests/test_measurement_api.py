@@ -5,6 +5,7 @@ from datetime import date
 from decimal import Decimal
 from uuid import UUID
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session
@@ -272,3 +273,55 @@ def test_a_repeat_is_one_at_a_time_up_to_twelve_weeks_and_the_card_leads_to_the_
     assert (
         client.post(f"/api/checks/{twelve['id']}/repeat", headers=hq, json={"weeks": 12}).status_code == 422
     )
+
+
+def test_a_proposal_and_an_engine_run_read_the_rows_once(
+    client: TestClient,
+    network: Network,
+    demo: dict[str, UUID],  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TC-EXP-51 (code review of stage 7, p. 16): a proposal reads the network's rows and builds the use by
+    recipes once (the draft's designs are not worked out again), and an engine run builds the use by recipes
+    once for the findings and the checks' measurement — the same numbers, without the second pass."""
+    from app.analytics import engine as engine_module
+    from app.analytics.usage import Usage
+    from app.experiments import design as design_module
+    from app.experiments import measurement as measurement_module
+    from app.experiments import service as service_module
+
+    built: list[str] = []
+
+    class Counted(Usage):
+        def __init__(self, facts: object) -> None:
+            built.append("usage")
+            super().__init__(facts)  # type: ignore[arg-type]
+
+    loads: list[str] = []
+    real_load = service_module.load_facts  # type: ignore[attr-defined]
+
+    def counted_load(session: Session) -> object:
+        loads.append("facts")
+        return real_load(session)
+
+    for module in (service_module, design_module, measurement_module, engine_module):
+        monkeypatch.setattr(module, "Usage", Counted)
+    monkeypatch.setattr(service_module, "load_facts", counted_load)
+    hq = login(client, "admin@a.ru")
+    greens = next(
+        f
+        for f in client.get("/api/findings", headers=hq).json()
+        if f["title"] == "Списания выше сети: Руккола" and f["restaurant_code"] == "R01"
+    )
+    d = client.get("/api/checks/draft", headers=hq, params={"finding_id": greens["id"]}).json()
+    loads.clear()
+    built.clear()
+    body = {"finding_id": greens["id"], "action": d["actions"][0], "control_ids": [], "weeks": 4}
+    made = client.post("/api/checks", headers=hq, json={**body, "design": "items"})
+    assert made.status_code == 201, made.text
+    assert (loads, built) == (["facts"], ["usage"])
+    assert D(made.json()["mde_rub_month"]) > 0  # the threshold is still worked out for the choice
+    built.clear()
+    assert client.post("/api/analytics/run", headers=hq).status_code == 202
+    assert client.get("/api/analytics/runs/latest", headers=hq).json()["status"] == "done"
+    assert built == ["usage"]

@@ -160,8 +160,10 @@ def _proposable(session: Session, ctx: AccessContext, finding_id: UUID) -> Findi
     return finding
 
 
-def draft(session: Session, ctx: AccessContext, finding_id: UUID) -> Draft:
-    """The check the system proposes for a finding: what to change, where, compared with whom, how long."""
+def draft(session: Session, ctx: AccessContext, finding_id: UUID, *, designs: bool = True) -> Draft:
+    """The check the system proposes for a finding: what to change, where, compared with whom, how long
+    (`designs=False` — without the designs and their thresholds: `propose` works them out for its own
+    choice, so the rows are not read and measured twice)."""
     finding = _proposable(session, ctx, finding_id)
     places = {r.id: r for r in session.execute(select(Restaurant)).scalars()}
     revenue = {
@@ -199,7 +201,7 @@ def draft(session: Session, ctx: AccessContext, finding_id: UUID) -> Draft:
     spec = design.spec_for(finding, codes)
     options: list[design.Option] = []
     suggest = "restaurants"
-    if spec is not None:
+    if spec is not None and designs:
         facts = load_facts(session)
         last = max((r.day for r in facts.receipts), default=None)
         if last is not None:
@@ -261,7 +263,7 @@ def propose(
 ) -> Experiment:
     """A check of a finding, sent to the HQ admin to launch. Its design, metric and periods are fixed here
     and never change after the launch (docs/05, «Честность замера»)."""
-    d = draft(session, ctx, finding_id)
+    d = draft(session, ctx, finding_id, designs=False)
     session.refresh(d.finding, with_for_update=True)  # two proposals at once: one waits for the other
     open_check = session.execute(
         select(Experiment.id).where(
@@ -291,11 +293,12 @@ def propose(
     # The design as proposed: its availability and the smallest effect for these restaurants, this length
     # and these dates, not the draft's defaults (code review of stage 7, p. 7)
     facts = load_facts(session)
+    usage = Usage(facts)
     chosen = next(
         (
             o
             for o in design.options(
-                facts, d.spec, d.test.id, control_ids, starts, ends, d.finding.id.int % 2**32
+                facts, d.spec, d.test.id, control_ids, starts, ends, d.finding.id.int % 2**32, usage
             )
             if o.design == design_key
         ),
@@ -306,7 +309,7 @@ def propose(
     mde = (
         mde_by_weeks(
             facts,
-            Usage(facts),
+            usage,
             d.spec,
             design_key,
             *design.units(d.spec, design_key, d.test.id, control_ids, chosen.control_products),

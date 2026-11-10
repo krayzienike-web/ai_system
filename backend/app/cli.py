@@ -150,7 +150,7 @@ def reset_demo(password: str, seed: int) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(prog="app.cli")
     sub = parser.add_subparsers(dest="command", required=True)
-    seed = sub.add_parser("seed-demo", help="Create the demo tenant, 3 restaurants and users")
+    seed = sub.add_parser("seed-demo", help="Create the demo tenant, its restaurants and users")
     seed.add_argument("--password", default="demo12345")
     gen = sub.add_parser("generate-demo", help="Write the files of the synthetic demo network")
     gen.add_argument("--out", default="demo-data")

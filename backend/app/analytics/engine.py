@@ -54,10 +54,15 @@ class RunResult:
 
 
 def analyse(
-    facts: Facts, norms: Norms, cfg: EngineParams = DEFAULT, rejected: frozenset[str] = frozenset()
+    facts: Facts,
+    norms: Norms,
+    cfg: EngineParams = DEFAULT,
+    rejected: frozenset[str] = frozenset(),
+    usage: Usage | None = None,
 ) -> tuple[list[Draft], list[kpi.Kpi]]:
-    """Findings of every module and the restaurants' KPIs, from one pass over the facts."""
-    usage = Usage(facts)
+    """Findings of every module and the restaurants' KPIs, from one pass over the facts (`usage` — the use
+    by recipes of these facts, when the caller has it)."""
+    usage = usage or Usage(facts)
     costs = CostBook(facts.receipts)
     m1_rows = m1.rows(facts, usage, costs, cfg)
     prices = m3.detect(facts, cfg)
@@ -167,7 +172,8 @@ def run(session: Session, ctx: AccessContext, today: date, *, as_of: date | None
         if k
     )
     known = facts.until(as_of) if as_of else facts
-    drafts, kpis = analyse(known, norms, cfg, rejected)
+    usage = Usage(known)  # built once: the findings and the checks' measurement read the same use by recipes
+    drafts, kpis = analyse(known, norms, cfg, rejected, usage)
     keys = [d.key for d in drafts]
     if len(keys) != len(set(keys)):
         raise RuntimeError(
@@ -230,7 +236,7 @@ def run(session: Session, ctx: AccessContext, today: date, *, as_of: date | None
     session.flush()
     _store_kpis(session, ctx.tenant_id, kpis, today)
     # The running checks are measured on the same data (stage 7, docs/05 «Замер»): a result counts this week
-    measurement.measure_all(session, ctx, known, today)
+    measurement.measure_all(session, ctx, known, today, usage)
     trend.record_week(session, ctx.tenant_id, today)
     audit(
         session,
