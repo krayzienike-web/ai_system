@@ -47,17 +47,23 @@ PERSON_HEADERS = re.compile(
     r"оператор|пользовател|работник|персонал|телефон|e-?mail|почта",
     re.IGNORECASE,
 )
-# «Иванов И.И.», «Иванов Иван Иванович»: a person's name in any column
+# «Иванов И.И.», «Иванов Иван Иванович», «И.И. Иванов»: a person's name in any column
+_SURNAME = r"[А-ЯЁ][а-яё]+(?:-[А-ЯЁ][а-яё]+)?"
 PERSON_VALUE = re.compile(
-    r"^[А-ЯЁ][а-яё]+(?:-[А-ЯЁ][а-яё]+)?\s+(?:[А-ЯЁ]\.\s?[А-ЯЁ]\.?|[А-ЯЁ][а-яё]+\s+[А-ЯЁ][а-яё]+)$"
+    rf"^(?:{_SURNAME}\s+(?:[А-ЯЁ]\.\s?[А-ЯЁ]\.?|[А-ЯЁ][а-яё]+\s+[А-ЯЁ][а-яё]+)|[А-ЯЁ]\.\s?[А-ЯЁ]\.\s?{_SURNAME})$"
 )
 MASK = "[сотрудник]"
+QUOTED = re.compile(r"«([^»]*)»")
+
+
+def _private(header: list[str]) -> set[int]:
+    return {i for i, h in enumerate(header) if PERSON_HEADERS.search(h.strip())}
 
 
 def masked_samples(header: list[str], rows: list[list[str]]) -> list[list[str]]:
     """The sample rows the model sees, without people: the columns of cashiers and waiters and anything that
     looks like a full name are replaced (docs/03: no personal data to the LLM; pre-pilot review, p. 12)."""
-    private = {i for i, h in enumerate(header) if PERSON_HEADERS.search(h.strip())}
+    private = _private(header)
     return [
         [
             MASK if (i in private and c.strip()) or PERSON_VALUE.match(c.strip()) else c.strip()
@@ -65,6 +71,19 @@ def masked_samples(header: list[str], rows: list[list[str]]) -> list[list[str]]:
         ]
         for r in rows
     ]
+
+
+def masked_text(text: str, header: list[str], rows: list[list[str]]) -> str:
+    """A message of the import that goes back to the model: a quoted cell of a person's column or a name is
+    masked as in the samples (the import's errors quote cells: «Петров П.П.» — ИНН …)."""
+    private = _private(header)
+    people = {c.strip() for r in rows for i, c in enumerate(r) if i in private and c.strip()}
+
+    def mask(m: re.Match[str]) -> str:
+        value = m.group(1).strip()
+        return f"«{MASK}»" if value in people or PERSON_VALUE.match(value) else m.group(0)
+
+    return QUOTED.sub(mask, text)
 
 
 def guess_header(rows: list[list[str]]) -> int:
@@ -188,10 +207,11 @@ def propose_marking(
                     today,
                 )
             except InvalidError as e:
-                return [str(e)]
+                return [masked_text(str(e), rows[index], rows[index + 1 :])]
         if tried["rows"] and tried["rows_with_errors"] / tried["rows"] > MOSTLY_BROKEN:
             bad, total = tried["rows_with_errors"], tried["rows"]
-            return [f"с такой разметкой ошибки в {bad} строках из {total}: {'; '.join(tried['errors'])}"]
+            errors = masked_text("; ".join(tried["errors"]), rows[index], rows[index + 1 :])
+            return [f"с такой разметкой ошибки в {bad} строках из {total}: {errors}"]
         preview.clear()
         preview.update(tried)
         return []

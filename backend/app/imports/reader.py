@@ -9,7 +9,9 @@ import io
 import logging
 import re
 import zipfile
+import zlib
 from dataclasses import dataclass, field
+from typing import IO
 
 import fastexcel
 
@@ -29,8 +31,10 @@ TOO_BIG = (
 ).replace(",", " ")
 NOT_A_TABLE = "Не удалось прочитать Excel-файл: сохраните его в Excel как .xlsx или как CSV и загрузите снова"
 log = logging.getLogger(__name__)
-_CELL = re.compile(rb'<(?:\w+:)?c\b[^>]*?\br="([A-Z]{1,4})(\d{1,9})"')
-_ROW = re.compile(rb'<(?:\w+:)?row\b[^>]*?\br="(\d{1,9})"')
+# A <row> or <c> start tag; its attributes may hold a «>» inside quotes.
+_TAG = re.compile(rb"""<(?:\w+:)?(row|c)\b((?:[^>"']|"[^"]*"|'[^']*')*)>""")
+_ADDRESS = re.compile(rb'\br\s*=\s*["\']([A-Z]{0,4})(\d{1,9})["\']')
+MAX_TAG = 4 * 1024 * 1024  # a cell's text is at most 32 767 characters in Excel
 
 
 @dataclass
@@ -55,31 +59,57 @@ def _column_number(letters: bytes) -> int:
 
 def check_xlsx_size(content: bytes) -> None:
     """The size of every sheet of an .xlsx before it is unpacked into memory: its XML is read in pieces and
-    the farthest cell is found. Raises InvalidError for a sheet over the limits or a zip unpacking too big."""
+    the farthest cell is found. Raises InvalidError for a sheet over the limits or a zip unpacking too big.
+
+    The address r= is optional in xlsx: a row or a cell without it follows the previous one, as calamine reads
+    it. A piece is scanned up to its last «<», the rest goes with the next one, so no tag is cut or counted
+    twice (test engineer's pass after the pre-pilot review)."""
     try:
         book = zipfile.ZipFile(io.BytesIO(content))
     except zipfile.BadZipFile:
         raise InvalidError(NOT_A_TABLE) from None
-    with book:
-        sheets = [
-            i
-            for i in book.infolist()
-            if i.filename.startswith("xl/worksheets/") and i.filename.endswith(".xml")
-        ]
-        if sum(i.file_size for i in book.infolist()) > MAX_UNPACKED:
-            raise InvalidError(TOO_BIG)
-        for info in sheets:
-            rows = columns = 0
-            tail = b""
-            with book.open(info) as xml:
-                while chunk := xml.read(1 << 20):
-                    data = tail + chunk
-                    rows = max([rows, *(int(m) for m in _ROW.findall(data))])
-                    columns = max([columns, *(_column_number(c) for c, _ in _CELL.findall(data))])
-                    rows = max([rows, *(int(r) for _, r in _CELL.findall(data))])
-                    if rows > MAX_ROWS or columns > MAX_COLUMNS:
-                        raise InvalidError(TOO_BIG)
-                    tail = data[-256:]  # a tag cut between two pieces is read with the next one
+    try:
+        with book:
+            sheets = [
+                i
+                for i in book.infolist()
+                if i.filename.startswith("xl/worksheets/") and i.filename.endswith(".xml")
+            ]
+            if sum(i.file_size for i in book.infolist()) > MAX_UNPACKED:
+                raise InvalidError(TOO_BIG)
+            for info in sheets:
+                with book.open(info) as xml:
+                    _measure(xml)
+    except (zipfile.BadZipFile, zlib.error, EOFError, RuntimeError, NotImplementedError, ValueError):
+        # damaged inside (a file cut in transit), encrypted, an unknown compression
+        log.info("unreadable workbook archive", exc_info=True)
+        raise InvalidError(NOT_A_TABLE) from None
+
+
+def _measure(xml: IO[bytes]) -> None:
+    row = column = 0
+    tail = b""
+    while True:
+        chunk = xml.read(1 << 20)
+        data = tail + chunk
+        cut = data.rfind(b"<") if chunk else len(data)  # the last tag may go on in the next piece
+        if cut < 0:
+            cut = len(data)
+        for m in _TAG.finditer(data, 0, cut):
+            address = _ADDRESS.search(m.group(2))
+            letters, number = (address.group(1), int(address.group(2))) if address else (b"", 0)
+            if m.group(1) == b"row":
+                row, column = (number or row + 1), 0
+            else:
+                column = _column_number(letters) if letters else column + 1
+                row = max(row, number)
+            if row > MAX_ROWS or column > MAX_COLUMNS:
+                raise InvalidError(TOO_BIG)
+        if not chunk:
+            return
+        tail = data[cut:]
+        if len(tail) > MAX_TAG:
+            raise InvalidError(NOT_A_TABLE)
 
 
 def _decode(content: bytes) -> str:

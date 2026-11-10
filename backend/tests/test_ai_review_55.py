@@ -332,11 +332,18 @@ def test_access_comes_before_the_model_and_a_big_file_is_refused(
         assert _mark(client, director, RECEIPTS, "receipts", network.a.restaurants["A1"]).status_code == 503
     finally:
         app.dependency_overrides.pop(get_gateway, None)
-    big = "Дата;Товар\n" + "01.10.2026;Сыр\n" * 1_500_000
+    # 20 bytes of header + 18 bytes a row: 1 170 000 rows are 21 060 020 bytes — over the file's 20 MB
+    # (20 971 520), under the body's 21 MB (22 020 096): the service refuses it; 1 500 000 rows (27 MB) are
+    # refused before the form is read (BodyLimit, pre-pilot review p. 1, TC-AUTH-11).
+    over_file = "Дата;Товар\n" + "01.10.2026;Сыр\n" * 1_170_000
+    over_body = "Дата;Товар\n" + "01.10.2026;Сыр\n" * 1_500_000
     app.dependency_overrides[get_gateway] = lambda: Gateway(FakeModel())
     try:
-        r = _mark(client, login(client, "admin@a.ru"), big, "receipts", network.a.restaurants["A1"])
+        admin = login(client, "admin@a.ru")
+        r = _mark(client, admin, over_file, "receipts", network.a.restaurants["A1"])
         assert r.status_code == 422 and "20 МБ" in r.json()["detail"]
+        r = _mark(client, admin, over_body, "receipts", network.a.restaurants["A1"])
+        assert r.status_code == 413 and "20 МБ" in r.json()["detail"]
     finally:
         app.dependency_overrides.pop(get_gateway, None)
 

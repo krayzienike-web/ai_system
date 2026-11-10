@@ -473,7 +473,17 @@ def cashier(value: object, salt: str = "") -> str | None:
 
 # What the database holds (catalog/models.py, operations/models.py): a value over it is an error of its row,
 # never a failed publish (pre-pilot review 10.11.2026, p. 11).
-TEXT_LIMITS = {"code": 100, "name": 300, "category": 100, "doc_no": 100, "reason": 200, "city": 100}
+TEXT_LIMITS = {
+    "code": 100,
+    "name": 300,
+    "category": 100,
+    "doc_no": 100,
+    "reason": 200,
+    "city": 100,
+    "source_text": 300,
+}
+# Columns narrower for one template (tenancy/models.py: a restaurant's code is 50, its name 200).
+TEXT_LIMITS_OF = {"restaurants": {"code": 50, "name": 200}}
 TEXT_TITLES = {
     "code": "Код",
     "name": "Название",
@@ -481,6 +491,7 @@ TEXT_TITLES = {
     "doc_no": "№ накладной",
     "reason": "Причина",
     "city": "Город",
+    "source_text": "Номенклатура ЕРП",
 }
 MAX_NUMBER = Decimal(10) ** 10  # Numeric(14, 4)
 QTY_FIELDS = ("qty", "gross_qty", "actual_qty", "book_qty")
@@ -488,7 +499,7 @@ SMALLEST_QTY = Decimal("0.0001")
 
 
 def _fits(record: dict[str, Any], template: Template) -> None:
-    for key, limit in TEXT_LIMITS.items():
+    for key, limit in {**TEXT_LIMITS, **TEXT_LIMITS_OF.get(template.name, {})}.items():
         value = record.get(key)
         if isinstance(value, str) and len(value) > limit:
             raise _RowError(
@@ -498,7 +509,7 @@ def _fits(record: dict[str, Any], template: Template) -> None:
         if not isinstance(value, Decimal):
             continue
         title = next((c.title for c in template.columns if c.name == key), key)
-        if abs(value) >= MAX_NUMBER:
+        if abs(value.quantize(SMALLEST_QTY)) >= MAX_NUMBER:  # as Numeric(14, 4) will round it
             raise _RowError(title, f"«{value:f}» — слишком большое число: проверьте, та ли это колонка")
         if key in QTY_FIELDS and 0 < abs(value) < SMALLEST_QTY:
             raise _RowError(
@@ -540,7 +551,8 @@ def validate(template: Template, table: Table, lookups: Lookups, *, today: date)
     errors: list[Issue] = []
     warnings: list[Issue] = []
     unmatched: dict[tuple[str, str], Unmatched] = {}
-    waiting_days: list[date] = []  # dates of rows that wait for a name match: still part of the file's period
+    # (row, date) of rows that wait for a name match: still part of the file's period
+    waiting_days: list[tuple[int, date]] = []
     skipped = 0
     numbers: list[int] = []  # the file row of each record
     for number, cells in table.rows:
@@ -563,7 +575,7 @@ def validate(template: Template, table: Table, lookups: Lookups, *, today: date)
             )
             item.rows.append(number)
             if isinstance(values.get("day"), date):
-                waiting_days.append(values["day"])
+                waiting_days.append((number, values["day"]))
             continue
         day = record.get("day")
         if isinstance(day, date) and day > today:
@@ -580,17 +592,20 @@ def validate(template: Template, table: Table, lookups: Lookups, *, today: date)
         warnings.extend(Issue(number, None, w) for w in warn)
         records.append(record)
         numbers.append(number)
-    dated = [r["day"] for r in records if isinstance(r.get("day"), date)]
-    far = _outlying_days(template.name, dated)
+    # Every dated row of the file, the ones waiting for a name too: a typo in the year is said at once, not
+    # after the names are matched (test engineer's pass after the pre-pilot review).
+    dated = [(n, r["day"]) for n, r in zip(numbers, records, strict=True) if isinstance(r.get("day"), date)]
+    dated += waiting_days
+    far = _outlying_days(template.name, [d for _, d in dated])
     if far:
-        main = sorted(set(dated) - far)
-        for number, record in zip(numbers, records, strict=True):
-            if record.get("day") in far:
+        main = sorted({d for _, d in dated} - far)
+        for number, day in dated:
+            if day in far:
                 errors.append(
                     Issue(
                         number,
                         "Дата",
-                        f"дата {record['day']:%d.%m.%Y} далеко от остальных дат файла "
+                        f"дата {day:%d.%m.%Y} далеко от остальных дат файла "
                         f"({main[0]:%d.%m.%Y}–{main[-1]:%d.%m.%Y}): проверьте год — загрузка заменит все "
                         "данные за период файла",
                     )
@@ -622,7 +637,7 @@ def validate(template: Template, table: Table, lookups: Lookups, *, today: date)
         )
     if table.unmapped:
         warnings.append(Issue(None, None, "колонки не используются: " + ", ".join(table.unmapped)))
-    days = [r["day"] for r in records if "day" in r] + waiting_days
+    days = [r["day"] for r in records if "day" in r] + [d for _, d in waiting_days]
     result = Result(
         records,
         errors,
