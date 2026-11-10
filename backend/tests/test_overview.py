@@ -210,7 +210,7 @@ def test_overview_screens_follow_the_access_rules(
     rows = client.get("/api/overview/restaurants", headers=analyst).json()
     assert len(rows) == 15
     r01 = next(r for r in rows if r["code"] == "R01")
-    assert D(r01["food_cost"]) > 0 and r01["tasks_total"] == 2
+    assert D(r01["food_cost"]) > 0 and r01["tasks_total"] == 1  # the mozzarella check
 
     week = client.get("/api/overview/restaurants/R01", headers=director).json()
     assert week["restaurant"]["code"] == "R01"
@@ -230,7 +230,8 @@ def test_overview_screens_follow_the_access_rules(
         hq_week["network_kpi"]["data_quality_parts"] == []
         and 0 < hq_week["network_kpi"]["data_quality"] <= 100
     )
-    assert week["results_answer"].startswith("Ваши задачи уже приносят +")  # the rocket task
+    # R01's own work so far: the mozzarella check is running, no done task with a measured result yet
+    assert week["results_answer"].startswith("Выполненных задач пока нет")
     # Another restaurant of the network and another network: not found, like a missing one.
     assert client.get("/api/overview/restaurants/R02", headers=director).status_code == 404
     assert client.get("/api/overview/restaurants/R01", headers=foreign).status_code == 404
@@ -345,8 +346,8 @@ def test_checks_are_drafted_proposed_and_rolled_out(
         )
     assert sorted(a.status_code for a in answers) == [200, 422]
     tasks = next(a for a in answers if a.status_code == 200).json()
-    assert len(tasks) == 14 and "R01" not in {t["restaurant_code"] for t in tasks}  # R01 already did it
-    unclear = next(c for c in checks if c["verdict"] == "inconclusive")
+    assert len(tasks) == 14 and "R04" not in {t["restaurant_code"] for t in tasks}  # R04 already did it
+    unclear = next(c for c in checks if c["verdict"] == "rejected")  # the bread: measured, no effect
     assert client.post(f"/api/checks/{unclear['id']}/rollout", headers=hq).status_code == 422
 
 

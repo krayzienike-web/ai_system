@@ -130,6 +130,12 @@ export interface CheckDetailOut {
   rollout_rub_month: string | null;
   rollout_on: string | null;
   completed_on: string | null;
+  design?: "restaurants" | "items" | "before_after";
+  measured?: boolean;
+  mde_rub_month?: string | null;
+  measured_on?: string | null;
+  control_products?: string[];
+  repeatable?: boolean;
   finding_title?: string | null;
   test?: PlaceOut[];
   control?: PlaceOut[];
@@ -160,6 +166,12 @@ export interface CheckOut {
   rollout_rub_month: string | null;
   rollout_on: string | null;
   completed_on: string | null;
+  design?: "restaurants" | "items" | "before_after";
+  measured?: boolean;
+  mde_rub_month?: string | null;
+  measured_on?: string | null;
+  control_products?: string[];
+  repeatable?: boolean;
   finding_title?: string | null;
   test?: PlaceOut[];
   control?: PlaceOut[];
@@ -235,6 +247,17 @@ export interface DecisionIn {
 export interface DecisionOut {
   id: string;
   status: string;
+}
+
+export interface DesignOut {
+  design: "restaurants" | "items" | "before_after";
+  title: string;
+  available: boolean;
+  note: string;
+  weak: boolean;
+  mde_rub_month: string | null;
+  mde_by_weeks?: MdeOut[];
+  control_products?: string[];
 }
 
 export interface DigestItemOut {
@@ -326,6 +349,11 @@ export interface DraftOut {
   default_weeks: number;
   expected_rub_month: string;
   success: string;
+  measured: boolean;
+  metric: string;
+  designs: DesignOut[];
+  recommended: "restaurants" | "items" | "before_after";
+  hypothesis: string;
 }
 
 export interface DueOption {
@@ -609,6 +637,11 @@ export interface MatrixRowOut {
   cells: MatrixCellOut[];
 }
 
+export interface MdeOut {
+  weeks: number;
+  rub_month: string;
+}
+
 export interface Me {
   id: string;
   email: string;
@@ -751,6 +784,7 @@ export interface ProposeIn {
   action: string;
   control_ids?: string[];
   weeks: number;
+  design?: "restaurants" | "items" | "before_after";
 }
 
 export interface RankOut {
@@ -783,6 +817,10 @@ export interface RefreshRequest {
 }
 
 export type RejectReason = "data" | "logic" | "false_alarm" | "other";
+
+export interface RepeatIn {
+  weeks: number;
+}
 
 export interface RestaurantIn {
   code: string;

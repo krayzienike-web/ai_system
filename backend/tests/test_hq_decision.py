@@ -7,7 +7,7 @@ from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import Engine, select
+from sqlalchemy import Engine, select, true
 from sqlalchemy.orm import Session
 
 from app.ai import tools
@@ -24,8 +24,10 @@ from tests.test_digests import _ctx
 from tests.test_overview import TODAY, demo  # noqa: F401  (the demo network: tenant A, director r01@a.ru)
 
 
-def _untasked(owner_engine: Engine, network: Network, code: str = "R01") -> UUID | None:
-    """A reviewed open finding of the restaurant with no task on it yet."""
+def _untasked(
+    owner_engine: Engine, network: Network, code: str = "R01", *, measured: bool = False
+) -> UUID | None:
+    """A reviewed open finding of the restaurant with no task yet (`measured`: one a check can measure)."""
     with Session(owner_engine) as s:
         rid = s.execute(
             select(Restaurant.id).where(Restaurant.tenant_id == network.a.id, Restaurant.code == code)
@@ -39,6 +41,7 @@ def _untasked(owner_engine: Engine, network: Network, code: str = "R01") -> UUID
                     Finding.review_status.is_distinct_from("pending"),
                     Finding.review_status.is_distinct_from("rejected"),
                     Finding.id.not_in(tasked),
+                    Finding.module.in_(("M1", "M3", "M5", "M6", "M8")) if measured else true(),
                 )
             )
             .scalars()
@@ -105,8 +108,14 @@ def test_awaiting_holds_restaurants_and_network_findings_and_is_the_hqs(
     )
     assert any(f["restaurant_id"] is None for f in awaiting) and any(f["restaurant_id"] for f in awaiting)
     assert all(f["review_status"] in (None, "confirmed") for f in awaiting)
-    efforts = [float(f["effect_rub_month"]) for f in awaiting if f["effect_rub_month"]]
-    assert efforts == sorted(efforts, reverse=True) or len(efforts) < 2  # roughly by money (× confidence)
+    # by money × confidence, the most valuable first (overview.rank)
+    weight = {"high": 1.0, "medium": 0.7, "low": 0.4}
+    efforts = [
+        float(f["effect_rub_month"]) * weight[f["confidence"] or "medium"]
+        for f in awaiting
+        if f["effect_rub_month"]
+    ]
+    assert efforts == sorted(efforts, reverse=True) or len(efforts) < 2
     assert client.get("/api/overview/awaiting", headers=director).status_code == 403
     # The badge counts them with the checks to launch and the late tasks.
     badge = client.get("/api/overview/badges", headers=admin).json()["inbox"]
@@ -490,7 +499,7 @@ def test_a_rejected_check_returns_the_finding_to_awaiting(
     """ADR 0009, p. 2: a finding with a proposed check leaves «Решить по находке» (it waits in «Проверки к
     запуску»); a rejected check is no decision — the finding comes back, the badge counts it once again."""
     admin, analyst = login(client, "admin@a.ru"), login(client, "analyst@a.ru")
-    fid = _untasked(owner_engine, network)
+    fid = _untasked(owner_engine, network, measured=True)  # a check needs a finding the measurement counts
     assert fid is not None
     badge = client.get("/api/overview/badges", headers=admin).json()["inbox"]
     draft = client.get(f"/api/checks/draft?finding_id={fid}", headers=analyst).json()

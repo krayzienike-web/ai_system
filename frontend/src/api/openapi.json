@@ -704,6 +704,14 @@
       "title": "Control",
       "type": "array"
      },
+     "control_products": {
+      "default": [],
+      "items": {
+       "type": "string"
+      },
+      "title": "Control Products",
+      "type": "array"
+     },
      "control_restaurant_ids": {
       "items": {
        "format": "uuid",
@@ -711,6 +719,16 @@
       },
       "title": "Control Restaurant Ids",
       "type": "array"
+     },
+     "design": {
+      "default": "restaurants",
+      "enum": [
+       "restaurants",
+       "items",
+       "before_after"
+      ],
+      "title": "Design",
+      "type": "string"
      },
      "effect_rub_month": {
       "anyOf": [
@@ -764,6 +782,34 @@
       "title": "Id",
       "type": "string"
      },
+     "mde_rub_month": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Mde Rub Month"
+     },
+     "measured": {
+      "default": false,
+      "title": "Measured",
+      "type": "boolean"
+     },
+     "measured_on": {
+      "anyOf": [
+       {
+        "format": "date",
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Measured On"
+     },
      "metric": {
       "title": "Metric",
       "type": "string"
@@ -778,6 +824,11 @@
        }
       ],
       "title": "Progress Text"
+     },
+     "repeatable": {
+      "default": false,
+      "title": "Repeatable",
+      "type": "boolean"
      },
      "result_text": {
       "anyOf": [
@@ -961,6 +1012,14 @@
       "title": "Control",
       "type": "array"
      },
+     "control_products": {
+      "default": [],
+      "items": {
+       "type": "string"
+      },
+      "title": "Control Products",
+      "type": "array"
+     },
      "control_restaurant_ids": {
       "items": {
        "format": "uuid",
@@ -968,6 +1027,16 @@
       },
       "title": "Control Restaurant Ids",
       "type": "array"
+     },
+     "design": {
+      "default": "restaurants",
+      "enum": [
+       "restaurants",
+       "items",
+       "before_after"
+      ],
+      "title": "Design",
+      "type": "string"
      },
      "effect_rub_month": {
       "anyOf": [
@@ -1021,6 +1090,34 @@
       "title": "Id",
       "type": "string"
      },
+     "mde_rub_month": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Mde Rub Month"
+     },
+     "measured": {
+      "default": false,
+      "title": "Measured",
+      "type": "boolean"
+     },
+     "measured_on": {
+      "anyOf": [
+       {
+        "format": "date",
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Measured On"
+     },
      "metric": {
       "title": "Metric",
       "type": "string"
@@ -1035,6 +1132,11 @@
        }
       ],
       "title": "Progress Text"
+     },
+     "repeatable": {
+      "default": false,
+      "title": "Repeatable",
+      "type": "boolean"
      },
      "result_text": {
       "anyOf": [
@@ -1519,6 +1621,72 @@
      "status"
     ],
     "title": "DecisionOut",
+    "type": "object"
+   },
+   "DesignOut": {
+    "properties": {
+     "available": {
+      "title": "Available",
+      "type": "boolean"
+     },
+     "control_products": {
+      "default": [],
+      "items": {
+       "type": "string"
+      },
+      "title": "Control Products",
+      "type": "array"
+     },
+     "design": {
+      "enum": [
+       "restaurants",
+       "items",
+       "before_after"
+      ],
+      "title": "Design",
+      "type": "string"
+     },
+     "mde_by_weeks": {
+      "default": [],
+      "items": {
+       "$ref": "#/components/schemas/MdeOut"
+      },
+      "title": "Mde By Weeks",
+      "type": "array"
+     },
+     "mde_rub_month": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Mde Rub Month"
+     },
+     "note": {
+      "title": "Note",
+      "type": "string"
+     },
+     "title": {
+      "title": "Title",
+      "type": "string"
+     },
+     "weak": {
+      "title": "Weak",
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "design",
+     "title",
+     "available",
+     "note",
+     "weak",
+     "mde_rub_month"
+    ],
+    "title": "DesignOut",
     "type": "object"
    },
    "DigestItemOut": {
@@ -2069,6 +2237,13 @@
       "title": "Default Weeks",
       "type": "integer"
      },
+     "designs": {
+      "items": {
+       "$ref": "#/components/schemas/DesignOut"
+      },
+      "title": "Designs",
+      "type": "array"
+     },
      "durations": {
       "items": {
        "$ref": "#/components/schemas/DurationOut"
@@ -2089,6 +2264,27 @@
       "title": "Finding Title",
       "type": "string"
      },
+     "hypothesis": {
+      "title": "Hypothesis",
+      "type": "string"
+     },
+     "measured": {
+      "title": "Measured",
+      "type": "boolean"
+     },
+     "metric": {
+      "title": "Metric",
+      "type": "string"
+     },
+     "recommended": {
+      "enum": [
+       "restaurants",
+       "items",
+       "before_after"
+      ],
+      "title": "Recommended",
+      "type": "string"
+     },
      "success": {
       "title": "Success",
       "type": "string"
@@ -2106,7 +2302,12 @@
      "durations",
      "default_weeks",
      "expected_rub_month",
-     "success"
+     "success",
+     "measured",
+     "metric",
+     "designs",
+     "recommended",
+     "hypothesis"
     ],
     "title": "DraftOut",
     "type": "object"
@@ -3876,6 +4077,24 @@
     "title": "MatrixRowOut",
     "type": "object"
    },
+   "MdeOut": {
+    "properties": {
+     "rub_month": {
+      "title": "Rub Month",
+      "type": "string"
+     },
+     "weeks": {
+      "title": "Weeks",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "weeks",
+     "rub_month"
+    ],
+    "title": "MdeOut",
+    "type": "object"
+   },
    "Me": {
     "properties": {
      "email": {
@@ -4655,6 +4874,16 @@
       "title": "Control Ids",
       "type": "array"
      },
+     "design": {
+      "default": "restaurants",
+      "enum": [
+       "restaurants",
+       "items",
+       "before_after"
+      ],
+      "title": "Design",
+      "type": "string"
+     },
      "finding_id": {
       "format": "uuid",
       "title": "Finding Id",
@@ -4824,6 +5053,21 @@
     ],
     "title": "RejectReason",
     "type": "string"
+   },
+   "RepeatIn": {
+    "properties": {
+     "weeks": {
+      "maximum": 12.0,
+      "minimum": 1.0,
+      "title": "Weeks",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "weeks"
+    ],
+    "title": "RepeatIn",
+    "type": "object"
    },
    "RestaurantIn": {
     "properties": {
@@ -7348,6 +7592,65 @@
      }
     ],
     "summary": "Reject Check",
+    "tags": [
+     "checks"
+    ]
+   }
+  },
+  "/api/checks/{check_id}/repeat": {
+   "post": {
+    "description": "A check that did not confirm its effect, again and longer: a new proposal with the same design.",
+    "operationId": "repeat_check_api_checks__check_id__repeat_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "check_id",
+      "required": true,
+      "schema": {
+       "format": "uuid",
+       "title": "Check Id",
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/RepeatIn"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "201": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/CheckOut"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Repeat Check",
     "tags": [
      "checks"
     ]

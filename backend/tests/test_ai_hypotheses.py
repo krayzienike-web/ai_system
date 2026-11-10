@@ -4,6 +4,7 @@ decide who sees what, a person decides."""
 
 import json
 from collections.abc import Iterator
+from datetime import date
 from typing import Any
 from uuid import UUID
 
@@ -19,6 +20,7 @@ from app.ai.models import AiSuggestion
 from app.insights.models import Finding
 from app.main import app
 from app.norms.models import NormSettings
+from app.tasks.models import Task
 from app.tenancy.models import Restaurant
 from tests.conftest import Network, login
 from tests.test_overview import TODAY, demo  # noqa: F401  (the demo network: tenant A, director r01@a.ru)
@@ -70,6 +72,18 @@ def world(network: Network, owner_engine: Engine, demo: dict[str, UUID]) -> dict
                     Finding.restaurant_id == places["R01"].id, Finding.module == "M5", shown
                 )
             ).scalar_one()
+        )
+        # the director sees their finding through the HQ's task on it (ADR 0009)
+        s.add(
+            Task(
+                tenant_id=network.a.id,
+                restaurant_id=places["R01"].id,
+                finding_id=greens,
+                title="Заказывать рукколу малыми партиями",
+                assigned_by="hq",
+                created_on=date(2026, 10, 10),
+                due_on=date(2026, 10, 24),
+            )
         )
         other = s.execute(select(Finding.id).where(Finding.restaurant_id == places["R02"].id, shown)).scalar()
         net = s.execute(select(Finding.id).where(Finding.key == "M2:net:M07")).scalar()
@@ -255,7 +269,7 @@ def test_the_eval_finds_every_planted_anomaly_and_grades_the_top_three(
     with Session(owner_engine) as s:
         cases = eval_h.cases(s, network.a.id, anomalies)
         titles = {c.finding_id: s.get(Finding, c.finding_id).title for c in cases if c.finding_id}  # type: ignore[union-attr]
-    assert len(cases) == 25 and all(c.finding_id for c in cases), [
+    assert len(cases) == 26 and all(c.finding_id for c in cases), [
         c.anomaly for c in cases if not c.finding_id
     ]
     cause_of = {titles[c.finding_id]: c.cause for c in cases if c.finding_id}
@@ -276,9 +290,9 @@ def test_the_eval_finds_every_planted_anomaly_and_grades_the_top_three(
 
     with tool_session(network.a.users["admin@a.ru"], network.a.id) as (_, ctx):
         pass
-    right = eval_h.run(Gateway(FakeModel([oracle] * 25), per_user_day=1000), ctx, TODAY, cases)
+    right = eval_h.run(Gateway(FakeModel([oracle] * 26), per_user_day=1000), ctx, TODAY, cases)
     assert right.score == 1.0 and right.passed, right.summary()
-    wrong = eval_h.run(Gateway(FakeModel([theft] * 25), per_user_day=1000), ctx, TODAY, cases)
+    wrong = eval_h.run(Gateway(FakeModel([theft] * 26), per_user_day=1000), ctx, TODAY, cases)
     # Stage 6.5 planted two till anomalies whose cause is theft: «always theft» guesses only those
-    assert wrong.score == pytest.approx(2 / 25, abs=0.01) and not wrong.passed
+    assert wrong.score == pytest.approx(2 / 26, abs=0.01) and not wrong.passed
     assert "ждали portioning" in wrong.summary()

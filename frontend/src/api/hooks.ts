@@ -409,8 +409,18 @@ export function useCheckAction() {
 export function useProposeCheck() {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: (body: { finding_id: string; action: string; control_ids: string[]; weeks: number }) =>
+    mutationFn: (body: { finding_id: string; action: string; control_ids: string[]; weeks: number; design: NonNullable<Check["design"]> }) =>
       api<Check>("/checks", { method: "POST", body: JSON.stringify(body) }),
+    onSuccess: () => refreshWork(client),
+  });
+}
+
+/** «Повторить дольше» (stage 7): a check without a confirmed effect, again and longer — a new proposed check. */
+export function useRepeatCheck() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, weeks }: { id: string; weeks: number }) =>
+      api<Check>(`/checks/${id}/repeat`, { method: "POST", body: JSON.stringify({ weeks }) }),
     onSuccess: () => refreshWork(client),
   });
 }

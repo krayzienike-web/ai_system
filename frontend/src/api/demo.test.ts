@@ -170,9 +170,11 @@ describe("demo follows the server after the actions (code review 27.10.2026)", (
     })!;
     const id = draftKey.split("finding_id=")[1]!;
     const director = directors.find((d) => get<ApiFinding[]>("/findings", d).some((f) => f.id === id))!;
-    const draft = users[ANALYST]!.answers[draftKey] as { actions: string[] };
+    const draft = users[ANALYST]!.answers[draftKey] as { actions: string[]; candidates: { restaurant_id: string; suggested: boolean }[] };
     const directorStage = detail(id, director).work.stage;
-    const body = { finding_id: id, action: draft.actions[0], control_ids: [], weeks: 4 };
+    // as the screen sends it: the suggested restaurants to compare with (a measured check needs them, stage 7)
+    const controls = draft.candidates.filter((c) => c.suggested).map((c) => c.restaurant_id);
+    const body = { finding_id: id, action: draft.actions[0], control_ids: controls, weeks: 4 };
     const check = send<Check>("/checks", ANALYST, "POST", body);
     expect(status(() => send("/checks", ANALYST, "POST", body))).toBe(422);
     expect(detail(id, ADMIN).check?.status).toBe("proposed");
@@ -467,5 +469,100 @@ describe("the prototype's data quality score follows the server's rules (stage 6
     expect(mine.data_quality_answer).toContain(`${mine.kpi.data_quality} из 100`);
     const low = get<EngineParam[]>("/settings/engine", ADMIN).find((p) => p.key === "M7_DQ_LOW")!;
     expect(mine.data_quality_low).toBe(Number(low.value));
+  });
+});
+
+describe("demo checks keep the server's rules for reject and roll-out (test engineer, start of stage 7)", () => {
+  it("rolls out only a confirmed check, by the HQ admin, once, to every restaurant that has not done it", () => {
+    const checks = get<Check[]>("/checks", ADMIN);
+    const worked = checks.find((c) => c.verdict === "confirmed" && !c.rollout_on)!;
+    expect(worked).toBeDefined();
+    expect(status(() => send(`/checks/${worked.id}/rollout`, ANALYST, "POST"))).toBe(403);
+    expect(status(() => send(`/checks/${worked.id}/rollout`, DIRECTOR, "POST"))).toBe(403);
+    for (const other of checks.filter((c) => c.verdict !== "confirmed"))
+      expect(status(() => send(`/checks/${other.id}/rollout`, ADMIN, "POST")), other.title).toBe(422);
+    const tested = new Set((worked.test ?? []).map((p) => p.id));
+    const everyone = get<Restaurant[]>("/restaurants", ADMIN);
+    const tasks = send<ApiTask[]>(`/checks/${worked.id}/rollout`, ADMIN, "POST");
+    expect(new Set(tasks.map((t) => t.restaurant_id))).toEqual(new Set(everyone.filter((r) => !tested.has(r.id)).map((r) => r.id)));
+    expect(new Set(tasks.map((t) => t.title))).toEqual(new Set([worked.title]));
+    expect(get<Check>(`/checks/${worked.id}`, ADMIN).rollout_on).toBe(snapshot.recorded_for);
+    expect(status(() => send(`/checks/${worked.id}/rollout`, ADMIN, "POST"))).toBe(422);
+  });
+
+  it("decides only a proposed check: a running or completed one is neither launched nor rejected again", () => {
+    for (const c of get<Check[]>("/checks", ADMIN).filter((c) => c.status !== "proposed")) {
+      expect(status(() => send(`/checks/${c.id}/reject`, ADMIN, "POST")), c.title).toBe(422);
+      expect(status(() => send(`/checks/${c.id}/launch`, ADMIN, "POST")), c.title).toBe(422);
+    }
+    expect(status(() => send("/checks/no-such-check/reject", ADMIN, "POST"))).toBe(404);
+    const [any] = get<Check[]>("/checks", ADMIN);
+    expect(status(() => send(`/checks/${any!.id}/reject`, ANALYST, "POST"))).toBe(403);
+    expect(status(() => send(`/checks/${any!.id}/reject`, DIRECTOR, "POST"))).toBe(403);
+  });
+
+  it("repeats a check without an effect longer, like the server (stage 7, TC-EXP-36)", () => {
+    const checks = get<Check[]>("/checks", ADMIN);
+    const bread = checks.find((c) => c.title === "Заказ хлеба по дням недели")!;
+    const tomato = checks.find((c) => c.title === "Малые партии томатов")!;
+    expect(bread.status).toBe("completed");
+    expect(status(() => send(`/checks/${bread.id}/repeat`, DIRECTOR, "POST", { weeks: 6 }))).toBe(403);
+    expect(status(() => send(`/checks/${bread.id}/repeat`, ADMIN, "POST", { weeks: bread.weeks }))).toBe(422);
+    expect(status(() => send(`/checks/${tomato.id}/repeat`, ADMIN, "POST", { weeks: 6 }))).toBe(422);
+    const again = send<Check>(`/checks/${bread.id}/repeat`, ANALYST, "POST", { weeks: bread.weeks + 2 });
+    expect([again.status, again.weeks, again.design]).toEqual(["proposed", bread.weeks + 2, bread.design]);
+    expect(get<Check[]>("/checks", ADMIN).find((c) => c.id === bread.id)?.status).toBe("completed");
+  });
+
+  it("proposes a check by the server's rules and fields (stage 7 review, frontend p. 3–4, 6)", () => {
+    type Draft = {
+      finding_id: string;
+      actions: string[];
+      measured: boolean;
+      metric: string;
+      candidates: { restaurant_id: string; suggested: boolean }[];
+      designs: { design: string; available: boolean }[];
+    };
+    const drafts = Object.entries(users[ADMIN]!.answers)
+      .filter(([k]) => k.startsWith("/checks/draft"))
+      .map(([, d]) => d as Draft);
+    const open = new Set(
+      get<Check[]>("/checks", ADMIN)
+        .filter((c) => c.status === "proposed" || c.status === "running")
+        .map((c) => c.finding_id),
+    );
+    const d = drafts.find((x) => x.measured && x.designs.some((o) => o.design === "items" && o.available) && !open.has(x.finding_id))!;
+    const controls = d.candidates.filter((c) => c.suggested).map((c) => c.restaurant_id);
+    const body = { finding_id: d.finding_id, action: d.actions[0], control_ids: controls, weeks: 4 };
+    expect(status(() => send("/checks", ADMIN, "POST", { ...body, design: "magic" }))).toBe(422);
+    expect(status(() => send("/checks", ADMIN, "POST", { ...body, control_ids: ["not-a-restaurant"] }))).toBe(422);
+    expect(status(() => send("/checks", ADMIN, "POST", { ...body, weeks: 5 }))).toBe(422);
+    const made = send<Check>("/checks", ADMIN, "POST", { ...body, design: "items" });
+    expect(made.design).toBe("items");
+    expect(made.control).toEqual([]);
+    expect(made.metric).toBe(d.metric);
+    expect(made.baseline).toMatch(/^\d\d\.\d\d–\d\d\.\d\d, до проверки$/);
+    expect(made.hypothesis).toContain("за 4 недели");
+    expect(made.hypothesis).not.toContain("{");
+    const unmeasured = drafts.find((x) => !x.measured);
+    if (unmeasured) {
+      const b = { finding_id: unmeasured.finding_id, action: unmeasured.actions[0], control_ids: [], weeks: 4 };
+      expect(status(() => send("/checks", ADMIN, "POST", b))).toBe(422);
+    }
+  });
+
+  it("repeats a check once: then it is no longer repeatable (stage 7 review, frontend p. 6)", () => {
+    const bread = get<Check[]>("/checks", ADMIN).find((c) => c.title === "Заказ хлеба по дням недели")!;
+    if (!bread.repeatable) return; // the earlier test already repeated it in this session
+    send<Check>(`/checks/${bread.id}/repeat`, ADMIN, "POST", { weeks: bread.weeks + 2 });
+    expect(get<Check[]>("/checks", ADMIN).find((c) => c.id === bread.id)?.repeatable).toBe(false);
+    expect(status(() => send(`/checks/${bread.id}/repeat`, ADMIN, "POST", { weeks: bread.weeks + 4 }))).toBe(422);
+  });
+
+  it("refuses a repeat over 12 weeks and of a check it does not have, like the server (TC-EXP-46, 50)", () => {
+    const bread = get<Check[]>("/checks", ADMIN).find((c) => c.title === "Заказ хлеба по дням недели")!;
+    expect(status(() => send(`/checks/${bread.id}/repeat`, ADMIN, "POST", { weeks: 13 }))).toBe(422);
+    expect(status(() => send("/checks/another-networks-check/repeat", ADMIN, "POST", { weeks: 6 }))).toBe(404);
+    expect(status(() => send("/checks/another-networks-check/repeat", DIRECTOR, "POST", { weeks: 6 }))).toBe(403);
   });
 });

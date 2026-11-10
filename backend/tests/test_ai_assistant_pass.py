@@ -22,6 +22,7 @@ from app.imports.models import ImportBatch, SourceProfile
 from app.insights.models import Finding
 from app.main import app
 from app.operations.models import Receipt, Sale, WriteOff
+from app.tasks.models import Task
 from app.tenancy.context import tool_session
 from tests.conftest import Network, hq_task, login
 from tests.test_overview import TODAY, demo  # noqa: F401  (the demo network: tenant A, director r01@a.ru)
@@ -140,6 +141,20 @@ def test_a_proposal_records_its_prompt_version_and_a_replaced_one_cannot_be_deci
     """TC-AN-35 (ADR 0008, «Реализация»: what was proposed, on what basis, the prompt's version, the decision;
     a new proposal replaces the old one — the old one is no longer decided on)."""
     own = _finding_id(owner_engine, network, "M5:R01:P10")
+    with Session(owner_engine) as s, s.begin():  # the director sees it through the HQ's task (ADR 0009)
+        finding = s.get(Finding, own)
+        assert finding is not None
+        s.add(
+            Task(
+                tenant_id=network.a.id,
+                restaurant_id=finding.restaurant_id,
+                finding_id=own,
+                title="Заказывать рукколу малыми партиями",
+                assigned_by="hq",
+                created_on=date(2026, 10, 10),
+                due_on=date(2026, 10, 24),
+            )
+        )
     director = login(client, "r01@a.ru")
     model.replies += [_hypotheses(), _hypotheses()]
     old = client.post(f"/api/findings/{own}/hypotheses", headers=director).json()

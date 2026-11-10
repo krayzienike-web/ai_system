@@ -19,6 +19,7 @@ from app.analytics.facts import Facts, load_facts
 from app.analytics.params import DEFAULT, EngineParams
 from app.analytics.usage import Usage
 from app.core.errors import ForbiddenError
+from app.experiments import measurement
 from app.experiments.models import Experiment
 from app.insights.models import Finding, FindingStatus, ReviewStatus
 from app.norms.service import Norms, load_norms
@@ -29,7 +30,9 @@ from app.tenancy.audit import audit
 from app.tenancy.context import AccessContext
 from app.tenancy.permissions import Permission
 
-ALGORITHM_VERSION = "engine-10"  # data quality score (9: links; 8: M2 menu; 7: M3 jump; 6: M8, M6 overstock)
+ALGORITHM_VERSION = (
+    "engine-11"  # checks measured (10: data quality; 9: links; 8: M2 menu; 7: M3 jump; 6: M8, M6 overstock)
+)
 MODULES = (
     "M1",
     "M2",
@@ -163,7 +166,8 @@ def run(session: Session, ctx: AccessContext, today: date, *, as_of: date | None
         ).all()
         if k
     )
-    drafts, kpis = analyse(facts.until(as_of) if as_of else facts, norms, cfg, rejected)
+    known = facts.until(as_of) if as_of else facts
+    drafts, kpis = analyse(known, norms, cfg, rejected)
     keys = [d.key for d in drafts]
     if len(keys) != len(set(keys)):
         raise RuntimeError(
@@ -225,6 +229,8 @@ def run(session: Session, ctx: AccessContext, today: date, *, as_of: date | None
             removed += 1
     session.flush()
     _store_kpis(session, ctx.tenant_id, kpis, today)
+    # The running checks are measured on the same data (stage 7, docs/05 «Замер»): a result counts this week
+    measurement.measure_all(session, ctx, known, today)
     trend.record_week(session, ctx.tenant_id, today)
     audit(
         session,

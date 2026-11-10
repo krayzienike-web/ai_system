@@ -18,7 +18,10 @@ from app.analytics import engine
 from app.analytics.engine import RunResult
 from app.analytics.facts import load_facts
 from app.analytics.runs import AnalyticsRun, RunStatus
+from app.catalog.models import Product
 from app.core.period import last_full_week_end
+from app.demo.generator import TOMATO_CHECK_FROM
+from app.experiments import design
 from app.experiments.models import Experiment
 from app.insights.models import Finding, ReviewStatus
 from app.overview import trend
@@ -53,136 +56,58 @@ def work(session: Session, ctx: AccessContext, today: date, analyst: UUID) -> No
         return t
 
     moz, beef, salmon = by_key["M1:R01:P01"], by_key["M3:R02:P08"], by_key["M1:R03:P09"]
-    cream, greens, bread = by_key["M3:R05:P04"], by_key["M5:R01:P10"], by_key["M5:R07:P12"]
+    cream = by_key["M3:R05:P04"]
 
-    # Mozzarella: a running check with a task in R01 and an interim measurement.
-    running = Experiment(
-        tenant_id=tid,
-        finding_id=moz.id,
+    # Mozzarella: a running check with a task in R01 — today's run measures it (interim, stage 7).
+    running = check(
+        session,
+        ctx,
+        analyst,
+        moz,
         title="Контрольное взвешивание сыра",
         hypothesis="Если две недели взвешивать моцареллу на раздаче, перерасход снизится с 11% до 4%.",
-        metric="Расход моцареллы сверх техкарты, %",
-        baseline="период 04.08–01.10",
-        test_restaurant_ids=[rid["R01"]],
-        control_restaurant_ids=[rid["R04"], rid["R05"]],
-        starts_on=day(-10),
-        ends_on=day(18),
-        expected_rub_month=(moz.effect_rub_month or D(0)) * D("0.6"),
-        status="running",
-        decided_by=ctx.user_id,
-        proposed_by=analyst,
-        progress_text="Первая неделя: расход сыра по закупкам снизился, точный замер — на пересчете.",
+        metric="Закуплено моцареллы к расходу по техкартам",
+        test="R01",
+        controls=["R04", "R05"],
+        starts=day(-8),
+        ends=day(19),
     )
     # Beef: proposed by the analyst, waits for the admin.
-    proposed = Experiment(
-        tenant_id=tid,
-        finding_id=beef.id,
+    check(
+        session,
+        ctx,
+        analyst,
+        beef,
         title="Плановый заказ говядины",
         hypothesis="Если заказывать говядину заранее у основного поставщика, цена вернется к цене сети.",
         metric="Цена говядины, ₽/кг",
-        baseline="последние 4 недели",
-        test_restaurant_ids=[rid["R02"]],
-        control_restaurant_ids=[rid["R03"], rid["R06"]],
-        starts_on=day(4),
-        ends_on=day(32),
-        expected_rub_month=(beef.effect_rub_month or D(0)) * D("0.6"),
-        proposed_by=analyst,
+        test="R02",
+        controls=["R03", "R06"],
+        starts=day(4),
+        ends=day(32),
+        status="proposed",
     )
-    # Rocket: a completed check that worked, ready to roll out.
-    greens_effect = ((greens.effect_rub_month or D(0)) * D("0.55")).quantize(D(1))
-    done_check = Experiment(
-        tenant_id=tid,
-        finding_id=greens.id,
-        title="Малые партии рукколы",
-        hypothesis="Если заказывать рукколу через день малыми партиями, списания снизятся вдвое.",
-        metric="Списано рукколы от закупленного, %",
-        baseline="4 недели до проверки",
-        test_restaurant_ids=[rid["R01"]],
-        control_restaurant_ids=[rid["R02"], rid["R03"]],
-        starts_on=day(-40),
-        ends_on=day(-12),
-        expected_rub_month=(greens.effect_rub_month or D(0)) * D("0.6"),
-        status="completed",
-        verdict="confirmed",
-        effect_rub_month=greens_effect,
-        ci_low_rub_month=(greens_effect * D("0.6")).quantize(D(1)),
-        ci_high_rub_month=(greens_effect * D("1.4")).quantize(D(1)),
-        result_text="Списания рукколы в R01 снизились на 55% к периоду до проверки, в ресторанах сравнения — "
-        "без "
-        "изменений (разница разниц)",
-        completed_on=day(-12),
-        rollout_rub_month=(greens_effect * 3).quantize(D(1)),
-        decided_by=ctx.user_id,
-        proposed_by=analyst,
-    )
-    # Bread: a completed check without a clear effect.
-    unclear = Experiment(
-        tenant_id=tid,
-        finding_id=bread.id,
-        title="Заказ хлеба по дням недели",
-        hypothesis="Если в понедельник и вторник заказывать на треть меньше хлеба, списания снизятся.",
-        metric="Списания хлеба, ₽",
-        baseline="4 недели до проверки",
-        test_restaurant_ids=[rid["R07"]],
-        control_restaurant_ids=[rid["R08"]],
-        starts_on=day(-35),
-        ends_on=day(-7),
-        expected_rub_month=(bread.effect_rub_month or D(0)) * D("0.6"),
-        status="completed",
-        verdict="inconclusive",
-        effect_rub_month=D(0),
-        ci_low_rub_month=D(-800),
-        ci_high_rub_month=D(1500),
-        result_text="Заказ меняли только в половине недель — разница с рестораном сравнения в пределах "
-        "колебаний",
-        completed_on=day(-7),
-        decided_by=ctx.user_id,
-        proposed_by=analyst,
-    )
-    session.add_all([running, proposed, done_check, unclear])
     session.flush()
-    for f, status in ((moz, "in_experiment"), (greens, "resolved"), (salmon, "in_work"), (cream, "in_work")):
+    for f, status in ((moz, "in_experiment"), (salmon, "in_work"), (cream, "in_work")):
         f.status = status
-    greens.resolved_on = day(-12)
+    # The tomato check of the history (`history_checks`) worked: HQ closed the finding when it was measured.
+    tomato_check = session.execute(
+        select(Experiment).where(Experiment.title == TOMATO_TITLE)
+    ).scalar_one_or_none()
+    if tomato_check is not None and tomato_check.verdict == "confirmed" and tomato_check.finding_id:
+        tomatoes = session.get(Finding, tomato_check.finding_id)
+        if tomatoes is not None:
+            tomatoes.status, tomatoes.resolved_on = "resolved", tomato_check.completed_on
 
     task(
         moz,
         "R01",
         running.title,
         experiment_id=running.id,
-        created_on=day(-10),
-        due_on=day(18),
+        created_on=day(-8),
+        due_on=day(19),
         status="in_progress",
         checklist=["Весы на станции пиццы", "Пересчет моцареллы каждый понедельник"],
-    )
-    task(
-        greens,
-        "R01",
-        done_check.title,
-        experiment_id=done_check.id,
-        created_on=day(-40),
-        due_on=day(-12),
-        status="done",
-        done_on=day(-13),
-        report="Перешли на заказ через день, партии по 1,5 кг",
-        outcome_verdict="confirmed",
-        outcome_effect_rub_month=greens_effect,
-        outcome_text="Посчитано по итогам проверки: списания рукколы −55%",
-        outcome_measured_on=day(-12),
-    )
-    task(
-        bread,
-        "R07",
-        unclear.title,
-        experiment_id=unclear.id,
-        created_on=day(-35),
-        due_on=day(-7),
-        status="done",
-        done_on=day(-8),
-        report="Меняли заказ на пн и вт, но не каждую неделю",
-        outcome_verdict="not_confirmed",
-        outcome_text="Эффекта не видно: заказ меняли непостоянно",
-        outcome_measured_on=day(-7),
     )
     task(
         salmon,
@@ -207,6 +132,124 @@ def work(session: Session, ctx: AccessContext, today: date, analyst: UUID) -> No
     session.flush()
 
 
+TOMATO_TITLE = "Малые партии томатов"
+BREAD_TITLE = "Заказ хлеба по дням недели"
+# The Sundays the history's checks were launched after (`history_checks`): the history always has them
+CHECK_SUNDAYS = (TOMATO_CHECK_FROM - timedelta(days=1), TOMATO_CHECK_FROM + timedelta(days=6))
+
+
+def check(
+    session: Session,
+    ctx: AccessContext,
+    analyst: UUID,
+    finding: Finding,
+    *,
+    title: str,
+    hypothesis: str,
+    metric: str,
+    test: str,
+    controls: list[str],
+    starts: date,
+    ends: date,
+    status: str = "running",
+) -> Experiment:
+    """A check as the HQ would have proposed and launched it: what it measures fixed at the proposal
+    (stage 7), no result — the measurement writes it after the engine's runs."""
+    rid = {code: r for r, code in load_facts(session).restaurants.items()}
+    spec = design.spec_for(finding, {p.code: p.id for p in session.execute(select(Product)).scalars()})
+    before = design.baseline(starts, ends)
+    exp = Experiment(
+        tenant_id=ctx.tenant_id,
+        finding_id=finding.id,
+        title=title,
+        hypothesis=hypothesis,
+        metric=metric,
+        baseline=f"{before[0]:%d.%m}–{before[1]:%d.%m}, до проверки",
+        test_restaurant_ids=[rid[test]],
+        control_restaurant_ids=[rid[c] for c in controls],
+        starts_on=starts,
+        ends_on=ends,
+        expected_rub_month=((finding.effect_rub_month or D(0)) * D("0.6")).quantize(D(1)),
+        status=status,
+        decided_by=ctx.user_id if status == "running" else None,
+        proposed_by=analyst,
+        design="restaurants",
+        metric_kind=spec.kind if spec else None,
+        metric_product_id=spec.product if spec else None,
+        metric_cashier=spec.cashier if spec else None,
+        baseline_from=before[0],
+        baseline_to=before[1],
+    )
+    session.add(exp)
+    session.flush()
+    return exp
+
+
+def history_checks(session: Session, ctx: AccessContext, analyst: UUID, sunday: date) -> None:
+    """Checks the HQ launched during the demo's history, on the findings of that week: the later weekly runs
+    measure them, so their results come from the data (stage 7), not from this file."""
+    by_key = {f.key: f for f in session.execute(select(Finding).where(Finding.key.is_not(None))).scalars()}
+    rid = {code: r for r, code in load_facts(session).restaurants.items()}
+    plan = {
+        CHECK_SUNDAYS[0]: (
+            "M5:R04:P06",
+            TOMATO_TITLE,
+            "Если заказывать томаты через день малыми партиями, списания вернутся к уровню сети.",
+            "Списано томатов от закупленного",
+            "R04",
+            ["R02", "R03"],
+            "Перешли на заказ через день, партии по 8 кг",
+        ),
+        CHECK_SUNDAYS[1]: (
+            "M5:R07:P12",
+            BREAD_TITLE,
+            "Если в понедельник и вторник заказывать на треть меньше хлеба, списания снизятся.",
+            "Списано хлеба от закупленного",
+            "R07",
+            ["R08", "R06"],
+            "Меняли заказ на пн и вт, но не каждую неделю",
+        ),
+    }
+    if sunday not in plan:
+        return
+    key, title, hypothesis, metric, test, controls, report = plan[sunday]
+    finding = by_key.get(key)
+    if finding is None:
+        return
+    starts = sunday + timedelta(days=1)
+    ends = starts + timedelta(weeks=4) - timedelta(days=1)
+    exp = check(
+        session,
+        ctx,
+        analyst,
+        finding,
+        title=title,
+        hypothesis=hypothesis,
+        metric=metric,
+        test=test,
+        controls=controls,
+        starts=starts,
+        ends=ends,
+    )
+    finding.status = "in_experiment"
+    t = Task(
+        tenant_id=ctx.tenant_id,
+        restaurant_id=rid[test],
+        finding_id=finding.id,
+        experiment_id=exp.id,
+        title=title,
+        assigned_by="hq",
+        created_on=starts,
+        due_on=ends,
+        status="done",
+        done_on=ends - timedelta(days=1),
+        report=report,
+    )
+    t.checklist_done = []
+    session.add(t)
+    session.flush()
+
+
 def confirm_pending(session: Session, analyst: UUID, today: date) -> None:
     """What an analyst confirmed during the demo's history. The salmon price growth and the dish it makes
     expensive are confirmed too: the prototype's totals are recorded, so a finding confirmed while showing it
@@ -221,9 +264,12 @@ def build(session: Session, ctx: AccessContext, analyst: UUID, today: date, week
     """After the data is loaded: hand-made findings, `weeks` weekly engine runs on the data known by then
     (an analyst confirms what each found), the work on the findings, and today's run."""
     sundays = [last_full_week_end(today) - timedelta(weeks=w) for w in range(weeks, 0, -1)]
+    # the weeks the history's checks were launched in, whatever `weeks` (stage 7: they are measured later)
+    sundays = sorted(set(sundays) | {s for s in CHECK_SUNDAYS if s < today})
     for sunday in sundays:
         engine.run(session, ctx, sunday + timedelta(days=1), as_of=sunday)
         confirm_pending(session, analyst, sunday + timedelta(days=1))
+        history_checks(session, ctx, analyst, sunday)
     work(session, ctx, today, analyst)
     result = engine.run(session, ctx, today)
     # Today's run followed the morning's uploads: the screens say when the findings were updated.

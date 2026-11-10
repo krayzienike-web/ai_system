@@ -33,6 +33,8 @@ COUNT_DAYS = (
 ZERO_PRICE_DAY = date(2026, 10, 7)  # R03: an olive oil invoice line came in with no amount (stage 6.5)
 GRAM_PRICE_DAY = date(2026, 10, 9)  # R11: parmesan priced per gram instead of per kilo (stage 6.5)
 PARTIAL_COUNT = ("R05", ("P02", "P03"))  # R05's last count skipped the hard cheeses (stage 6.5)
+# Stage 7: R04 wrote off ten times the usual tomatoes until a check of smaller batches began on 07.09
+TOMATO_CHECK_FROM = date(2026, 9, 7)
 SHORT_DELIVERY = date(2026, 10, 14)  # R04: the last pasta delivery is about half of what is needed
 MISSING_INVOICES = (
     date(2026, 9, 11),
@@ -229,6 +231,7 @@ PLANTED_CAUSES = {
     "r03-olive-oil-zero-price": "data_entry",
     "r11-parmesan-gram-price": "data_entry",
     "r05-partial-count": "count_skipped",
+    "r04-tomato-writeoffs": "overordering",
     "r08-voids-after-print": "theft",
     "r05-cashier-discounts": "theft",
 }
@@ -508,6 +511,17 @@ def generate(seed: int = 42, restaurants: int = 12, start: date = START, end: da
         description="В последней инвентаризации R05 не пересчитали пармезан и грана падано",
     )
     planted(
+        id="r04-tomato-writeoffs",
+        restaurant="R04",
+        module="M5",
+        product="P06",
+        kind="problem",
+        description="До 07.09 R04 списывает около 17% закупленных томатов (обычно 2%); с 07.09 проверка "
+        "«малые партии» — списания возвращаются к норме (этап 7: замер видит эффект против ресторанов "
+        "сравнения)",
+        since=TOMATO_CHECK_FROM.isoformat(),
+    )
+    planted(
         id="r08-voids-after-print",
         restaurant="R08",
         module="M8",
@@ -690,6 +704,8 @@ def generate(seed: int = 42, restaurants: int = 12, start: date = START, end: da
                     rate *= 3.3
                 if code == "R07" and p_code == "P12" and day.weekday() in (0, 1):
                     rate = 0.25
+                if code == "R04" and p_code == "P06" and day < TOMATO_CHECK_FROM:
+                    rate *= 10  # big batches spoil — until the check's smaller batches (stage 7)
                 spoiled = min(max(shelf_stock, 0.0), avg * rate * rnd.uniform(0.5, 1.5))
                 if code == "R06" and p_code == "P04" and day >= OVERSTOCK_FROM:
                     # What outlives its 7 days spoils (no random draw: the shared sequence stays as it was)

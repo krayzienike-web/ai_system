@@ -22,6 +22,7 @@ from app.imports.reader import map_header
 from app.imports.templates import TEMPLATES
 from app.insights.models import Finding
 from app.main import app
+from app.tasks.models import Task
 from tests.conftest import Network, login
 from tests.test_overview import TODAY, demo  # noqa: F401  (the demo network: tenant A, director r01@a.ru)
 
@@ -73,6 +74,22 @@ def test_a_scripted_answer_that_does_not_fit_the_schema_fails_the_test(network: 
 
 
 # ------------------------------------------------------------------ pp. 2–3: what a director's basis may hold
+def _hand_to_director(owner_engine: Engine, finding_id: UUID) -> None:
+    """The director sees a finding through the HQ's task (ADR 0009): the demo's rucola has none (stage 7)."""
+    with Session(owner_engine) as s, s.begin():
+        finding = s.get(Finding, finding_id)
+        assert finding is not None
+        s.add(
+            Task(
+                tenant_id=finding.tenant_id,
+                restaurant_id=finding.restaurant_id,
+                finding_id=finding_id,
+                title="Заказывать рукколу малыми партиями",
+                assigned_by="hq",
+                created_on=date(2026, 10, 10),
+                due_on=date(2026, 10, 24),
+            )
+        )
 
 
 @pytest.mark.usefixtures("demo")
@@ -114,9 +131,12 @@ def test_the_basis_holds_no_finding_under_review_and_no_other_restaurants_checks
                 completed_on=date(2026, 9, 30),
             )
         )
+    _hand_to_director(owner_engine, own)
     model.replies.append(_hypotheses)
     client.post(f"/api/findings/{own}/hypotheses", headers=login(client, "admin@a.ru"))
-    seen = client.get(f"/api/findings/{own}/hypotheses", headers=login(client, "r01@a.ru")).json()
+    got = client.get(f"/api/findings/{own}/hypotheses", headers=login(client, "r01@a.ru"))
+    assert got.status_code == 200, got.text
+    seen = got.json()
     basis = json.dumps(seen["basis"], ensure_ascii=False)
     assert "СЕКРЕТ" not in basis and "45 000" not in basis and "R07" not in basis
     similar = seen["basis"]["checks_of_similar_findings"]
@@ -246,6 +266,7 @@ def test_a_proposal_is_decided_once_and_a_marking_only_by_confirming(
 ) -> None:
     with Session(owner_engine) as s:
         own = s.execute(select(Finding.id).where(Finding.key == "M5:R01:P10")).scalar_one()
+    _hand_to_director(owner_engine, own)
     director = login(client, "r01@a.ru")
     model.replies.append(_hypotheses)
     made = client.post(f"/api/findings/{own}/hypotheses", headers=director).json()

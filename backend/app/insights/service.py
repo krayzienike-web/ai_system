@@ -33,10 +33,17 @@ def _experiment_by_finding(session: Session, finding_ids: list[UUID]) -> dict[UU
         select(Experiment).where(Experiment.finding_id.in_(finding_ids)).order_by(Experiment.created_at)
     ).scalars()
     out: dict[UUID, Experiment] = {}
+    live = (ExperimentStatus.PROPOSED, ExperimentStatus.RUNNING)
     for e in rows:
-        # Prefer a live check over a rejected proposal.
-        if e.finding_id and (
-            e.finding_id not in out or out[e.finding_id].status == ExperimentStatus.REJECTED
+        # The latest check, but a rejected proposal never hides a real one, and an open check (a repeat
+        # waiting for launch, or running) comes before a finished one (code review of stage 7, frontend p. 5)
+        if not e.finding_id:
+            continue
+        was = out.get(e.finding_id)
+        if (
+            was is None
+            or was.status == ExperimentStatus.REJECTED
+            or (e.status != ExperimentStatus.REJECTED and (e.status in live or was.status not in live))
         ):
             out[e.finding_id] = e
     return out

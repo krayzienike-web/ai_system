@@ -142,8 +142,43 @@ test("TC-UI-27: a story without a sum, and a director's story names only their o
   await page.getByRole("button", { name: /Выйти/ }).first().click();
   await page.getByRole("button", { name: "Директор ресторана" }).click();
   await page.getByRole("link", { name: /Все находки ресторана/ }).click();
-  await expect(page.getByRole("link", { name: /Руккола/ }).first()).toBeVisible();
+  // the director's list: their findings with the HQ's task (the mozzarella check) — none of another restaurant
+  await expect(page.getByRole("link", { name: /Сыр Моцарелла/ }).first()).toBeVisible();
   for (const link of await page.getByRole("link", { name: /Затоваривание|Списания выше сети/ }).all()) {
     await expect(link).not.toContainText("Сливки");
   }
+});
+
+test("TC-UI-28: a measured check shows its honest result; one without an effect is repeated longer (stage 7)", async ({ page }) => {
+  await signInAs(page, "admin@demo.local");
+  await open(page, /^Находки$/);
+  await page.getByRole("link", { name: /Списания выше сети: Томаты/ }).first().click();
+  await page.getByRole("link", { name: /Проверка: Малые партии томатов/ }).click();
+  await expect(page.getByText("Эффект подтвержден")).toBeVisible();
+  await expect(page.getByText(/Списано к расходу по техкартам — «Томаты», R04/).first()).toBeVisible();
+  await expect(page.getByText(/Если ввести во всех ресторанах/)).toBeVisible();
+  await expect(page.getByText(/разница разниц с интервалом/)).toBeVisible();
+  await open(page, /^Находки$/);
+  await page.getByRole("link", { name: /Списания в понедельник и вторник: Хлеб чиабатта/ }).first().click();
+  await page.getByRole("link", { name: /Проверка: Заказ хлеба по дням недели/ }).click();
+  await expect(page.getByText("Эффект не подтвержден")).toBeVisible();
+  await page.getByRole("button", { name: /Повторить дольше: 6 недель/ }).click();
+  await expect(page.getByText("Новая проверка передана на запуск")).toBeVisible();
+  await expect(page.getByText("Ждет решения")).toBeVisible();
+});
+
+test("TC-UI-29: a new check offers the three ways to compare, with the effect each would see (stage 7)", async ({ page }) => {
+  await signInAs(page, "admin@demo.local");
+  await open(page, /^Находки$/);
+  await page.getByRole("link", { name: /Списания выше сети: Руккола/ }).first().click();
+  await page.getByRole("link", { name: /Проверить на части ресторанов/ }).click();
+  await page.getByRole("button", { name: "Дальше" }).click();
+  const how = page.getByRole("group", { name: "Как сравниваем" });
+  await expect(how.getByText("Ресторан против похожих ресторанов")).toBeVisible();
+  await expect(how.getByText("Контроль внутри ресторана: другие товары категории")).toBeVisible();
+  await expect(how.getByText("слабое доказательство", { exact: true })).toBeVisible();
+  // rucola is lumpy: no way sees the expected effect, so nothing is recommended and the wizard warns
+  await expect(how.getByText("рекомендуем")).toHaveCount(0);
+  await expect(how.getByRole("alert")).toContainText("скорее всего итог будет «не значимо»");
+  await expect(how.getByText(/заметит эффект от/).first()).toBeVisible();
 });

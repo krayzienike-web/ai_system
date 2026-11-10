@@ -63,6 +63,7 @@ BODIES: dict[str, dict[str, Any]] = {
     "POST /api/findings/{finding_id}/review": {"verdict": "confirm"},
     "POST /api/findings/{finding_id}/disagree": {"reason": "wrong_data"},
     "POST /api/tasks/{task_id}/complete": {"report": "сделано"},
+    "POST /api/checks/{check_id}/repeat": {"weeks": 6},  # stage 7: another network's check is not found
     "POST /api/tasks/{task_id}/checklist": {"index": 0, "done": True},
     "PUT /api/aliases/{alias_id}": {"target_id": "00000000-0000-0000-0000-000000000000"},
     "POST /api/ai/suggestions/{suggestion_id}/decision": {"accepted": True},
