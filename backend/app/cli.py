@@ -5,22 +5,23 @@
 - `python -m app.cli load-demo [--seed N]` — load that network into the demo tenant via the import pipeline,
   recompute findings week by week over the last quarter (the trend's history) and add the work on them
   (app/demo/showcase.py);
-- `python -m app.cli analyze` — recompute findings of the demo tenant (analytics engine).
+- `python -m app.cli analyze` — recompute findings of the demo tenant (analytics engine);
+- `python -m app.cli seed-test-network [--reset]` — the empty «Тестовая сеть» for the test kit (stage 8);
+- `python -m app.cli generate-test-kit --out DIR` — the test kit: Excel files shaped like real exports.
 """
 
 import argparse
 from datetime import timedelta
 from pathlib import Path
-from uuid import UUID
 
-from sqlalchemy import create_engine, select, text
+from sqlalchemy import create_engine, delete, select
 from sqlalchemy.orm import Session
 
 from app.analytics import engine
 from app.core.config import get_settings
 from app.core.db import get_sessionmaker
 from app.core.security import hash_password
-from app.demo import showcase
+from app.demo import showcase, test_kit
 from app.demo.generator import END, generate
 from app.demo.loader import load
 from app.digests import weekly
@@ -38,19 +39,23 @@ DEMO_RESTAURANTS = [
 
 
 def seed_demo(password: str) -> None:
+    _seed(DEMO_TENANT, DEMO_RESTAURANTS, "demo.local", password)
+
+
+def _seed(name: str, restaurants: list[tuple[str, str, str]], domain: str, password: str) -> None:
     # Seeding runs as the schema owner (outside RLS), like migrations.
     engine = create_engine(get_settings().migrations_database_url)
     with Session(engine) as session, session.begin():
-        if session.execute(select(Tenant).where(Tenant.name == DEMO_TENANT)).scalar_one_or_none():
-            print("Demo tenant already exists, nothing to do.")
+        if session.execute(select(Tenant).where(Tenant.name == name)).scalar_one_or_none():
+            print(f"{name}: already exists, nothing to do.")
             return
-        tenant = Tenant(name=DEMO_TENANT)
+        tenant = Tenant(name=name)
         session.add(tenant)
         session.flush()
 
-        def add_user(email: str, name: str, role: Role, restaurant: Restaurant | None = None) -> None:
+        def add_user(email: str, full_name: str, role: Role, restaurant: Restaurant | None = None) -> None:
             user = User(
-                tenant_id=tenant.id, email=email, full_name=name, password_hash=hash_password(password)
+                tenant_id=tenant.id, email=email, full_name=full_name, password_hash=hash_password(password)
             )
             session.add(user)
             session.flush()
@@ -64,18 +69,36 @@ def seed_demo(password: str) -> None:
             )
             print(f"  {email:<28} {role}")
 
-        print(f"Tenant: {DEMO_TENANT}")
-        add_user("admin@demo.local", "Администратор УК", Role.HQ_ADMIN)
-        add_user("analyst@demo.local", "Аналитик УК", Role.HQ_ANALYST)
-        restaurants: dict[str, UUID] = {}
-        for i, (code, name, city) in enumerate(DEMO_RESTAURANTS, start=1):
-            restaurant = Restaurant(tenant_id=tenant.id, code=code, name=name, city=city)
+        print(f"Tenant: {name}")
+        add_user(f"admin@{domain}", "Администратор УК", Role.HQ_ADMIN)
+        add_user(f"analyst@{domain}", "Аналитик УК", Role.HQ_ANALYST)
+        for i, (code, title, city) in enumerate(restaurants, start=1):
+            restaurant = Restaurant(tenant_id=tenant.id, code=code, name=title, city=city)
             session.add(restaurant)
             session.flush()
-            restaurants[code] = restaurant.id
-            add_user(f"director{i}@demo.local", f"Директор {code}", Role.RESTAURANT_DIRECTOR, restaurant)
-        print(f"Password for all demo users: {password}")
+            add_user(f"director{i}@{domain}", f"Директор {code}", Role.RESTAURANT_DIRECTOR, restaurant)
+        print(f"Password for all users of {name}: {password}")
     engine.dispose()
+
+
+def seed_test_network(password: str, reset: bool) -> None:
+    """The empty network «Тестовая сеть» (stage 8): restaurants and users, no data — the test kit's files are
+    loaded into it by hand through «Данные». `reset` removes it with everything loaded first."""
+    owner = create_engine(get_settings().migrations_database_url)
+    with owner.begin() as conn:
+        if reset:
+            conn.execute(delete(Tenant).where(Tenant.name == test_kit.TEST_TENANT))
+    owner.dispose()
+    _seed(test_kit.TEST_TENANT, test_kit.RESTAURANTS, "test.local", password)
+
+
+def generate_test_kit(out: str, seed: int) -> None:
+    kit = test_kit.build(seed)
+    folder = Path(out)
+    for path, content in kit.files.items():
+        (folder / path).parent.mkdir(parents=True, exist_ok=True)
+        (folder / path).write_bytes(content)
+    print(f"{len(kit.files)} files → {folder}")
 
 
 def generate_demo(out: str, seed: int) -> None:
@@ -135,13 +158,18 @@ def analyze() -> None:
 
 def reset_demo(password: str, seed: int) -> None:
     """The demo stand every night: the demo network as it was on the first day, whatever visitors changed.
-    Refuses on a database that holds any other network."""
+    Keeps the test network; refuses on a database that holds any other network."""
     owner = create_engine(get_settings().migrations_database_url)
     with owner.begin() as conn:
-        others = conn.execute(select(Tenant.name).where(Tenant.name != DEMO_TENANT)).scalars().all()
+        others = (
+            conn.execute(select(Tenant.name).where(Tenant.name.not_in((DEMO_TENANT, test_kit.TEST_TENANT))))
+            .scalars()
+            .all()
+        )
         if others:
             raise SystemExit(f"Not a demo stand: other networks here ({', '.join(others)})")
-        conn.execute(text("TRUNCATE tenants CASCADE"))
+        # Only the demo network goes: the test network loaded by hand stays (stage 8)
+        conn.execute(delete(Tenant).where(Tenant.name == DEMO_TENANT))
     owner.dispose()
     seed_demo(password)
     load_demo(seed)
@@ -163,6 +191,12 @@ def main() -> None:
     )
     reset.add_argument("--password", default=None)
     reset.add_argument("--seed", type=int, default=42)
+    test = sub.add_parser("seed-test-network", help="Create the empty test network for the test kit's files")
+    test.add_argument("--password", default=None)
+    test.add_argument("--reset", action="store_true", help="Remove the test network and its data first")
+    kit = sub.add_parser("generate-test-kit", help="Write the test kit: Excel files shaped like real exports")
+    kit.add_argument("--out", default="test-kit")
+    kit.add_argument("--seed", type=int, default=test_kit.SEED)
     args = parser.parse_args()
     if args.command == "analyze":
         analyze()
@@ -174,6 +208,10 @@ def main() -> None:
         load_demo(args.seed)
     elif args.command == "reset-demo":
         reset_demo(args.password or get_settings().demo_password, args.seed)
+    elif args.command == "seed-test-network":
+        seed_test_network(args.password or get_settings().demo_password, args.reset)
+    elif args.command == "generate-test-kit":
+        generate_test_kit(args.out, args.seed)
 
 
 if __name__ == "__main__":
