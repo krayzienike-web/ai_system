@@ -13,6 +13,10 @@ describe("money and numbers in words", () => {
     expect(plain(rub(1_250_000))).toBe("1,25 млн ₽");
     expect(plain(rub(-38_000))).toBe("-38 тыс ₽");
     expect(plain(perMonth(38_000))).toBe("38 тыс ₽ в месяц");
+    // the order after rounding (pre-pilot review 10.11.2026, p. 12)
+    expect(plain(rub(999_960))).toBe("1 млн ₽");
+    expect(plain(rub(999_949))).toBe("999,9 тыс ₽");
+    expect(plain(rub(1_000))).toBe("1 тыс ₽");
   });
 
   it("declines Russian plurals, including 11–14", () => {

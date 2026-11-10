@@ -1,3 +1,5 @@
+import { isNotFound } from "../../api/client";
+import { NoDataYet, useNoData } from "../NoDataYet";
 import { Link } from "@tanstack/react-router";
 import { ArrowDownRight, ArrowUpRight, CheckCircle2, ChevronDown, MessageCircle } from "lucide-react";
 import { useState } from "react";
@@ -5,7 +7,7 @@ import { useState } from "react";
 import { useAppContext, useRestaurantWeek } from "../../api/hooks";
 import type { ApiFinding } from "../../api/types";
 import { VerifiedNote } from "../../ds/ai";
-import { Card, cx, EmptyState, QuestionBlock, Reveal, Skeleton, Term } from "../../ds/primitives";
+import { Card, cx, EmptyState, LoadError, QuestionBlock, Reveal, Skeleton, Term } from "../../ds/primitives";
 import { AnimatedNumber, BulletScale, PROCESS_ICON, ProfitSplit } from "../../ds/viz";
 import { ddmm, money, pct, perMonth, plural, rub, thousands } from "../../lib/format";
 import { useUi } from "../../state/ui";
@@ -20,7 +22,14 @@ export function WeekView({ code, readOnly = false }: { code: string; readOnly?: 
   const week = useRestaurantWeek(code);
   const context = useAppContext();
   const [process, setProcess] = useState<string | null>(null);
-  if (week.isError) return <EmptyState title="Ресторан не найден" />;
+  const empty = useNoData();
+  if (empty) return <NoDataYet canUpload={false} />;
+  if (week.isError && !week.data)
+    return isNotFound(week.error) ? (
+      <EmptyState title="Ресторан не найден" />
+    ) : (
+      <LoadError error={week.error} title="Не получилось загрузить неделю" retry={() => void week.refetch()} />
+    );
   const w = week.data;
   if (!w) return <Skeleton className="h-[600px]" />;
 

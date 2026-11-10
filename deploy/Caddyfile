@@ -6,7 +6,22 @@
 		X-Content-Type-Options nosniff
 		Referrer-Policy strict-origin-when-cross-origin
 		X-Frame-Options DENY
+		# Only our own scripts; fonts from Google Fonts; inline styles are React's (pre-pilot review 10.11.2026)
+		Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
 		-Server
+	}
+
+	# A body is refused before it reaches the API: files up to 20 MB, JSON up to 1 MB (app/core/limits.py).
+	@uploads path /api/imports /api/imports/mapping
+	request_body @uploads {
+		max_size 21MB
+	}
+	@json {
+		path /api/*
+		not path /api/imports /api/imports/mapping
+	}
+	request_body @json {
+		max_size 1MB
 	}
 
 	handle /api/* {

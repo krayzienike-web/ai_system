@@ -267,7 +267,9 @@ export function Skeleton({ className }: { className?: string }) {
 /** The server's reason a request failed (it is written for people), or `fallback` when there is none. */
 export function ErrorText({ error, fallback = "Не получилось, попробуйте еще раз", className }: { error: unknown; fallback?: string; className?: string }) {
   if (!error) return null;
-  const text = error instanceof Error && error.message && !/^\d{3}\b/.test(error.message) ? error.message : fallback;
+  // Only the server's answers (they carry a `status`) are worded for people; a crash of the code is not.
+  const fromServer = error instanceof Error && typeof (error as { status?: unknown }).status === "number";
+  const text = fromServer && error.message && !/^\d{3}\b/.test(error.message) ? error.message : fallback;
   return (
     <p role="alert" className={cx("text-sm text-loss", className)}>
       {text}

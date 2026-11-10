@@ -69,18 +69,32 @@ def load_lookups(session: Session, restaurant_id: UUID | None = None) -> Lookups
         classify_reason=load_norms(session).classify,
         salt=session.execute(text("SELECT current_setting('app.tenant_id', true)")).scalar_one() or "",
     )
-    for p in session.execute(select(Product)).scalars():
+
+    # A name two items of the reference share («Капучино» in two groups) points to neither: such rows go to
+    # «Нужно сопоставить», never to one of them at random (pre-pilot review 10.11.2026, p. 7; docs/04).
+    def by_name(target: dict[str, Ref], name: str, ref: Ref, shared: set[str]) -> None:
+        key = normalize(name)
+        if key in shared:
+            return
+        if key in target and target[key].id != ref.id:
+            del target[key]
+            shared.add(key)
+            return
+        target[key] = ref
+
+    shared: dict[str, set[str]] = {"product": set(), "menu_item": set(), "supplier": set()}
+    for p in session.execute(select(Product).order_by(Product.code)).scalars():
         ref = Ref(p.id, p.name, p.base_unit, p.is_semi)
         lk.products[p.code] = ref
-        lk.product_names.setdefault(normalize(p.name), ref)
-    for m in session.execute(select(MenuItem)).scalars():
+        by_name(lk.product_names, p.name, ref, shared["product"])
+    for m in session.execute(select(MenuItem).order_by(MenuItem.code)).scalars():
         ref = Ref(m.id, m.name)
         lk.menu_items[m.code] = ref
-        lk.menu_item_names.setdefault(normalize(m.name), ref)
-    for s in session.execute(select(Supplier)).scalars():
+        by_name(lk.menu_item_names, m.name, ref, shared["menu_item"])
+    for s in session.execute(select(Supplier).order_by(Supplier.code)).scalars():
         ref = Ref(s.id, s.name)
         lk.suppliers[s.code] = ref
-        lk.supplier_names.setdefault(normalize(s.name), ref)
+        by_name(lk.supplier_names, s.name, ref, shared["supplier"])
     refs = {
         "product": {r.id: r for r in lk.products.values()},
         "menu_item": {r.id: r for r in lk.menu_items.values()},
@@ -327,7 +341,12 @@ def upload(
         )
     ).first()
     if duplicate:
-        raise ConflictError("Этот файл уже загружен для этого ресторана")
+        raise ConflictError(
+            "Этот файл уже загружен для этого ресторана"
+            if restaurant_id is not None
+            else "Этот файл справочника уже загружен для сети",
+            code="duplicate",
+        )
 
     result, file_errors, column_map, lk = _run(session, template, raw, filename, today, restaurant_id)
     batch = ImportBatch(
@@ -383,8 +402,29 @@ def recipe_cycle(session: Session, records: list[dict[str, Any]]) -> str | None:
     return None
 
 
+# The optional columns of reference data and the fields they fill: a file without the column leaves the field
+# as it was, never empties it (pre-pilot review 10.11.2026, p. 8: categories set the loss tolerances, Q6).
+OPTIONAL_FIELDS = {
+    "restaurants": {"city": "city"},
+    "products": {"category": "category", "shelf_life_days": "shelf_life_days", "kind": "is_semi"},
+    "suppliers": {"inn": "inn"},
+    "menu_items": {"category": "category", "price": "price"},
+}
+CHUNK = 1000  # rows per INSERT: psycopg allows 65 535 parameters in one statement (p. 9)
+
+
+def _present(template: Template, column_map: dict[str, str] | None) -> set[str]:
+    """The template's columns the file has (the batch keeps them by title)."""
+    titles = set(column_map or {})
+    return {c.name for c in template.columns if c.title in titles}
+
+
 def _publish_reference(
-    session: Session, batch: ImportBatch, template: Template, records: list[dict[str, Any]]
+    session: Session,
+    batch: ImportBatch,
+    template: Template,
+    records: list[dict[str, Any]],
+    present: set[str] | None = None,
 ) -> None:
     if template.name == "recipes":
         cycle = recipe_cycle(session, records)
@@ -398,7 +438,8 @@ def _publish_reference(
                     RecipeLine.valid_from == valid_from,
                 )
             )
-        session.execute(insert(RecipeLine), [{**r, "tenant_id": batch.tenant_id} for r in records])
+        for part in _chunks([{**r, "tenant_id": batch.tenant_id} for r in records]):
+            session.execute(insert(RecipeLine), part)
         return
     if template.name == "name_sync":
         # One remembered match per name of 1С:ERP for the whole network; a new file replaces an old match.
@@ -433,9 +474,19 @@ def _publish_reference(
     rows = list(
         {r["code"]: {**r, "tenant_id": batch.tenant_id} for r in records}.values()
     )  # last row per code wins
-    stmt = pg_insert(model).values(rows)
-    updates = {k: stmt.excluded[k] for k in rows[0] if k not in ("code", "tenant_id")}
-    session.execute(stmt.on_conflict_do_update(index_elements=["tenant_id", "code"], set_=updates))
+    missing = {
+        field
+        for column, field in OPTIONAL_FIELDS.get(template.name, {}).items()
+        if present is not None and column not in present
+    }
+    for part in _chunks(rows):
+        stmt = pg_insert(model).values(part)
+        updates = {k: stmt.excluded[k] for k in part[0] if k not in ("code", "tenant_id", *missing)}
+        session.execute(stmt.on_conflict_do_update(index_elements=["tenant_id", "code"], set_=updates))
+
+
+def _chunks(rows: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    return [rows[i : i + CHUNK] for i in range(0, len(rows), CHUNK)]
 
 
 def _locked(session: Session, batch_id: UUID) -> ImportBatch | None:
@@ -507,7 +558,7 @@ def _write(session: Session, batch: ImportBatch, template: Template, today: date
     batch.rows_valid = len(result.records)
     batch.aliases_used = sorted(lk.used)
     if template.scope is Scope.NETWORK:
-        _publish_reference(session, batch, template, result.records)
+        _publish_reference(session, batch, template, result.records, _present(template, batch.column_map))
     else:
         model = FACTS[template.name]
         # Idempotent: the restaurant's rows of this type for the file's period are replaced, never duplicated.

@@ -42,6 +42,14 @@ def owner_engine() -> Iterator[Engine]:
 
 
 @pytest.fixture(autouse=True)
+def _fresh_login_guard() -> None:
+    """Failed sign-ins are counted per process (app/core/limits.py): every test starts from none."""
+    from app.core.limits import login_guard
+
+    login_guard._failures.clear()
+
+
+@pytest.fixture(autouse=True)
 def _clean_db(owner_engine: Engine) -> None:
     with owner_engine.begin() as conn:
         conn.execute(text("TRUNCATE tenants CASCADE"))

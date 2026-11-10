@@ -3,7 +3,7 @@ import { ArrowDown, ArrowDownRight, ArrowLeft, ArrowUp, ArrowUpRight, Search } f
 import { useState } from "react";
 
 import { useRestaurantRows } from "../../api/hooks";
-import { Card, cx, PageTitle, Pill, Reveal, Skeleton } from "../../ds/primitives";
+import { Card, cx, LoadError, PageTitle, Pill, Reveal, Skeleton } from "../../ds/primitives";
 import { money, pct, plural, rub } from "../../lib/format";
 import { WeekView } from "../director/Week";
 
@@ -60,6 +60,12 @@ export function RestaurantsPage() {
   const data = useRestaurantRows();
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({ key: "losses", desc: true });
+  if (data.isError && !data.data)
+    return (
+      <div className="mx-auto max-w-[1180px]">
+        <LoadError error={data.error} title="Не получилось загрузить рестораны" retry={() => void data.refetch()} />
+      </div>
+    );
   if (!data.data) return <Skeleton className="mx-auto h-96 max-w-[1180px]" />;
 
   // The figures are the API's; the page only searches and sorts what it got.

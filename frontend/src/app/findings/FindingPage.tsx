@@ -1,3 +1,4 @@
+import { isNotFound } from "../../api/client";
 import { Link, useParams } from "@tanstack/react-router";
 import { ArrowLeft, ChevronDown, FlaskConical, MessageCircle } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
@@ -8,7 +9,7 @@ import type { FindingDetail } from "../../api/types";
 import { TrendChart } from "../../ds/TrendChart";
 import { VerifiedNote } from "../../ds/ai";
 import { SourceDocuments } from "./Sources";
-import { Button, buttonClass, Card, EmptyState, Pill, QuestionBlock, Reveal, Skeleton } from "../../ds/primitives";
+import { Button, buttonClass, Card, EmptyState, LoadError, Pill, QuestionBlock, Reveal, Skeleton } from "../../ds/primitives";
 import { BulletScale, CompositionBar, CycleSteps } from "../../ds/viz";
 import { ddmm, MODULE_TITLE, money, num, perMonth, rub } from "../../lib/format";
 import { useViewer } from "../../lib/useViewer";
@@ -23,6 +24,8 @@ export function FindingPage() {
   const viewer = useViewer();
   const finding = useFinding(findingId);
   if (!viewer) return null;
+  if (finding.isError && !isNotFound(finding.error))
+    return <LoadError error={finding.error} title="Не получилось загрузить находку" retry={() => void finding.refetch()} />;
   if (finding.isError) {
     // The API answers «not found» both for a missing finding and for another restaurant's one.
     return <EmptyState title="Находка не найдена">Возможно, она относится к другому ресторану или ее уже нет в данных.</EmptyState>;

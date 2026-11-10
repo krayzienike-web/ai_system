@@ -3,6 +3,7 @@ import {
   Link,
   Outlet,
   useNavigate,
+  useRouter,
   useRouterState,
 } from "@tanstack/react-router";
 import {
@@ -25,12 +26,12 @@ import {
 import { motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 
-import { ApiError, tokens } from "../api/client";
+import { ApiError, onSessionEnded, tokens } from "../api/client";
 import { useAppContext, useBadges, useMe, useRefreshWhenRunIsDone, useReviewCount } from "../api/hooks";
 import { ddmm } from "../lib/format";
 import { ROLE_LABELS } from "../api/types";
 import { Logo, LogoMark } from "../brand/Logo";
-import { cx } from "../ds/primitives";
+import { cx, LoadError } from "../ds/primitives";
 import { DEMO } from "../api/client";
 import { PeriodPicker } from "./PeriodPicker";
 import { useUi } from "../state/ui";
@@ -140,10 +141,11 @@ function Badge({ count }: { count: number }) {
 }
 
 export function Shell() {
-  const { data: me, error: meError } = useMe();
+  const { data: me, error: meError, refetch: refetchMe } = useMe();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { openChat } = useUi();
+  const router = useRouter();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const [more, setMore] = useState(false);
   const moreButton = useRef<HTMLButtonElement>(null);
@@ -191,17 +193,28 @@ export function Shell() {
     ),
   };
 
-  function logout() {
+  // The page to come back to after signing in again: the path with its query, as the router keeps it.
+  const currentPath = () => router.state.location.href;
+
+  function logout(next?: string) {
     tokens.clear();
     queryClient.clear();
-    void navigate({ to: "/login" });
+    void navigate({ to: "/login", search: { next } });
   }
 
   useEffect(() => {
     // Only an expired or revoked session signs out; a network blip or a server error must not.
-    if (meError instanceof ApiError && meError.status === 401) logout();
+    if (meError instanceof ApiError && meError.status === 401) logout(currentPath());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [meError]);
+
+  useEffect(() => {
+    // Any request the server refuses for the session (an upload, a report, saving norms) leads to the login,
+    // and back to this page after it (pre-pilot review 10.11.2026, p. 5).
+    onSessionEnded(() => logout(currentPath()));
+    return () => onSessionEnded(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -214,7 +227,16 @@ export function Shell() {
     return () => window.removeEventListener("keydown", onKey);
   }, [openChat]);
 
-  if (!me) return null;
+  if (!me) {
+    // The server or the connection failed before we know who is here: say so, never a blank page (p. 3).
+    if (meError && !(meError instanceof ApiError && meError.status === 401))
+      return (
+        <div className="mx-auto max-w-lg px-4 pt-24">
+          <LoadError error={meError} title="Не получилось открыть SousChef AI" retry={() => void refetchMe()} />
+        </div>
+      );
+    return null;
+  }
   const isDirector = me.role === "restaurant_director";
   const nav = isDirector ? DIRECTOR_NAV : HQ_NAV;
   const isActive = (to: string) =>
@@ -270,7 +292,7 @@ export function Shell() {
             {me.restaurant ? me.restaurant.name : ROLE_LABELS[me.role]}
           </div>
           <button
-            onClick={logout}
+            onClick={() => logout()}
             className="mt-3 inline-flex items-center gap-1.5 text-xs text-white/60 hover:text-white"
           >
             <LogOut size={13} /> Выйти
@@ -313,7 +335,7 @@ export function Shell() {
               </kbd>
             </button>
             <button
-              onClick={logout}
+              onClick={() => logout()}
               className="text-ink-3 hover:text-ink lg:hidden"
               aria-label="Выйти"
             >

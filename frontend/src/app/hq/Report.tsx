@@ -25,7 +25,7 @@ export function ReportPage() {
   if (!r) return <Skeleton className="mx-auto h-[600px] max-w-[1040px]" />;
 
   const trend = r.trend.on_table.map((v) => money(v) ?? 0);
-  const change = money(r.trend.change) ?? 0;
+  const change = money(r.trend.change);
   const confirmedByTasks = money(r.confirmed_by_tasks_rub_month) ?? 0;
   const figures = [
     { label: "Найденный потенциал прибыли", value: money(r.found_rub_month) ?? 0, year: money(r.found_rub_year) ?? 0, note: "по открытым находкам", tone: "text-ink" },
@@ -67,7 +67,8 @@ export function ReportPage() {
               { label: "Закрыто находок", value: `${r.closed_findings}`, note: "исправлены или подтверждены проверкой" },
               {
                 label: "Найденный потенциал",
-                value: `${change <= 0 ? "−" : "+"}${num(Math.abs(change))} ₽`,
+                // No history yet — a dash; zero — without a sign (pre-pilot review 10.11.2026, p. 11).
+                value: change === null ? "—" : `${change < 0 ? "−" : change > 0 ? "+" : ""}${num(Math.abs(change))} ₽`,
                 note: `в месяц, за ${r.trend.span}`,
               },
             ].map((x) => (

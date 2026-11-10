@@ -59,6 +59,9 @@
 | TC-AUTH-08 | Ротация refresh-токена, ограничение частоты входа | — | ⬜ (бэклог, до пилота) |
 | TC-AUTH-09 | Проверка живости сервиса без входа | `test_auth.py::test_health` | ✅ |
 | TC-AUTH-10 | Без `FAI_ENV` настройки считаются рабочими и не принимают dev-секрет JWT; dev и test — принимают | `test_config.py` | ✅ |
+| TC-AUTH-11 | Ревью перед пилотом, п. 1: тело запроса больше лимита (21 МБ для файлов, 1 МБ для остального) — 413 до разбора формы и без входа, и по Content-Length, и при передаче без него; Caddy режет то же раньше | `test_pre_pilot_review.py`::`test_a_body_over_the_limit_is_refused_before_it_is_read`; `test_demo_stand.py::test_the_stand_limits_bodies_and_scripts` | ✅ |
+| TC-AUTH-12 | П. 3: десять неудачных входов по email — одиннадцатый получает 429 даже с верным паролем; проверок argon2 одновременно не больше 4 на процесс; адрес — первый в X-Forwarded-For | `test_pre_pilot_review.py`::`test_the_eleventh_failed_sign_in_waits`, `test_login_guard_bounds_hashes_at_once` | ✅ |
+| TC-AUTH-13 | Фронтенд-ревью, п. 1: сервер отказывает по-русски — без входа, с плохим токеном, с формой, которую не прочитать (422 со строкой `detail`) | `test_pre_pilot_review.py`::`test_the_api_speaks_russian_when_it_refuses` | ✅ |
 
 ### Изоляция данных (ISO)
 
@@ -108,6 +111,16 @@
 | TC-IMP-23 | Новые факты — под RLS ресторана: другой директор и другая сеть их не видят; шаблоны описаны для экрана | `::test_the_new_facts_stay_in_their_restaurant`, `::test_the_templates_describe_the_new_exports` | ✅ |
 | TC-IMP-24 | Демо-сеть: остатки за 4 недели, удаления и кассиры с тремя заложенными аномалиями (R06 сливки, R08 удаления после пречека, R05 скидки); остальные рестораны — байт в байт как до этапа | `test_demo_generator.py::test_the_stage_65_data_carry_their_planted_anomalies`, `::test_files_and_plan` | ✅ |
 | TC-IMP-25 | Этап 6.5, проход тестировщика 06.11.2026: отрицательный остаток публикуется как есть (−1,5); исправленная выгрузка «Удаления и отмены» тех же дней заменяет прежнюю (тот же файл — дубликат); другая сеть не видит ни остатков, ни удалений и не загружает файл на чужой ресторан | `test_imports_stage65_pass.py::test_a_stock_below_zero_is_published_as_it_is`, `::test_voids_of_the_same_days_published_again_replace_the_first`, `::test_another_network_sees_no_stock_and_no_voids` | ✅ |
+| TC-IMP-26 | Ревью перед пилотом, п. 2: xlsx на 5 КБ с ячейкой ALL10000 и лист длиннее 300 000 строк отклоняются до распаковки в память | `test_pre_pilot_review.py`::`test_a_tiny_workbook_with_a_far_cell_is_refused_before_it_fills_the_memory` | ✅ |
+| TC-IMP-27 | П. 13–14: разделитель CSV — тот, что режет строки на одинаковое число колонок (запятые в названии блюда и десятичные запятые не мешают «;»); UTF-16 читается | `test_pre_pilot_review.py`::`test_the_csv_separator_is_the_one_that_cuts_rows_evenly` | ✅ |
+| TC-IMP-28 | П. 14: поле CSV длиннее лимита и битая книга — понятный русский текст, а не 500 и не английское исключение библиотеки | `test_pre_pilot_review.py`::`test_unreadable_files_are_said_in_russian_never_a_500` | ✅ |
+| TC-IMP-29 | П. 6: день далеко от остальных (больше 31 дня, у инвентаризаций — 120) — ошибка его строки «проверьте год», файл не заменяет годы данных; инвентаризации раз в два месяца — нормальный файл | `test_pre_pilot_review.py`::`test_one_typo_in_a_year_cannot_replace_ten_years_of_data`, `test_stock_counts_one_to_three_months_apart_are_one_period` | ✅ |
+| TC-IMP-30 | П. 11: значения, которые не помещаются в базу (штрихкод в количестве, 0,00001 кг, «1E+1000000», текст длиннее колонки), — ошибки строк, а не 500 при публикации | `test_pre_pilot_review.py`::`test_values_the_database_cannot_hold_are_errors_of_their_rows` | ✅ |
+| TC-IMP-31 | П. 10: один ингредиент дважды в версии техкарты — одна строка с суммой и предупреждение | `test_pre_pilot_review.py`::`test_an_ingredient_twice_in_a_recipe_is_summed_not_a_failed_publish` | ✅ |
+| TC-IMP-32 | П. 7: название, общее для двух позиций справочника, не сопоставляется случайно — строки ждут сопоставления человеком | `test_pre_pilot_review.py`::`test_a_name_two_items_share_is_matched_by_a_person_never_at_random` | ✅ |
+| TC-IMP-33 | П. 8: справочник без необязательной колонки (категория, цена, ИНН, город) не обнуляет ее значения | `test_pre_pilot_review.py`::`test_a_reference_file_without_a_column_keeps_what_it_does_not_say` | ✅ |
+| TC-IMP-34 | П. 9: справочник на 10 000 позиций публикуется пачками (лимит 65 535 параметров psycopg) | `test_pre_pilot_review.py`::`test_a_reference_file_over_the_parameters_of_one_statement_is_published` | ✅ |
+| TC-IMP-35 | Фронтенд-ревью, п. 14: повторный файл справочника — «уже загружен для сети» (`code: duplicate`) | `test_pre_pilot_review.py`::`test_a_second_upload_of_reference_data_says_the_network` | ✅ |
 
 ### Справочники, нормы, периоды (CAT, NORM, PER)
 
@@ -298,6 +311,7 @@
 | TC-AI-36 | Длинный разговор (больше `KEEP` = 40 сообщений) уходит модели с вопроса, а не с результата инструмента без вызова | `test_ai_chat.py::test_a_long_conversation_is_replayed_from_a_question` | ✅ |
 | TC-AI-37 | Срез длинной истории не конфликтует с preserved thinking у Opus 5.5 (ревью 28.10, п. 11) | — | ⬜ ждет ключа Claude API (Q12) |
 | TC-AI-38 | Чат на экране: статус «что смотрю» виден, пока ассистент думает; следующий вопрос идет с `thread_id` прошлого ответа; при 429 показывается текст сервера, при другой ошибке — «Не получилось ответить»; закрытие чата отменяет вопрос в полете | — | ⬜ нужен компонентный тест (jsdom + Testing Library — новые зависимости, не добавлены); прототип отвечает сразу, без потока и лимита, поэтому e2e это не проверит. Логика клиента — TC-AI-20, 33, 35 |
+| TC-AI-39 | Ревью перед пилотом, п. 12: в строках-образцах для разметки с ИИ колонки кассиров и официантов и все, что похоже на ФИО, заменены на «[сотрудник]» (docs/03: без ПДн в LLM) | `test_pre_pilot_review.py`::`test_the_model_never_sees_the_names_of_cashiers` | ✅ |
 
 ### ИИ-помощник аналитика (AN, этап 5.5, ADR 0008)
 
@@ -433,6 +447,12 @@
 | TC-UI-25 | Неделя директора: блок «Можно ли верить цифрам?» с оценкой из 100; оценка директора без сетевой находки, которую он не видит; прототип: директор — 100 без причин, УК — 90 с «без техкарты», оценка = 100 − причины, среднее сети одно, порог — из параметров движка | e2e `review-fixes.spec.ts` TC-UI-25; `demo.test.ts` «gives a director the score without the network finding they are not shown, HQ the whole one» | ✅ |
 | TC-UI-26 | Сводка: строка «Качество данных» с оценкой ресторана и средним по сети; в прототипе совпадает с неделей директора | e2e `review-fixes.spec.ts` TC-UI-26; `demo.test.ts` «says the same on the week and in the digest, with the limit from the server» | ✅ |
 | TC-UI-27 | История без суммы («решаются вместе»); в историях директора — только его находки (e2e проверяет лишь список директора без чужих находок, состав истории директора — vitest «builds a finding's story…» и сервер TC-ENG-33; уточнено 06.11.2026); прототип строит историю под смотрящего, суммы досок — по правилу сервера; карточка с историей на 390 px | e2e `review-fixes.spec.ts` TC-UI-27, `mobile.spec.ts`; `demo.test.ts` «builds a finding's story for whoever looks», «counts a story's money once» | ✅ |
+| TC-UI-28 | Этап 7: страница замеренной проверки — честный итог по данным; без эффекта — «Повторить дольше» | `e2e/review-fixes.spec.ts` «TC-UI-28» | ✅ |
+| TC-UI-29 | Этап 7: мастер проверки предлагает три способа сравнения с порогом по выбранному сроку, без «рекомендуем» для невидимого эффекта и с предупреждением | `e2e/review-fixes.spec.ts` «TC-UI-29» | ✅ |
+| TC-UI-30 | Ревью перед пилотом (фронтенд), п. 1: ошибки по-русски при любом ответе — 413/502 без JSON, список Pydantic, пустой `statusText` HTTP/2; обрыв сети — «Нет связи с сервером», в запросах и в чате | `src/api/errors.test.ts` «errors in Russian» | ✅ |
+| TC-UI-31 | Пп. 3–5: любой отказ сессии (не только `me`) ведет на вход и после входа — обратно; возврат только на путь этого приложения (не `//evil.com`); неверный пароль на входе — не «конец сессии»; при сбое `me` — экран с «Повторить», не белая страница; 404 и прочие ошибки различаются на «Неделе», находке, задачах, ресторанах | `src/api/errors.test.ts` «the end of a session» | 🟡 экраны — без автотеста |
+| TC-UI-32 | Пп. 8–9: загрузка отказывает до отправки — не таблица (.pdf), больше 20 МБ, пустой файл; брошенный мимо зоны файл не открывается браузером | `src/api/errors.test.ts` «the upload refuses before sending»; `e2e/pre-pilot.spec.ts` | ✅ |
+| TC-UI-33 | П. 2: проверенный, но не загруженный файл открывается из «Что загружали?» и загружается; отмена загрузки — с подтверждением | `e2e/pre-pilot.spec.ts` | ✅ |
 
 ### Демо-сеть (DEMO)
 

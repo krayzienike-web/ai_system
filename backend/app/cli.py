@@ -192,7 +192,8 @@ def main() -> None:
     reset.add_argument("--password", default=None)
     reset.add_argument("--seed", type=int, default=42)
     test = sub.add_parser("seed-test-network", help="Create the empty test network for the test kit's files")
-    test.add_argument("--password", default=None)
+    # Its own password, never the demo's one handed to guests (pre-pilot review 10.11.2026, p. 4)
+    test.add_argument("--password", required=True)
     test.add_argument("--reset", action="store_true", help="Remove the test network and its data first")
     kit = sub.add_parser("generate-test-kit", help="Write the test kit: Excel files shaped like real exports")
     kit.add_argument("--out", default="test-kit")
@@ -209,7 +210,9 @@ def main() -> None:
     elif args.command == "reset-demo":
         reset_demo(args.password or get_settings().demo_password, args.seed)
     elif args.command == "seed-test-network":
-        seed_test_network(args.password or get_settings().demo_password, args.reset)
+        if args.password == get_settings().demo_password or len(args.password) < 10:
+            raise SystemExit("The test network needs its own password of 10+ characters, not DEMO_PASSWORD")
+        seed_test_network(args.password, args.reset)
     elif args.command == "generate-test-kit":
         generate_test_kit(args.out, args.seed)
 

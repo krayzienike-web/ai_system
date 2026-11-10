@@ -40,10 +40,12 @@ docker compose run --rm worker python -m app.cli reset-demo   # демо-сет�
 
 ## Тестовая сеть: загрузить выгрузки руками
 
-Чтобы пройти путь пилота до настоящих выгрузок: `docker compose run --rm worker python -m app.cli seed-test-network`
-создает пустую «Тестовую сеть» (входы `admin@test.local`, `director1@test.local` … с паролем `DEMO_PASSWORD`). Файлы
+Чтобы пройти путь пилота до настоящих выгрузок: `docker compose run --rm worker python -m app.cli seed-test-network
+--password '<свой пароль>'` создает пустую «Тестовую сеть» (входы `admin@test.local`, `director1@test.local` …; пароль —
+свой, не `DEMO_PASSWORD`). Файлы
 для нее — в `deploy/test-kit/`, порядок загрузки и что должно получиться — в `docs/15-test-kit.md`. Ночной сброс
-демо тестовую сеть не трогает; начать заново — `seed-test-network --reset`.
+демо тестовую сеть не трогает; начать заново — `seed-test-network --reset --password '…'`. Только для синтетических
+файлов набора: настоящие данные пилота — в отдельной конфигурации без демо-календаря.
 
 ## Обновление
 
@@ -52,6 +54,9 @@ git pull && docker compose up -d --build
 ```
 
 Миграции применятся сами (`migrate`). Демо-сеть пересоберется ночью или сразу командой `reset-demo`.
+После обновления, которое меняет `Caddyfile` (10.11.2026: лимиты размера запроса и заголовок CSP), проверьте, что
+`web` запустился: `docker compose logs --tail 20 web` — без ошибок `Caddyfile`. В среде разработки нет Caddy,
+поэтому конфигурацию проверяет только тест файла.
 
 ## Ассистент
 

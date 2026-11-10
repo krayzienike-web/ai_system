@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { Link, useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { motion } from "motion/react";
 import { type FormEvent, useState } from "react";
 
@@ -17,6 +17,7 @@ const DEMO_USERS = [
 
 export function LoginPage() {
   const navigate = useNavigate();
+  const { next } = useSearch({ from: "/login" });
   const queryClient = useQueryClient();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -29,7 +30,8 @@ export function LoginPage() {
     try {
       await login(e, p);
       queryClient.clear();
-      await navigate({ to: "/" });
+      // Back to where the session ended; the router has already kept only a path of this app.
+      await navigate({ href: next ?? "/" });
     } catch (err) {
       setError(err instanceof ApiError && err.status === 401 ? "Неверный email или пароль" : "Не получилось войти, попробуйте еще раз");
     } finally {
@@ -136,9 +138,11 @@ export function LoginPage() {
             </div>
           </div>
           )}
-          <Link to="/design" className="block text-center text-sm text-brand-strong hover:underline">
-            Бренд и дизайн-система →
-          </Link>
+          {SHOW_DEMO && (
+            <Link to="/design" className="block text-center text-sm text-brand-strong hover:underline">
+              Бренд и дизайн-система →
+            </Link>
+          )}
         </form>
       </div>
     </div>

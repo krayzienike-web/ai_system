@@ -74,7 +74,7 @@ def list_restaurants(ctx: CanReadRestaurants, session: SessionDep) -> list[Resta
 def get_restaurant(restaurant_id: UUID, ctx: CanReadRestaurants, session: SessionDep) -> RestaurantOut:
     restaurant = session.get(Restaurant, restaurant_id)
     if restaurant is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Restaurant not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ресторан не найден")
     return RestaurantOut.model_validate(restaurant)
 
 
@@ -85,7 +85,9 @@ def create_restaurant(body: RestaurantIn, ctx: CanManageRestaurants, session: Se
     try:
         session.flush()
     except IntegrityError:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Restaurant code exists") from None
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="Ресторан с таким кодом уже есть"
+        ) from None
     audit(
         session,
         tenant_id=ctx.tenant_id,
@@ -123,12 +125,14 @@ def list_users(ctx: CanManageUsers, session: SessionDep) -> list[UserOut]:
 @router.post("/users", status_code=status.HTTP_201_CREATED)
 def create_user(body: UserIn, ctx: CanManageUsers, session: SessionDep) -> UserOut:
     if body.restaurant_id is not None and session.get(Restaurant, body.restaurant_id) is None:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Unknown restaurant")
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Неизвестный ресторан")
     email_taken = session.execute(
         select(func.count()).select_from(User).where(func.lower(User.email) == body.email.lower())
     ).scalar_one()
     if email_taken:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="Пользователь с таким email уже есть"
+        )
     user = User(
         tenant_id=ctx.tenant_id,
         email=body.email,
@@ -146,7 +150,9 @@ def create_user(body: UserIn, ctx: CanManageUsers, session: SessionDep) -> UserO
         session.flush()
     except IntegrityError:
         # Email unique across tenants: another tenant may own it (invisible to us through RLS).
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered") from None
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="Пользователь с таким email уже есть"
+        ) from None
     audit(
         session,
         tenant_id=ctx.tenant_id,

@@ -33,7 +33,7 @@ def get_access_context(
 ) -> AccessContext:
     unauthorized = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Not authenticated",
+        detail="Войдите в систему",
         headers={"WWW-Authenticate": "Bearer"},
     )
     if credentials is None:
@@ -54,7 +54,7 @@ AccessDep = Annotated[AccessContext, Depends(get_access_context)]
 def require(permission: Permission) -> Callable[[AccessContext], AccessContext]:
     def dependency(ctx: AccessDep) -> AccessContext:
         if not ctx.can(permission):
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Нет доступа к этому действию")
         return ctx
 
     return dependency

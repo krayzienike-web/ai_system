@@ -2,9 +2,11 @@ const nf = new Intl.NumberFormat("ru-RU");
 
 /** 38000 → "38 тыс ₽", 1250000 → "1,25 млн ₽", 900 → "900 ₽". */
 export function rub(value: number): string {
-  const abs = Math.abs(value);
-  if (abs >= 1_000_000) return `${(value / 1_000_000).toLocaleString("ru-RU", { maximumFractionDigits: 2 })} млн ₽`;
-  if (abs >= 1_000) return `${(value / 1_000).toLocaleString("ru-RU", { maximumFractionDigits: 1 })} тыс ₽`;
+  // The order is chosen after rounding: 999 960 is «1 млн ₽», not «1 000 тыс ₽» (pre-pilot review, p. 12).
+  const thousands = Math.round(value / 100) / 10;
+  if (Math.abs(thousands) >= 1_000) return `${(value / 1_000_000).toLocaleString("ru-RU", { maximumFractionDigits: 2 })} млн ₽`;
+  if (Math.abs(value) >= 1_000)
+    return `${thousands.toLocaleString("ru-RU", { maximumFractionDigits: 1 })} тыс ₽`;
   return `${nf.format(value)} ₽`;
 }
 

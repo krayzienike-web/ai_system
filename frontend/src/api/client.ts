@@ -42,6 +42,40 @@ export class ApiError extends Error {
   }
 }
 
+export const OFFLINE = "Нет связи с сервером — проверьте интернет и попробуйте еще раз";
+
+/**
+ * What the person reads when the server sent no words of its own: behind HTTP/2 `statusText` is empty, a
+ * proxy answers 413/502 in HTML, and a validation error carries a list (pre-pilot review 10.11.2026, p. 1).
+ */
+export function statusText(status: number): string {
+  if (status === 413) return "Файл слишком большой — до 20 МБ. Разбейте выгрузку на несколько периодов";
+  if (status === 401) return "Сессия закончилась — войдите снова";
+  if (status === 403) return "Нет доступа к этому действию";
+  if (status === 404) return "Не нашли — возможно, это уже удалили";
+  if (status === 409) return "Это уже сделано или изменилось — обновите страницу";
+  if (status === 422) return "Сервер не принял данные — проверьте, что заполнено";
+  if (status === 429) return "Слишком много попыток — подождите минуту";
+  if (status >= 500) return "Сервер не ответил — попробуйте через минуту";
+  return `Ошибка ${status}`;
+}
+
+/** The server's own Russian words when it gave them, otherwise the status said in Russian. */
+export function errorDetail(status: number, body: unknown): string {
+  const detail = (body as { detail?: unknown } | null)?.detail;
+  return typeof detail === "string" && detail.trim() ? detail : statusText(status);
+}
+
+/** `fetch` that says «no connection» in Russian instead of «Failed to fetch» (aborts stay aborts). */
+async function send(input: string, init: RequestInit): Promise<Response> {
+  try {
+    return await fetch(input, init);
+  } catch (e) {
+    if (e instanceof DOMException && e.name === "AbortError") throw e;
+    throw new ApiError(0, OFFLINE);
+  }
+}
+
 export const tokens = {
   get access() {
     return storage.get(ACCESS);
@@ -59,18 +93,28 @@ export const tokens = {
   },
 };
 
+let sessionEnded: () => void = () => {};
+
+/** What the app does when the server says the session is over (the shell sends the person to the login). */
+export function onSessionEnded(handler: () => void): void {
+  sessionEnded = handler;
+}
+
+function onSessionEnd(): void {
+  if (!tokens.access && !tokens.refresh) return; // not signed in: a wrong password on the login is not «the end»
+  tokens.clear();
+  sessionEnded();
+}
+
 async function tryRefresh(): Promise<boolean> {
   const refresh = tokens.refresh;
   if (!refresh) return false;
-  const response = await fetch("/api/auth/refresh", {
+  const response = await send("/api/auth/refresh", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ refresh_token: refresh }),
   });
-  if (!response.ok) {
-    tokens.clear();
-    return false;
-  }
+  if (!response.ok) return false; // the caller ends the session (onSessionEnd)
   tokens.set(await response.json());
   return true;
 }
@@ -94,15 +138,18 @@ export async function api<T>(
   if (init.body && !(init.body instanceof FormData))
     headers.set("Content-Type", "application/json");
   if (tokens.access) headers.set("Authorization", `Bearer ${tokens.access}`);
-  const response = await fetch(`/api${path}`, { ...init, headers });
+  const response = await send(`/api${path}`, { ...init, headers });
   if (response.status === 401 && retry && (await tryRefresh())) {
     return api<T>(path, init, false);
   }
   if (!response.ok) {
-    const body = await response.json().catch(() => ({}));
-    const detail =
-      typeof body.detail === "string" ? body.detail : response.statusText;
-    throw new ApiError(response.status, detail, typeof body.code === "string" ? body.code : undefined);
+    const body = (await response.json().catch(() => ({}))) as { code?: unknown };
+    if (response.status === 401 && !path.startsWith("/auth/login")) onSessionEnd();
+    throw new ApiError(
+      response.status,
+      errorDetail(response.status, body),
+      typeof body.code === "string" ? body.code : undefined,
+    );
   }
   if (response.status === 204) return undefined as T; // no content: «Не согласен», its withdrawal
   return response.json() as Promise<T>;
@@ -158,11 +205,12 @@ export async function stream<T>(
   if (DEMO) return api<T>(path.replace(/\/stream$/, ""), { method: "POST", body: JSON.stringify(body), signal });
   const headers = new Headers({ "Content-Type": "application/json" });
   if (tokens.access) headers.set("Authorization", `Bearer ${tokens.access}`);
-  const response = await fetch(`/api${path}`, { method: "POST", headers, body: JSON.stringify(body), signal });
+  const response = await send(`/api${path}`, { method: "POST", headers, body: JSON.stringify(body), signal });
   if (response.status === 401 && retry && (await tryRefresh())) return stream<T>(path, body, onStatus, signal, false);
   if (!response.ok || !response.body) {
-    const detail = await response.json().catch(() => ({}));
-    throw new ApiError(response.status, typeof detail.detail === "string" ? detail.detail : response.statusText);
+    const detail: unknown = await response.json().catch(() => ({}));
+    if (response.status === 401) onSessionEnd();
+    throw new ApiError(response.status, errorDetail(response.status, detail));
   }
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
@@ -191,4 +239,9 @@ export async function stream<T>(
   } finally {
     reader.cancel().catch(() => {});
   }
+}
+
+/** The server said «there is no such thing» (or «not yours», which it answers the same way). */
+export function isNotFound(error: unknown): boolean {
+  return error instanceof ApiError && (error.status === 404 || error.status === 403);
 }

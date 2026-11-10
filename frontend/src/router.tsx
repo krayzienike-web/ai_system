@@ -12,6 +12,7 @@ import { type ComponentType, lazy, Suspense } from "react";
 import { DEMO, tokens } from "./api/client";
 import { Shell } from "./app/Shell";
 import { buttonClass, EmptyState, Skeleton } from "./ds/primitives";
+import { safeNext } from "./lib/safeNext";
 import { useViewer } from "./lib/useViewer";
 import { LoginPage } from "./pages/Login";
 
@@ -71,6 +72,9 @@ const loginRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/login",
   component: LoginPage,
+  validateSearch: (search: Record<string, unknown>): { next?: string } => ({
+    next: safeNext(search.next),
+  }),
 });
 const designRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -81,8 +85,8 @@ const appRoute = createRoute({
   getParentRoute: () => rootRoute,
   id: "app",
   component: Shell,
-  beforeLoad: () => {
-    if (!tokens.access && !tokens.refresh) throw redirect({ to: "/login" });
+  beforeLoad: ({ location }) => {
+    if (!tokens.access && !tokens.refresh) throw redirect({ to: "/login", search: { next: location.href } });
   },
 });
 

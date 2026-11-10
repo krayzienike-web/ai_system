@@ -1,4 +1,5 @@
 from fastapi import APIRouter, FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
@@ -11,6 +12,7 @@ from app.chat.api import router as chat_router
 from app.core.config import get_settings
 from app.core.deps import SessionDep
 from app.core.errors import RuleError
+from app.core.limits import BodyLimit
 from app.digests.api import router as digests_router
 from app.experiments.api import router as checks_router
 from app.imports.api import router as imports_router
@@ -32,6 +34,18 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    app.add_middleware(BodyLimit)
+
+    @app.exception_handler(RequestValidationError)
+    def invalid_request(request: Request, exc: RequestValidationError) -> JSONResponse:
+        """A request the API cannot read, said in Russian (the screen shows `detail`; pre-pilot review, p. 1);
+        the fields go along for the developers."""
+        fields = [".".join(str(p) for p in e.get("loc", ()) if p != "body") for e in exc.errors()]
+        return JSONResponse(
+            status_code=422,
+            content={"detail": "Сервер не принял данные — проверьте, что заполнено", "fields": fields},
+        )
 
     @app.exception_handler(RuleError)
     def rule_error(request: Request, exc: RuleError) -> JSONResponse:

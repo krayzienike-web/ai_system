@@ -145,7 +145,7 @@ def parse_decimal(text: str) -> Decimal:
         value = Decimal(cleaned)
     except InvalidOperation:
         raise ValueError(text) from None
-    if not value.is_finite():
+    if not value.is_finite() or (value and abs(value.adjusted()) > 15):  # «1E+1000000» (p. 11)
         raise ValueError(text)
     return value
 
@@ -426,6 +426,25 @@ def _record(template: str, v: dict[str, Any], lk: Lookups, warn: list[str]) -> d
     raise ValueError(template)
 
 
+def _merge_ingredients(records: list[dict[str, Any]], warnings: list[Issue]) -> list[dict[str, Any]]:
+    """One product twice in a version of a recipe (cheese inside and on top, or two names matched to one
+    product) is one line with the sum: the database keeps a product once per version (p. 10)."""
+    merged: dict[tuple[Any, ...], dict[str, Any]] = {}
+    twice = 0
+    for rec in records:
+        key = (rec["menu_item_id"], rec["semi_product_id"], rec["valid_from"], rec["product_id"])
+        if key in merged:
+            merged[key] = {**merged[key], "gross_qty": merged[key]["gross_qty"] + rec["gross_qty"]}
+            twice += 1
+        else:
+            merged[key] = rec
+    if twice:
+        warnings.append(
+            Issue(None, "Брутто", f"ингредиент повторяется в техкарте: {twice} — количества сложены")
+        )
+    return list(merged.values())
+
+
 AFTER_PRINT = ("да", "yes", "true", "1", "после", "после печати", "после пречека", "напечатан", "пречек")
 
 
@@ -452,6 +471,64 @@ def cashier(value: object, salt: str = "") -> str | None:
     return "Кассир " + digest
 
 
+# What the database holds (catalog/models.py, operations/models.py): a value over it is an error of its row,
+# never a failed publish (pre-pilot review 10.11.2026, p. 11).
+TEXT_LIMITS = {"code": 100, "name": 300, "category": 100, "doc_no": 100, "reason": 200, "city": 100}
+TEXT_TITLES = {
+    "code": "Код",
+    "name": "Название",
+    "category": "Категория",
+    "doc_no": "№ накладной",
+    "reason": "Причина",
+    "city": "Город",
+}
+MAX_NUMBER = Decimal(10) ** 10  # Numeric(14, 4)
+QTY_FIELDS = ("qty", "gross_qty", "actual_qty", "book_qty")
+SMALLEST_QTY = Decimal("0.0001")
+
+
+def _fits(record: dict[str, Any], template: Template) -> None:
+    for key, limit in TEXT_LIMITS.items():
+        value = record.get(key)
+        if isinstance(value, str) and len(value) > limit:
+            raise _RowError(
+                TEXT_TITLES[key], f"слишком длинный текст: {len(value)} символов, допустимо до {limit}"
+            )
+    for key, value in record.items():
+        if not isinstance(value, Decimal):
+            continue
+        title = next((c.title for c in template.columns if c.name == key), key)
+        if abs(value) >= MAX_NUMBER:
+            raise _RowError(title, f"«{value:f}» — слишком большое число: проверьте, та ли это колонка")
+        if key in QTY_FIELDS and 0 < abs(value) < SMALLEST_QTY:
+            raise _RowError(
+                title, f"«{value:f}» — меньше 0,0001 базовой единицы: проверьте единицу измерения"
+            )
+
+
+# Days of data farther than this from all the others are a typo in the year, not a period (p. 6): the period
+# of a file is what its upload replaces. Stock counts happen every one to three months.
+MAX_GAP_DAYS = 31
+MAX_GAP_DAYS_COUNTS = 120
+EARLIEST = date(2000, 1, 1)
+
+
+def _outlying_days(template: str, days: list[date]) -> set[date]:
+    """The days cut off from the bulk of the file's days by a gap longer than allowed."""
+    gap = MAX_GAP_DAYS_COUNTS if template == "inventory_counts" else MAX_GAP_DAYS
+    groups: list[list[date]] = []
+    for day in sorted(set(days)):
+        if groups and (day - groups[-1][-1]).days <= gap:
+            groups[-1].append(day)
+        else:
+            groups.append([day])
+    if len(groups) < 2:
+        return set()
+    weight = {d: days.count(d) for d in set(days)}
+    main = max(groups, key=lambda g: (sum(weight[d] for d in g), g[-1]))
+    return {d for g in groups if g is not main for d in g}
+
+
 def _text(value: object, limit: int = 200) -> str | None:
     """A text cell, cut to the column it goes to."""
     text = str(value).strip() if value is not None else ""
@@ -465,6 +542,7 @@ def validate(template: Template, table: Table, lookups: Lookups, *, today: date)
     unmatched: dict[tuple[str, str], Unmatched] = {}
     waiting_days: list[date] = []  # dates of rows that wait for a name match: still part of the file's period
     skipped = 0
+    numbers: list[int] = []  # the file row of each record
     for number, cells in table.rows:
         warn: list[str] = []
         try:
@@ -472,6 +550,9 @@ def validate(template: Template, table: Table, lookups: Lookups, *, today: date)
             record = _record(template.name, values, lookups, warn)
         except _RowError as e:
             errors.append(Issue(number, e.column, e.message))
+            continue
+        except ArithmeticError:  # an overflow on the way to base units
+            errors.append(Issue(number, None, "слишком большое число: проверьте, та ли это колонка"))
             continue
         except _Skip:
             skipped += 1
@@ -488,8 +569,35 @@ def validate(template: Template, table: Table, lookups: Lookups, *, today: date)
         if isinstance(day, date) and day > today:
             errors.append(Issue(number, "Дата", f"дата {day:%d.%m.%Y} в будущем"))
             continue
+        if isinstance(day, date) and day < EARLIEST:
+            errors.append(Issue(number, "Дата", f"дата {day:%d.%m.%Y} — проверьте год"))
+            continue
+        try:
+            _fits(record, template)
+        except _RowError as e:
+            errors.append(Issue(number, e.column, e.message))
+            continue
         warnings.extend(Issue(number, None, w) for w in warn)
         records.append(record)
+        numbers.append(number)
+    dated = [r["day"] for r in records if isinstance(r.get("day"), date)]
+    far = _outlying_days(template.name, dated)
+    if far:
+        main = sorted(set(dated) - far)
+        for number, record in zip(numbers, records, strict=True):
+            if record.get("day") in far:
+                errors.append(
+                    Issue(
+                        number,
+                        "Дата",
+                        f"дата {record['day']:%d.%m.%Y} далеко от остальных дат файла "
+                        f"({main[0]:%d.%m.%Y}–{main[-1]:%d.%m.%Y}): проверьте год — загрузка заменит все "
+                        "данные за период файла",
+                    )
+                )
+        errors.sort(key=lambda i: i.row or 0)
+    if template.name == "recipes":
+        records = _merge_ingredients(records, warnings)
     if skipped:
         warnings.append(
             Issue(

@@ -611,7 +611,7 @@ function taskAction(
 }
 
 function checkAction(v: Viewer, id: string, action: string) {
-  forbid(v.hq, "Forbidden");
+  forbid(v.hq, "Нет доступа к этому действию");
   forbid(v.admin, "Only HQ admins launch checks");
   const found = pool.checks.get(id) ?? newChecks.find((c) => c.id === id);
   if (!found) throw new ApiError(404, "Проверка не найдена");
@@ -1024,7 +1024,7 @@ export function demoRequest(
   if (path === "/findings") return findingsOf(v);
   // «Решить по находке»: what the visitor already decided on (a task, a check) leaves the list.
   if (path === "/overview/awaiting") {
-    forbid(v.hq, "Forbidden");
+    forbid(v.hq, "Нет доступа к этому действию");
     return awaitingOf(v);
   }
   // The counters follow the visitor's decisions too: «Ждут решения» = findings to decide + checks + late tasks.
@@ -1163,7 +1163,7 @@ export function demoRequest(
     ["/overview/network", "/reports", "/checks"].some(
       (p) => route === p || route.startsWith(`${p}/`),
     );
-  if (!v.hq && hqOnly) throw new ApiError(403, "Forbidden");
+  if (!v.hq && hqOnly) throw new ApiError(403, "Нет доступа к этому действию");
   if (
     (route === "/overview/network" || route === "/reports/head") &&
     q.has("date_from")

@@ -122,3 +122,14 @@ def test_only_the_api_gets_the_models_key() -> None:
     assert {"migrate", "backend", "worker"} <= set(services)
     assert [s for s, body in services.items() if "ANTHROPIC_API_KEY" in body] == ["backend"]
     assert "ANTHROPIC_API_KEY" not in compose.split("environment: &backend-env")[1].split("command:")[0]
+
+
+def test_the_stand_limits_bodies_and_scripts() -> None:
+    """Pre-pilot review 10.11.2026, pp. 1 and 5 (TC-DEMO-08): Caddy refuses a body over 21 MB for files and
+    1 MB for the rest before the API; the page runs only its own scripts and is never framed."""
+    caddy = (DEPLOY / "Caddyfile").read_text(encoding="utf-8")
+    code = "\n".join(line.split("#")[0] for line in caddy.splitlines())
+    assert "@uploads path /api/imports /api/imports/mapping" in code
+    assert "max_size 21MB" in code and "max_size 1MB" in code
+    csp = next(line for line in code.splitlines() if "Content-Security-Policy" in line)
+    assert "script-src 'self';" in csp and "frame-ancestors 'none'" in csp and "unsafe-eval" not in csp

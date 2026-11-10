@@ -7,6 +7,7 @@ import { VerifiedNote } from "../../ds/ai";
 import { buttonClass, LoadError, QuestionBlock, Reveal, Skeleton, Term } from "../../ds/primitives";
 import { AnimatedNumber, AreaTrend, PROCESS_ICON, ProfitSplit, RankList } from "../../ds/viz";
 import { ddmm, money, pct, perMonth, plural, rub, thousands } from "../../lib/format";
+import { NoDataYet, useNoData } from "../NoDataYet";
 import { ProcessMatrix } from "./ProcessMatrix";
 import { useUi } from "../../state/ui";
 
@@ -15,6 +16,8 @@ export function NetworkPage() {
   const { period } = useUi();
   const overview = useNetworkOverview(period);
   const n = overview.data;
+  const empty = useNoData();
+  if (empty) return <NoDataYet canUpload />;
   if (overview.isError) return <LoadError error={overview.error} />;
   if (!n) return <Skeleton className="h-[600px]" />;
 

@@ -1,6 +1,6 @@
 import { AlertTriangle, CheckCircle2, FileSpreadsheet, Link2, Loader2, RotateCcw, Search, Trash2, UploadCloud, XCircle } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
-import { type DragEvent, useRef, useState } from "react";
+import { type DragEvent, useEffect, useRef, useState } from "react";
 
 import { ApiError } from "../api/client";
 import {
@@ -16,13 +16,24 @@ import {
   useUploadImport,
 } from "../api/hooks";
 import type { AffectedFiles, BatchStatus, Freshness, ImportBatch, MatchKind, NameAlias } from "../api/types";
-import { Button, Card, cx, EASE, PageTitle, Pill, QuestionBlock, Reveal, type Tone } from "../ds/primitives";
+import { Button, Card, cx, EASE, ErrorText, PageTitle, Pill, QuestionBlock, Reveal, type Tone } from "../ds/primitives";
 import { plural } from "../lib/format";
 import { useViewer } from "../lib/useViewer";
 import { RecalcNote } from "./analytics/RecalcNote";
 import { MarkWithAi } from "./MarkWithAi";
 
 const NETWORK = "network";
+const MAX_MB = 20; // the server's limit (imports/service.py MAX_BYTES)
+const EXTENSIONS = [".csv", ".xlsx", ".xls"];
+
+/** Why a file cannot go to the server, said before sending it (pre-pilot review 10.11.2026, pp. 8–9). */
+export function fileProblem(file: { name: string; size: number }): string | null {
+  if (!EXTENSIONS.some((e) => file.name.toLowerCase().endsWith(e)))
+    return `«${file.name}» — не таблица. Загружаем Excel (.xlsx, .xls) или CSV`;
+  if (file.size > MAX_MB * 1024 * 1024) return `Файл больше ${MAX_MB} МБ — разбейте выгрузку на несколько периодов`;
+  if (file.size === 0) return "Файл пустой";
+  return null;
+}
 const KINDS = [
   { template: "sales", title: "Продажи", system: "r_keeper" },
   { template: "receipts", title: "Закупки", system: "1С:ERP" },
@@ -126,7 +137,7 @@ function Matching({ batch, onMatched }: { batch: ImportBatch; onMatched: (b: Imp
         ))}
       </ul>
       {kinds.length > 0 && matchNames.error && (
-        <p className="mt-2 text-loss">{matchNames.error instanceof ApiError ? matchNames.error.message : "Не получилось сохранить"}</p>
+        <ErrorText error={matchNames.error} fallback="Не получилось сохранить" className="mt-2" />
       )}
       <Button
         variant="primary"
@@ -261,7 +272,7 @@ function Report({
         </ul>
       )}
 
-      {error && <p className="text-sm text-loss">{error instanceof ApiError ? error.message : "Не получилось, попробуйте еще раз"}</p>}
+      <ErrorText error={error} />
 
       <div className="flex flex-wrap items-center gap-2">
         {current.status === "validated" && (
@@ -277,7 +288,7 @@ function Report({
           >
             <CheckCircle2 size={18} />
             <span className="flex-1">
-              Загружено {plural(current.rows_valid, ["строка", "строки", "строк"])}
+              Загружено строк: {current.rows_valid.toLocaleString("ru-RU")}
               {current.period_from && ` за ${period(current)}`}. Если за эти дни данные уже были, они заменены — дублей не будет.
               <RecalcNote className="mt-1 flex text-gain" />
             </span>
@@ -298,7 +309,7 @@ function Report({
   );
 }
 
-function Upload() {
+function Upload({ opened, onClose }: { opened: ImportBatch | null; onClose: () => void }) {
   const viewer = useViewer();
   const names = useNames();
   const upload = useUploadImport();
@@ -307,41 +318,51 @@ function Upload() {
   const [template, setTemplate] = useState("");
   const [dragging, setDragging] = useState(false);
   const [lastFile, setLastFile] = useState<File | null>(null);
+  const [problem, setProblem] = useState<string | null>(null);
   if (!viewer) return null;
 
   const restaurants = names.restaurants;
-  const where = target || (viewer.isHq ? (restaurants[0]?.id ?? "") : (restaurants[0]?.id ?? ""));
+  // A new network has no restaurants yet: its first files are the reference data (p. 6).
+  const where = target || restaurants[0]?.id || (viewer.isAdmin ? NETWORK : "");
   const isNetwork = where === NETWORK;
   const kinds = names.templates.filter((t) => t.scope === (isNetwork ? "network" : "restaurant"));
   const send = (file: File | undefined) => {
     if (!file) return;
+    const wrong = fileProblem(file);
+    setProblem(wrong);
+    if (wrong) return;
+    onClose();
     setLastFile(file);
     upload.mutate({ file, restaurantId: isNetwork ? null : where, template: template || null });
   };
   const onDrop = (e: DragEvent) => {
     e.preventDefault();
     setDragging(false);
-    send(e.dataTransfer.files[0]);
+    if (!upload.isPending) send(e.dataTransfer.files[0]);
   };
 
+  const shown = opened ?? upload.data;
   return (
     <Card className="overflow-hidden">
       <AnimatePresence mode="wait">
         <motion.div
-          key={upload.data ? "report" : "drop"}
+          key={shown ? `report-${shown.id}` : "drop"}
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: -8 }}
           transition={{ duration: 0.25, ease: EASE }}
           className="p-6"
         >
-          {upload.data ? (
+          {shown ? (
             <Report
-              key={upload.data.id}
-              batch={upload.data}
-              onAgain={() => upload.reset()}
+              key={shown.id}
+              batch={shown}
+              onAgain={() => {
+                onClose();
+                upload.reset();
+              }}
               marking={
-                lastFile
+                lastFile && !opened
                   ? {
                       file: lastFile,
                       restaurantId: isNetwork ? null : where,
@@ -407,7 +428,7 @@ function Upload() {
                 )}
               >
                 {upload.isPending ? <Loader2 size={32} className="animate-spin text-brand" /> : <UploadCloud size={32} className="text-brand" />}
-                <span className="font-display text-lg font-semibold">{upload.isPending ? "Проверяем файл…" : "Перетащите выгрузку сюда или выберите файл"}</span>
+                <span aria-live="polite" className="font-display text-lg font-semibold">{upload.isPending ? "Проверяем файл…" : "Перетащите выгрузку сюда или выберите файл"}</span>
                 <span className="max-w-md text-sm text-ink-2">
                   Excel или CSV из r_keeper, iiko или 1С. Приводить файл к шаблону не нужно: мы найдем заголовки, пропустим итоги и
                   покажем, как поняли файл, до загрузки.
@@ -424,8 +445,12 @@ function Upload() {
                   e.target.value = "";
                 }}
               />
-              {upload.error && (
-                <p className="text-sm text-loss">{upload.error instanceof ApiError ? upload.error.message : "Не получилось загрузить файл"}</p>
+              {problem ? (
+                <p role="alert" className="text-sm text-loss">
+                  {problem}
+                </p>
+              ) : (
+                <ErrorText error={upload.error} fallback="Не получилось загрузить файл" />
               )}
               {/* The type was guessed and the file was not recognised: the assistant can mark it (the server says so). */}
               {lastFile && upload.error instanceof ApiError && upload.error.code === "no_header" && (
@@ -451,8 +476,17 @@ const FRESH_TONE: Record<Freshness["status"], Tone> = { good: "gain", stale: "wa
 
 function FreshnessBlock() {
   const names = useNames();
-  const { data: rows = [], isLoading } = useFreshness();
+  const { data: rows = [], isLoading, isError } = useFreshness();
   if (isLoading) return null;
+  if (isError)
+    return <QuestionBlock question="Все ли данные на месте?" answer="Не получилось узнать: обновите страницу чуть позже." />;
+  if (!rows.length)
+    return (
+      <QuestionBlock
+        question="Все ли данные на месте?"
+        answer="Данных еще нет. Начните со справочников сети (рестораны, номенклатура, поставщики, блюда, техкарты), затем загрузите продажи, приходы и списания ресторанов."
+      />
+    );
   const restaurants = [...new Set(rows.map((r) => r.restaurant_id))];
   const problems = rows.filter((r) => r.status !== "good");
   // One phrase per kind of data, so the answer stays short for 3 restaurants and for 100.
@@ -512,11 +546,12 @@ function FreshnessBlock() {
 
 // ------------------------------------------------------------------ history
 
-function History() {
+function History({ onOpen }: { onOpen: (batch: ImportBatch) => void }) {
   const names = useNames();
   const { data: batches = [] } = useImports();
   const rollback = useBatchAction("rollback");
   const [shown, setShown] = useState(10);
+  const [confirming, setConfirming] = useState<string | null>(null);
   if (!batches.length) return null;
   return (
     <QuestionBlock question="Что загружали?" answer="Сначала последние. Загрузку данных ресторана можно отменить — удалятся ровно ее строки.">
@@ -531,11 +566,34 @@ function History() {
               </span>
             </span>
             <Pill tone={STATUS[b.status].tone}>{STATUS[b.status].label}</Pill>
-            {b.status === "published" && b.restaurant_id && (
-              <Button size="sm" variant="ghost" disabled={rollback.isPending} onClick={() => rollback.mutate(b.id)}>
-                <RotateCcw size={14} /> Отменить
+            {/* Checked but not loaded (left, or the answer was lost on the way): finish it here, p. 2. */}
+            {(b.status === "validated" || b.status === "needs_matching") && (
+              <Button size="sm" variant="ghost" onClick={() => onOpen(b)}>
+                {b.status === "validated" ? "Открыть и загрузить" : "Сопоставить названия"}
               </Button>
             )}
+            {b.status === "published" &&
+              b.restaurant_id &&
+              (confirming === b.id ? (
+                <span className="flex gap-1">
+                  <Button
+                    size="sm"
+                    variant="danger"
+                    disabled={rollback.isPending}
+                    onClick={() => rollback.mutate(b.id, { onSuccess: () => setConfirming(null) })}
+                  >
+                    Удалить строки файла
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => setConfirming(null)}>
+                    Не надо
+                  </Button>
+                </span>
+              ) : (
+                <Button size="sm" variant="ghost" disabled={rollback.isPending} onClick={() => setConfirming(b.id)}>
+                  <RotateCcw size={14} /> Отменить
+                </Button>
+              ))}
+            {rollback.variables === b.id && <ErrorText error={rollback.error} className="w-full" />}
           </li>
         ))}
       </ul>
@@ -577,6 +635,7 @@ function AliasRow({ alias, onChanged }: { alias: NameAlias; onChanged: (files: A
         <select
           defaultValue={alias.target_id}
           aria-label="Что это на самом деле"
+          disabled={edit.isPending}
           onChange={(e) => edit.mutate({ id: alias.id, targetId: e.target.value }, { onSuccess: done })}
           className="h-9 rounded-[10px] border border-line-strong bg-surface px-2 outline-none focus:border-brand"
         >
@@ -617,6 +676,7 @@ function AliasRow({ alias, onChanged }: { alias: NameAlias; onChanged: (files: A
           <span className="text-xs text-ink-3">меняет управляющая компания</span>
         )}
       </span>
+      <ErrorText error={edit.error} className="sm:col-span-3" />
     </li>
   );
 }
@@ -661,7 +721,7 @@ function Aliases() {
                 ))}
               </ul>
               {reprocess.error && (
-                <p className="mt-2 text-loss">{reprocess.error instanceof ApiError ? reprocess.error.message : "Не получилось пересчитать"}</p>
+                <ErrorText error={reprocess.error} fallback="Не получилось пересчитать" className="mt-2" />
               )}
             </>
           ) : (
@@ -693,18 +753,34 @@ function Aliases() {
 
 export function DataPage() {
   const viewer = useViewer();
+  const [opened, setOpened] = useState<ImportBatch | null>(null);
+  useEffect(() => {
+    // A file dropped next to the drop zone must not make the browser open it instead of the app (p. 9).
+    const stop = (e: Event) => e.preventDefault();
+    window.addEventListener("dragover", stop);
+    window.addEventListener("drop", stop);
+    return () => {
+      window.removeEventListener("dragover", stop);
+      window.removeEventListener("drop", stop);
+    };
+  }, []);
   if (!viewer) return null;
   return (
     <div className="mx-auto max-w-[1040px] space-y-6">
       <PageTitle title="Данные" subtitle="Загрузка выгрузок и свежесть данных: откуда система берет цифры" />
       <Reveal>
-        <Upload />
+        <Upload opened={opened} onClose={() => setOpened(null)} />
       </Reveal>
       <Reveal index={1}>
         <FreshnessBlock />
       </Reveal>
       <Reveal index={2}>
-        <History />
+        <History
+          onOpen={(b) => {
+            setOpened(b);
+            window.scrollTo({ top: 0, behavior: "smooth" });
+          }}
+        />
       </Reveal>
       <Reveal index={3}>
         <Aliases />

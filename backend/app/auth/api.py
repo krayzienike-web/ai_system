@@ -1,10 +1,11 @@
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select, text
 
 from app.core.deps import AccessDep, SessionDep
+from app.core.limits import client_address, login_guard
 from app.core.security import InvalidTokenError, create_token, decode_token, verify_password
 from app.tenancy.audit import audit
 from app.tenancy.context import AccessContext, load_access_context
@@ -46,6 +47,10 @@ class Me(BaseModel):
     permissions: list[Permission]
 
 
+def _peer(request: Request) -> str | None:
+    return request.client.host if request.client else None
+
+
 def _tokens(ctx: AccessContext) -> TokenPair:
     return TokenPair(
         access_token=create_token(ctx.user_id, ctx.tenant_id, "access"),
@@ -54,18 +59,29 @@ def _tokens(ctx: AccessContext) -> TokenPair:
 
 
 @router.post("/login")
-def login(body: LoginRequest, session: SessionDep) -> TokenPair:
-    invalid = HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
+def login(body: LoginRequest, request: Request, session: SessionDep) -> TokenPair:
+    invalid = HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Неверный email или пароль")
+    # Failed attempts per email and per address; argon2 checks at once are bounded (pre-pilot review, p. 3).
+    keys = (
+        f"email:{body.email.strip().lower()}",
+        f"ip:{client_address(dict(request.headers), _peer(request))}",
+    )
+    login_guard.check(*keys)
     # Runs before any tenant is known, so it goes through a narrow SECURITY DEFINER function.
     row = session.execute(
         text("SELECT user_id, tenant_id, password_hash, is_active FROM app.auth_lookup_user(:email)"),
         {"email": body.email},
     ).one_or_none()
-    if not verify_password(body.password, row.password_hash if row else None) or row is None:
+    with login_guard.hashing():
+        valid = verify_password(body.password, row.password_hash if row else None)
+    if not valid or row is None:
+        login_guard.failed(*keys)
         raise invalid
     ctx = load_access_context(session, row.user_id, row.tenant_id)
     if ctx is None:
+        login_guard.failed(*keys)
         raise invalid
+    login_guard.succeeded(keys[0])
     audit(session, tenant_id=ctx.tenant_id, user_id=ctx.user_id, action="auth.login")
     session.commit()
     return _tokens(ctx)
@@ -76,10 +92,14 @@ def refresh(body: RefreshRequest, session: SessionDep) -> TokenPair:
     try:
         user_id, tenant_id = decode_token(body.refresh_token, "refresh")
     except InvalidTokenError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token") from None
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Сессия закончилась — войдите снова"
+        ) from None
     ctx = load_access_context(session, user_id, tenant_id)
     if ctx is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Сессия закончилась — войдите снова"
+        )
     return _tokens(ctx)
 
 

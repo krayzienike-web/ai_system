@@ -38,15 +38,19 @@
 
 ```sh
 cd ai_system/deploy
-docker compose run --rm worker python -m app.cli seed-test-network
+docker compose run --rm worker python -m app.cli seed-test-network --password '<свой пароль>'
 ```
 
 Команда создает пустую «Тестовую сеть» со входами `admin@test.local`, `analyst@test.local` и
-`director1@test.local` … `director3@test.local` (R01…R03). Пароль у всех — `DEMO_PASSWORD` из `.env`.
+`director1@test.local` … `director3@test.local` (R01…R03). Пароль у всех — тот, что указан в команде: от 10
+символов и не `DEMO_PASSWORD`, который раздают гостям демо.
 
 - Демо-сеть не затрагивается.
 - Ночной сброс демо пересобирает только демо, а тестовую сеть оставляет.
-- Начать заново: `seed-test-network --reset` — удаляет тестовую сеть со всеми загрузками и создает пустую.
+- Начать заново: `seed-test-network --reset --password '…'` — удаляет тестовую сеть со всеми загрузками и
+  создает пустую.
+- Тестовая сеть — только для синтетических файлов этого набора. Настоящие выгрузки пилота сюда не загружаем:
+  для пилота — отдельная конфигурация без демо-календаря (см. отчет ревью перед пилотом, п. 4).
 
 Файлы на свой компьютер: папка `deploy/test-kit` на GitHub или архив из чата.
 

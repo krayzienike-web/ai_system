@@ -3,8 +3,8 @@
 it is; 1С names matched once; the broken files show their rows; the engine finds the planted problems."""
 
 from collections.abc import Iterator
-from pathlib import Path
 from datetime import date
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -133,3 +133,13 @@ def test_the_kit_in_the_repository_is_the_kit_the_code_builds(kit: test_kit.Kit)
     folder = Path(__file__).resolve().parents[2] / "deploy" / "test-kit"
     on_disk = {str(p.relative_to(folder)): p.read_bytes() for p in folder.rglob("*.xlsx")}
     assert on_disk == kit.files
+
+
+def test_the_test_network_never_takes_the_demos_password(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pre-pilot review 10.11.2026, p. 4: the demo's password is handed to guests."""
+    from app.core.config import get_settings
+
+    for password in (get_settings().demo_password, "short"):
+        monkeypatch.setattr("sys.argv", ["app.cli", "seed-test-network", "--password", password])
+        with pytest.raises(SystemExit, match="own password"):
+            cli.main()

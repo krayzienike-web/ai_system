@@ -5,7 +5,7 @@ import { useState } from "react";
 
 import { useTaskAction, useTasks } from "../api/hooks";
 import type { ApiTask } from "../api/types";
-import { Button, Card, cx, EmptyState, ErrorText, PageTitle, Reveal, Skeleton } from "../ds/primitives";
+import { Button, Card, cx, EmptyState, ErrorText, LoadError, PageTitle, Reveal, Skeleton } from "../ds/primitives";
 import { ddmm, money, plural, rub } from "../lib/format";
 import { useViewer } from "../lib/useViewer";
 import { useUi } from "../state/ui";
@@ -140,6 +140,12 @@ export function TasksPage() {
   if (!viewer) return null;
   // The management company follows work inside each finding; the restaurant lives in its task list.
   if (viewer.isHq) return <Navigate to="/findings" />;
+  if (query.isError && !query.data)
+    return (
+      <div className="mx-auto max-w-[960px]">
+        <LoadError error={query.error} title="Не получилось загрузить задачи" retry={() => void query.refetch()} />
+      </div>
+    );
   if (!query.data) return <Skeleton className="mx-auto h-96 max-w-[960px]" />;
   const tasks = query.data;
   const open = tasks.filter((t) => t.status !== "done").sort((a, b) => a.days_left - b.days_left);

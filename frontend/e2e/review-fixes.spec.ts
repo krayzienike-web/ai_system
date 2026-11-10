@@ -94,6 +94,7 @@ test("TC-UI-07: a network finding's task goes to the restaurants chosen, with th
   await row.getByRole("button", { name: "Поставить задачу" }).click();
   const dialog = page.getByRole("dialog", { name: "Поставить задачу" });
   const places = dialog.getByRole("group", { name: "Рестораны" }).getByRole("checkbox");
+  await expect(places.first()).toBeVisible(); // the restaurants come with the dialog's data: count them once shown
   const count = await places.count();
   expect(count).toBeGreaterThan(2);
   for (let i = 2; i < count; i++) await places.nth(i).uncheck(); // only the first two restaurants

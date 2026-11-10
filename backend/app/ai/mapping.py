@@ -42,6 +42,31 @@ class Marking(BaseModel):
     columns: list[Choice]
 
 
+PERSON_HEADERS = re.compile(
+    r"кассир|официант|сотрудник|бармен|менеджер|ответствен|исполнител|автор|кто |^кто$|фио|ф\.и\.о|"
+    r"оператор|пользовател|работник|персонал|телефон|e-?mail|почта",
+    re.IGNORECASE,
+)
+# «Иванов И.И.», «Иванов Иван Иванович»: a person's name in any column
+PERSON_VALUE = re.compile(
+    r"^[А-ЯЁ][а-яё]+(?:-[А-ЯЁ][а-яё]+)?\s+(?:[А-ЯЁ]\.\s?[А-ЯЁ]\.?|[А-ЯЁ][а-яё]+\s+[А-ЯЁ][а-яё]+)$"
+)
+MASK = "[сотрудник]"
+
+
+def masked_samples(header: list[str], rows: list[list[str]]) -> list[list[str]]:
+    """The sample rows the model sees, without people: the columns of cashiers and waiters and anything that
+    looks like a full name are replaced (docs/03: no personal data to the LLM; pre-pilot review, p. 12)."""
+    private = {i for i, h in enumerate(header) if PERSON_HEADERS.search(h.strip())}
+    return [
+        [
+            MASK if (i in private and c.strip()) or PERSON_VALUE.match(c.strip()) else c.strip()
+            for i, c in enumerate(r)
+        ]
+        for r in rows
+    ]
+
+
 def guess_header(rows: list[list[str]]) -> int:
     """The header row of a file nobody knows yet: the first of the top rows that is mostly words and is
     followed by a row of values."""
@@ -130,7 +155,7 @@ def propose_marking(
         "template": t.title,
         "fields": _fields(t),
         "headers": headers,
-        "samples": [[c.strip() for c in r] for r in rows[index + 1 : index + 1 + SAMPLE_ROWS]],
+        "samples": masked_samples(rows[index], rows[index + 1 : index + 1 + SAMPLE_ROWS]),
         "already_mapped": already,
     }
     preview: dict[str, Any] = {}
