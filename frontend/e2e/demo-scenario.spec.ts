@@ -8,6 +8,7 @@ test("TC-UI-12: the demo scenario goes through by clicks", async ({ page }) => {
   await signIn(page, "Управляющая компания");
   await expect(page.getByText("Найденный потенциал прибыли").first()).toBeVisible();
   await expect(page.getByText("Переплаты поставщикам")).toBeVisible();
+  await expect(page.getByText("Подтвержденный эффект").first()).toBeVisible();
   await expect(page.getByText("Цена выросла по всей сети: Лосось охлажденный")).toBeVisible();
 
   // Restaurants × processes → the finding → down to the invoices.
@@ -31,11 +32,24 @@ test("TC-UI-12: the demo scenario goes through by clicks", async ({ page }) => {
   await open(page, /Отчет для руководителя/);
   await expect(page.getByText("Подтвержденный эффект").first()).toBeVisible();
 
+  // The checks, measured by code: confirmed with its rollout, not confirmed, still running (stage 7).
+  await page.getByRole("link", { name: "Малые партии томатов" }).click();
+  await expect(page.getByText("Эффект подтвержден")).toBeVisible();
+  await expect(page.getByText(/Если ввести во всех ресторанах/)).toBeVisible();
+  await open(page, /Отчет для руководителя/);
+  await page.getByRole("link", { name: "Заказ хлеба по дням недели" }).click();
+  await expect(page.getByText("Эффект не подтвержден")).toBeVisible();
+  await open(page, /Отчет для руководителя/);
+  await page.getByRole("link", { name: "Контрольное взвешивание сыра" }).click();
+  await expect(page.getByText(/Судить рано/).first()).toBeVisible();
+
   // The director: their week and a task done with a report.
   await page.getByRole("button", { name: "Выйти" }).first().click();
   await signIn(page, "Директор ресторана");
   await expect(page.getByText("Найденный потенциал прибыли").first()).toBeVisible();
   await expect(page.getByRole("link", { name: /Проверка находок/ })).toHaveCount(0);
+  await open(page, /Сводка недели/);
+  await expect(page.getByRole("button", { name: /Не согласен/ }).first()).toBeVisible();
   await open(page, /Задачи/);
   await page.getByRole("button", { name: "Готово" }).first().click();
   await page.getByLabel("Отчет о выполнении").fill("Взвесили порции, обучили смену");

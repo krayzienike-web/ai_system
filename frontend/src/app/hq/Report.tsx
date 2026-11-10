@@ -1,4 +1,5 @@
-import { CheckCircle2, XCircle } from "lucide-react";
+import { Link } from "@tanstack/react-router";
+import { CheckCircle2, CircleHelp, XCircle } from "lucide-react";
 
 import { useAppContext, useHeadReport } from "../../api/hooks";
 import { VerifiedNote } from "../../ds/ai";
@@ -150,7 +151,13 @@ export function ReportPage() {
             {r.checks.map((e) => (
               <li key={e.id} className="flex flex-wrap items-start justify-between gap-2 rounded-[12px] bg-paper p-4">
                 <div>
-                  <div className="font-medium">{e.title}</div>
+                  <Link
+                    to="/checks/$checkId"
+                    params={{ checkId: e.id }}
+                    className="font-medium text-brand-strong hover:underline"
+                  >
+                    {e.title}
+                  </Link>
                   <div className="text-sm text-ink-3">{e.hypothesis}</div>
                 </div>
                 <div className="text-sm">
@@ -158,9 +165,13 @@ export function ReportPage() {
                     <span className="inline-flex items-center gap-1 font-semibold text-gain">
                       <CheckCircle2 size={15} /> +{perMonth(money(e.effect_rub_month) ?? 0)}
                     </span>
-                  ) : e.verdict ? (
+                  ) : e.verdict === "rejected" ? (
                     <span className="inline-flex items-center gap-1 font-semibold text-loss">
-                      <XCircle size={15} /> {e.verdict === "rejected" ? "не сработало" : "непонятно"}
+                      <XCircle size={15} /> не сработало
+                    </span>
+                  ) : e.verdict ? (
+                    <span className="inline-flex items-center gap-1 font-semibold text-warn">
+                      <CircleHelp size={15} /> не значимо
                     </span>
                   ) : (
                     <span className="text-ink-2">
