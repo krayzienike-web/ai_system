@@ -50,6 +50,7 @@ def record(client: TestClient, email: str) -> dict[str, Any]:
         "/restaurants",
         "/overview/context",
         "/overview/badges",
+        "/agents/notes",
         "/overview/findings",
         "/analytics/runs/latest",
         "/findings",

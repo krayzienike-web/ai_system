@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
+from app.agents.api import router as agents_router
 from app.ai.api import router as assistant_router
 from app.analytics.api import router as analytics_router
 from app.auth.api import router as auth_router
@@ -84,6 +85,7 @@ def create_app() -> FastAPI:
     api.include_router(tenancy_router)
     api.include_router(findings_router)
     api.include_router(tasks_router)
+    api.include_router(agents_router)
     api.include_router(checks_router)
     api.include_router(reports_router)
     api.include_router(imports_router)

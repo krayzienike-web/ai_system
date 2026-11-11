@@ -15,15 +15,18 @@ The pilot's accounts (docs/09 «Учетные записи», deploy/README.md 
 - `disable-user --email E`, `enable-user --email E`, `reset-password --email E`, `list-users --tenant N`.
 Passwords are generated and printed once; the person changes theirs at the first sign-in.
 - `purge-files` — deletes the source files past their retention period (the worker does it nightly).
+- `run-agents` — the agents' morning pass over every network (the worker does it at 08:47 Moscow time).
 """
 
 import argparse
-from datetime import timedelta
+from datetime import date, timedelta
 from pathlib import Path
+from uuid import UUID
 
 from sqlalchemy import create_engine, delete, select
 from sqlalchemy.orm import Session
 
+from app.agents import service as agents
 from app.analytics import engine
 from app.auth import accounts
 from app.core.config import get_settings
@@ -145,10 +148,26 @@ def load_demo(seed: int) -> None:
     # weeks. Both are built from today's findings and KPIs, so the comparison between them shows no change
     # (code review 03.11.2026, p. 14): a real network gets it from its own Mondays.
     digests = sum(weekly.run(tenant_id, day) for day in (today - timedelta(days=7), today))
+    notes = _demo_agents(user_id, tenant_id, today)
     for template, count in rows.items():
         print(f"  {template:<18} {count:>7} rows")
     print(f"  history: {HISTORY_WEEKS} weekly runs; today ({today}): {result.created} new findings")
     print(f"  digests: {digests}")
+    print(f"  agents' notes: {notes}")
+
+
+def _demo_agents(user_id: UUID, tenant_id: UUID, today: date) -> int:
+    """The agents' morning pass (stage 9). The demo's counts are two months apart, so no count is due in its
+    «today»: the list «что пересчитать» for R01 is asked for by hand, for the day after tomorrow — as a
+    director would before an unplanned count."""
+    with get_sessionmaker()() as session:
+        ctx = load_access_context(session, user_id, tenant_id)
+        assert ctx is not None
+        r01 = session.execute(select(Restaurant).where(Restaurant.code == "R01")).scalar_one()
+        agents.ask_inventory(session, ctx, r01.id, today + timedelta(days=2), today=today)
+        count = agents.run_network(session, tenant_id, today)
+        session.commit()
+    return count
 
 
 def analyze() -> None:
@@ -222,6 +241,7 @@ def main() -> None:
         sub.add_parser(command).add_argument("--email", required=True)
     sub.add_parser("list-users").add_argument("--tenant", required=True)
     sub.add_parser("purge-files", help="Delete the source files past their retention period")
+    sub.add_parser("run-agents", help="The agents' morning pass: notes to the directors and the HQ")
     args = parser.parse_args()
     try:
         _run(args)
@@ -274,6 +294,10 @@ def _run(args: argparse.Namespace) -> None:
     elif args.command == "purge-files":
         purged = retention.purge_all(date_today())
         print(f"source files deleted: {purged}")
+    elif args.command == "run-agents":
+        from app.worker import run_agents  # the model's texts when it is on, as in the worker
+
+        print(f"agents' notes waiting: {run_agents(date_today())}")
 
 
 if __name__ == "__main__":

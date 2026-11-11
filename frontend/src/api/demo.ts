@@ -32,6 +32,7 @@ import {
 } from "./demoDigests";
 import { demoNorms } from "./demoNorms";
 import type {
+  AgentNote,
   ApiFinding,
   ApiTask,
   ChatAnswer,
@@ -876,6 +877,58 @@ function review(
   return overlay(v, clone(f));
 }
 
+// ------------------------------------------------------------------ the agents' notes (stage 9)
+
+// The recorded notes, minus those the visitor answered in this tab; the answers do what the server's do.
+const answeredNotes = new Map<string, AgentNote>();
+
+function notesOf(v: Viewer): AgentNote[] {
+  return ((v.user.answers["/agents/notes"] as AgentNote[] | undefined) ?? []).filter(
+    (n) => !answeredNotes.has(n.id),
+  );
+}
+
+function answerNote(v: Viewer, id: string, answer: string): AgentNote {
+  const note = notesOf(v).find((n) => n.id === id);
+  if (!note) {
+    if (answeredNotes.has(id)) throw new ApiError(409, "По этому сообщению уже решили");
+    throw new ApiError(404, "Сообщение не найдено");
+  }
+  forbid(
+    v.admin || (note.audience === "director" && !v.hq),
+    "Отвечать на это сообщение может директор ресторана или администратор УК",
+  );
+  let result: string | null = null;
+  if (answer === "accept") {
+    if (note.action === "create_task" && note.action_due_on && note.action_title) {
+      const [task] = createTasks(v, {
+        title: note.action_title,
+        due_on: note.action_due_on,
+        restaurant_ids: [note.restaurant_id],
+        checklist: note.items.map((line) => `Пересчитать: ${line}`),
+      });
+      result = task?.id ?? null;
+    } else if (note.action === "move_due" && note.task_id && note.action_due_on) {
+      forbid(v.admin, "Срок задачи переносит администратор УК");
+      const due = note.action_due_on;
+      taskPatch.set(note.task_id, {
+        ...taskPatch.get(note.task_id),
+        due_on: due,
+        days_left: daysBetween(TODAY, due),
+        late: false,
+      });
+      result = note.task_id;
+    } else throw new ApiError(422, "Здесь нечего брать в работу: сообщение можно только скрыть");
+  }
+  const done: AgentNote = {
+    ...note,
+    status: answer === "accept" ? "accepted" : "dismissed",
+    result_task_id: result,
+  };
+  answeredNotes.set(id, done);
+  return done;
+}
+
 // ------------------------------------------------------------------ requests
 
 export function demoRequest(
@@ -980,6 +1033,8 @@ export function demoRequest(
 
   // Actions.
   if (method === "POST") {
+    const noting = /^\/agents\/notes\/([^/]+)\/(accept|dismiss)$/.exec(path);
+    if (noting) return answerNote(v, noting[1]!, noting[2]!);
     if (path === "/tasks") return createTasks(v, body as never);
     const task = /^\/tasks\/([^/]+)\/(start|complete|checklist|remind)$/.exec(
       path,
@@ -1022,6 +1077,7 @@ export function demoRequest(
   const [route = path, query = ""] = path.split("?");
   const q = new URLSearchParams(query);
   if (path === "/findings") return findingsOf(v);
+  if (path === "/agents/notes") return notesOf(v);
   // «Решить по находке»: what the visitor already decided on (a task, a check) leaves the list.
   if (path === "/overview/awaiting") {
     forbid(v.hq, "Нет доступа к этому действию");

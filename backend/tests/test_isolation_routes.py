@@ -26,6 +26,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
+from app.agents.models import AgentNote
 from app.ai.models import AiSuggestion, ChatThread
 from app.catalog.models import NameAlias, Product
 from app.core.period import get_today
@@ -58,6 +59,8 @@ BODY_REFS = {
     "POST /api/chat": {"question": "Почему так получилось?", "finding_id": "{finding_id}"},
     "POST /api/chat/stream": {"question": "Почему так получилось?", "finding_id": "{finding_id}"},
     "POST /api/digests/rebuild": {"restaurant_id": "{restaurant_id}"},
+    # Stage 9: a list for another network's restaurant is refused
+    "POST /api/agents/inventory-prep": {"restaurant_id": "{restaurant_id}", "count_on": "2026-10-21"},
 }
 # Bodies that pass validation, so that a refusal is about access and not about the form (403 or 404 only).
 BODIES: dict[str, dict[str, Any]] = {
@@ -91,6 +94,7 @@ class Foreign:
     thread_id: UUID
     suggestion_id: UUID
     profile_id: UUID
+    note_id: UUID
     restaurant_id: UUID
     code: str
     names: list[str]
@@ -175,7 +179,23 @@ def foreign(network: Network, owner_engine: Engine) -> Foreign:
             title="Чужой профиль сети Б",
             mapping={"amount": "чужая сумма"},
         )
-        s.add_all([alias, thread, proposal, profile])
+        note = AgentNote(
+            tenant_id=b.id,
+            restaurant_id=b.restaurants["B1"],
+            agent="task_stuck",
+            audience="hq",
+            key="task_stuck:foreign",
+            for_date=TODAY,
+            task_id=task.id,
+            facts={},
+            title="Чужое сообщение помощника сети Б",
+            text="…",
+            items=[],
+            proposal={"action": "move_due", "due_on": "2026-10-27"},
+            source="rules",
+            created_on=TODAY,
+        )
+        s.add_all([alias, thread, proposal, profile, note])
         s.flush()
         return Foreign(
             finding.id,
@@ -186,6 +206,7 @@ def foreign(network: Network, owner_engine: Engine) -> Foreign:
             thread.id,
             proposal.id,
             profile.id,
+            note.id,
             b.restaurants["B1"],
             "B1",
             [
@@ -195,6 +216,7 @@ def foreign(network: Network, owner_engine: Engine) -> Foreign:
                 "Чужой товар сети Б",
                 "чужой_файл_сети_б.csv",
                 "Чужой разговор сети Б",
+                "Чужое сообщение помощника сети Б",
             ],
         )
 
@@ -224,6 +246,7 @@ def _ids(f: Foreign) -> dict[str, str]:
         "thread_id": str(f.thread_id),
         "suggestion_id": str(f.suggestion_id),
         "profile_id": str(f.profile_id),
+        "note_id": str(f.note_id),
         "restaurant_id": str(f.restaurant_id),
         "code": f.code,
     }

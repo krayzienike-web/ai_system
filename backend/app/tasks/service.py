@@ -194,6 +194,35 @@ def remind(session: Session, ctx: AccessContext, task_id: UUID, *, today: date) 
     return task
 
 
+def move_due(session: Session, ctx: AccessContext, task_id: UUID, due_on: date, *, today: date) -> Task:
+    """HQ moves a task's deadline (the task-control agent proposes it, ADR 0010). Locked: two admins at once
+    move it once each, in turn."""
+    if not ctx.can(Permission.TASKS_ASSIGN):
+        raise ForbiddenError("Срок задачи переносит администратор УК")
+    task = session.get(Task, task_id, with_for_update=True)
+    if task is None:
+        raise NotFoundError("Task not found")
+    if task.status == TaskStatus.DONE:
+        raise InvalidError("Задача уже выполнена")
+    if due_on < today:
+        raise InvalidError("Due date is in the past")
+    if due_on > today + timedelta(days=MAX_DUE_DAYS):
+        raise InvalidError(f"Due date is more than {MAX_DUE_DAYS} days ahead")
+    before = task.due_on
+    task.due_on = due_on
+    session.flush()
+    audit(
+        session,
+        tenant_id=ctx.tenant_id,
+        user_id=ctx.user_id,
+        action="task.move_due",
+        entity="task",
+        entity_id=task.id,
+        payload={"from": before.isoformat(), "to": due_on.isoformat()},
+    )
+    return task
+
+
 def record_outcome(
     session: Session,
     task: Task,

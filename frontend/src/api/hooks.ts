@@ -42,6 +42,7 @@ import type {
   DigestWeek,
   Disagreement,
   DisagreeReason,
+  AgentNote,
 } from "./types";
 import type { PeriodChoice } from "../state/ui";
 
@@ -369,6 +370,31 @@ export function useCreateTasks() {
   const client = useQueryClient();
   return useMutation({
     mutationFn: (task: NewTask) => api<ApiTask[]>("/tasks", { method: "POST", body: JSON.stringify(task) }),
+    onSuccess: () => refreshWork(client),
+  });
+}
+
+// ------------------------------------------------------------------ the agents' notes (stage 9, ADR 0010)
+
+export const useAgentNotes = () =>
+  useQuery({ queryKey: ["agent-notes"], queryFn: () => api<AgentNote[]>("/agents/notes") });
+
+/** «Взять в работу» (a task from the list, a moved deadline) or «Не нужно». */
+export function useAnswerNote() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, answer }: { id: string; answer: "accept" | "dismiss" }) =>
+      api<AgentNote>(`/agents/notes/${id}/${answer}`, { method: "POST" }),
+    onSuccess: () => refreshWork(client),
+  });
+}
+
+/** The list «что пересчитать внимательно» for a count on a chosen day. */
+export function useAskInventory() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { restaurant_id: string; count_on: string }) =>
+      api<AgentNote>("/agents/inventory-prep", { method: "POST", body: JSON.stringify(body) }),
     onSuccess: () => refreshWork(client),
   });
 }

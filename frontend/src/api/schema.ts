@@ -572,6 +572,11 @@ export interface ImprovedOut {
   processes_better: string[];
 }
 
+export interface InventoryAsk {
+  restaurant_id: string;
+  count_on: string;
+}
+
 export interface KindTotal {
   kind: string;
   count: number;
@@ -710,6 +715,26 @@ export interface NormsOut {
   network_rules?: string[];
   menu_categories: string[];
   product_categories: string[];
+}
+
+export interface NoteOut {
+  id: string;
+  agent: "inventory_prep" | "task_due" | "task_stuck" | "data_check";
+  audience: "director" | "hq";
+  restaurant_id: string;
+  restaurant_code: string;
+  restaurant_name: string;
+  for_date: string;
+  task_id: string | null;
+  title: string;
+  text: string;
+  items: string[];
+  action: "create_task" | "move_due" | null;
+  action_due_on: string | null;
+  action_title: string | null;
+  source: "rules" | "model";
+  status: "new" | "accepted" | "dismissed" | "expired";
+  result_task_id: string | null;
 }
 
 export interface OnTableOut {

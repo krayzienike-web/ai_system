@@ -10,6 +10,7 @@ import {
 import { type ComponentType, lazy, Suspense } from "react";
 
 import { DEMO, restoreSession } from "./api/client";
+import { AgentNotes } from "./app/agents/AgentNotes";
 import { Shell } from "./app/Shell";
 import { buttonClass, EmptyState, Skeleton } from "./ds/primitives";
 import { safeNext } from "./lib/safeNext";
@@ -60,11 +61,20 @@ function hqOnly(Page: ComponentType) {
 function Home() {
   const viewer = useViewer();
   if (!viewer) return null;
-  if (viewer.isHq) return <NetworkPage />;
+  if (viewer.isHq)
+    return (
+      <div className="space-y-6">
+        <AgentNotes />
+        <NetworkPage />
+      </div>
+    );
   return viewer.restaurantCode ? (
-    <Suspense fallback={<Skeleton className="h-96" />}>
-      <WeekView code={viewer.restaurantCode} />
-    </Suspense>
+    <div className="space-y-6">
+      <AgentNotes />
+      <Suspense fallback={<Skeleton className="h-96" />}>
+        <WeekView code={viewer.restaurantCode} />
+      </Suspense>
+    </div>
   ) : null;
 }
 

@@ -13,7 +13,8 @@ from uuid import UUID
 from arq.connections import RedisSettings
 from arq.cron import CronJob, cron
 
-from app.ai import digest_writer
+from app.agents import service as agents
+from app.ai import agent_writer, digest_writer
 from app.ai.gateway import get_gateway
 from app.analytics import runs
 from app.core.config import get_settings
@@ -46,6 +47,17 @@ async def weekly_digests(ctx: dict[str, Any]) -> None:
     await asyncio.to_thread(build_digests, get_today())
 
 
+def run_agents(today: date) -> int:
+    """The agents' morning pass over every network (stage 9, ADR 0010); texts by the model when it is on."""
+    gateway = get_gateway()
+    write_for = (lambda ctx: agent_writer.writer(gateway, ctx)) if gateway is not None else None
+    return agents.run_all(today, write_for)
+
+
+async def morning_agents(ctx: dict[str, Any]) -> None:
+    await asyncio.to_thread(run_agents, get_today())
+
+
 async def sweep_runs(ctx: dict[str, Any]) -> None:
     await asyncio.to_thread(runs.sweep, get_today())
 
@@ -61,6 +73,8 @@ def cron_jobs() -> list[CronJob]:
         cron(weekly_digests, weekday={0}, hour=set(range(5, 12)), minute={31}, timeout=3600),
         # Runs lost with the queue or left by a dead process (pre-pilot review 10.11.2026, p. 20)
         cron(sweep_runs, minute=set(range(3, 60, 10)), timeout=int(runs.JOB_TIMEOUT.total_seconds())),
+        # The agents: every morning at 08:47 Moscow time (05:47 UTC), before the director's day (Q38)
+        cron(morning_agents, hour={5}, minute={47}, timeout=3600),
         # Source files past their retention period: 03:37 Moscow time (00:37 UTC; p. 18)
         cron(purge_files, hour={0}, minute={37}, timeout=1800),
     ]

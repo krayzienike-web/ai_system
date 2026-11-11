@@ -157,6 +157,7 @@ export type CheckDraft = S.DraftOut;
 export type AppContext = S.ContextOut;
 export type NetworkOverview = S.NetworkOut;
 export type RestaurantWeek = S.WeekOut;
+export type AgentNote = S.NoteOut;
 export type RestaurantRow = S.RestaurantRowOut;
 export type Badges = S.BadgesOut;
 export type ChatAnswer = S.AnswerOut;

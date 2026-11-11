@@ -31,7 +31,7 @@ from app.tenancy.context import SYSTEM_USER, AccessContext, user_session
 
 log = logging.getLogger(__name__)
 
-Task = Literal["chat", "explain", "precheck", "discover", "mapping", "digest", "match"]
+Task = Literal["chat", "explain", "precheck", "discover", "mapping", "digest", "match", "agent"]
 Message = dict[str, Any]
 Tool = dict[str, Any]
 Block = dict[str, Any]

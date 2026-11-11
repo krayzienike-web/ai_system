@@ -3685,6 +3685,26 @@
     "title": "ImprovedOut",
     "type": "object"
    },
+   "InventoryAsk": {
+    "properties": {
+     "count_on": {
+      "format": "date",
+      "title": "Count On",
+      "type": "string"
+     },
+     "restaurant_id": {
+      "format": "uuid",
+      "title": "Restaurant Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "restaurant_id",
+     "count_on"
+    ],
+    "title": "InventoryAsk",
+    "type": "object"
+   },
    "KindTotal": {
     "properties": {
      "count": {
@@ -4481,6 +4501,167 @@
      "product_categories"
     ],
     "title": "NormsOut",
+    "type": "object"
+   },
+   "NoteOut": {
+    "properties": {
+     "action": {
+      "anyOf": [
+       {
+        "enum": [
+         "create_task",
+         "move_due"
+        ],
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Action"
+     },
+     "action_due_on": {
+      "anyOf": [
+       {
+        "format": "date",
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Action Due On"
+     },
+     "action_title": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Action Title"
+     },
+     "agent": {
+      "enum": [
+       "inventory_prep",
+       "task_due",
+       "task_stuck",
+       "data_check"
+      ],
+      "title": "Agent",
+      "type": "string"
+     },
+     "audience": {
+      "enum": [
+       "director",
+       "hq"
+      ],
+      "title": "Audience",
+      "type": "string"
+     },
+     "for_date": {
+      "format": "date",
+      "title": "For Date",
+      "type": "string"
+     },
+     "id": {
+      "format": "uuid",
+      "title": "Id",
+      "type": "string"
+     },
+     "items": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Items",
+      "type": "array"
+     },
+     "restaurant_code": {
+      "title": "Restaurant Code",
+      "type": "string"
+     },
+     "restaurant_id": {
+      "format": "uuid",
+      "title": "Restaurant Id",
+      "type": "string"
+     },
+     "restaurant_name": {
+      "title": "Restaurant Name",
+      "type": "string"
+     },
+     "result_task_id": {
+      "anyOf": [
+       {
+        "format": "uuid",
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Result Task Id"
+     },
+     "source": {
+      "enum": [
+       "rules",
+       "model"
+      ],
+      "title": "Source",
+      "type": "string"
+     },
+     "status": {
+      "enum": [
+       "new",
+       "accepted",
+       "dismissed",
+       "expired"
+      ],
+      "title": "Status",
+      "type": "string"
+     },
+     "task_id": {
+      "anyOf": [
+       {
+        "format": "uuid",
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Task Id"
+     },
+     "text": {
+      "title": "Text",
+      "type": "string"
+     },
+     "title": {
+      "title": "Title",
+      "type": "string"
+     }
+    },
+    "required": [
+     "id",
+     "agent",
+     "audience",
+     "restaurant_id",
+     "restaurant_code",
+     "restaurant_name",
+     "for_date",
+     "task_id",
+     "title",
+     "text",
+     "items",
+     "action",
+     "action_due_on",
+     "action_title",
+     "source",
+     "status",
+     "result_task_id"
+    ],
+    "title": "NoteOut",
     "type": "object"
    },
    "OnTableOut": {
@@ -6612,6 +6793,211 @@
  },
  "openapi": "3.1.0",
  "paths": {
+  "/api/agents/inventory-prep": {
+   "post": {
+    "description": "The list «что пересчитать внимательно» for a count on a chosen day.",
+    "operationId": "ask_inventory_api_agents_inventory_prep_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/InventoryAsk"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/NoteOut"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Ask Inventory",
+    "tags": [
+     "agents"
+    ]
+   }
+  },
+  "/api/agents/notes": {
+   "get": {
+    "description": "The notes waiting for an answer. A director — those to the director of their restaurant; the HQ — all,\nor one restaurant's (`restaurant`).",
+    "operationId": "list_notes_api_agents_notes_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "restaurant",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "format": "uuid",
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Restaurant"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "items": {
+          "$ref": "#/components/schemas/NoteOut"
+         },
+         "title": "Response List Notes Api Agents Notes Get",
+         "type": "array"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "List Notes",
+    "tags": [
+     "agents"
+    ]
+   }
+  },
+  "/api/agents/notes/{note_id}/accept": {
+   "post": {
+    "description": "«Взять в работу»: a task from the list, or the deadline moved (the HQ admin).",
+    "operationId": "accept_api_agents_notes__note_id__accept_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "note_id",
+      "required": true,
+      "schema": {
+       "format": "uuid",
+       "title": "Note Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/NoteOut"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Accept",
+    "tags": [
+     "agents"
+    ]
+   }
+  },
+  "/api/agents/notes/{note_id}/dismiss": {
+   "post": {
+    "description": "«Не нужно».",
+    "operationId": "dismiss_api_agents_notes__note_id__dismiss_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "note_id",
+      "required": true,
+      "schema": {
+       "format": "uuid",
+       "title": "Note Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/NoteOut"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Dismiss",
+    "tags": [
+     "agents"
+    ]
+   }
+  },
   "/api/ai/finding-ideas": {
    "get": {
     "operationId": "finding_ideas_api_ai_finding_ideas_get",
