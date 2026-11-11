@@ -73,7 +73,8 @@ def cron_jobs() -> list[CronJob]:
         cron(weekly_digests, weekday={0}, hour=set(range(5, 12)), minute={31}, timeout=3600),
         # Runs lost with the queue or left by a dead process (pre-pilot review 10.11.2026, p. 20)
         cron(sweep_runs, minute=set(range(3, 60, 10)), timeout=int(runs.JOB_TIMEOUT.total_seconds())),
-        # The agents: every morning at 08:47 Moscow time (05:47 UTC), before the director's day (Q38)
+        # The agents: every morning at 08:47 Moscow time (05:47 UTC), before the director's day (Q38). Fixed
+        # in UTC like the digests: a network in another zone (FAI_TIMEZONE) still gets them at 05:47 UTC
         cron(morning_agents, hour={5}, minute={47}, timeout=3600),
         # Source files past their retention period: 03:37 Moscow time (00:37 UTC; p. 18)
         cron(purge_files, hour={0}, minute={37}, timeout=1800),

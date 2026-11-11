@@ -294,17 +294,104 @@ def test_a_list_can_be_asked_for_a_chosen_day(world: World, client: TestClient, 
     assert client.post("/api/agents/inventory-prep", json=never, headers=admin).status_code == 422
     analyst = login(client, "analyst@a.ru")
     assert client.post("/api/agents/inventory-prep", json=body, headers=analyst).status_code == 403
-    with Session(owner_engine) as s, s.begin():  # counted, but nothing priced and no findings: nothing to say
-        s.query(InventoryCount).filter(InventoryCount.product_id == world.products["P3"].id).delete()
-    a2_again = {**body, "count_on": "2026-10-24"}
-    refused = client.post("/api/agents/inventory-prep", json=a2_again, headers=admin)
-    assert refused.status_code == 422 and "Подсказать нечего" in refused.json()["detail"]
     service.run_all(TODAY)  # not where the interval puts it, but asked for: it stays
     assert "inventory_prep:A2" in _by(client, director2)
     service.run_all(date(2026, 10, 24))  # its day has passed
     assert [n.status for n in _notes(owner_engine, "inventory_prep") if n.restaurant_id == world.a2] == [
         "expired"
     ]
+    with Session(owner_engine) as s, s.begin():  # counted, but nothing priced and no findings: nothing to say
+        s.query(InventoryCount).filter(InventoryCount.product_id == world.products["P3"].id).delete()
+    a2_again = {**body, "count_on": "2026-10-24"}
+    refused = client.post("/api/agents/inventory-prep", json=a2_again, headers=admin)
+    assert refused.status_code == 422 and "Подсказать нечего" in refused.json()["detail"]
+
+
+def test_an_asked_list_stays_true_and_can_be_asked_again(
+    world: World, client: TestClient, owner_engine: Engine
+) -> None:
+    """TC-AG-13 (backend review of stage 9, pp. 2–3): each morning until its day the list is computed again
+    («через 3 дня» becomes «через 1 день»); asked again after it was put away — new again; once it became a
+    task — refused."""
+    director2 = login(client, "director2@a.ru")
+    body = {"restaurant_id": str(world.a2), "count_on": "2026-10-23"}
+    first = client.post("/api/agents/inventory-prep", json=body, headers=director2).json()
+    assert first["text"].startswith("Пересчет через 3 дня, 23.10")
+    service.run_all(date(2026, 10, 22))
+    (note,) = [n for n in _notes(owner_engine, "inventory_prep") if n.restaurant_id == world.a2]
+    assert note.status == "new" and note.text.startswith("Пересчет завтра, 23.10")
+    assert client.post(f"/api/agents/notes/{first['id']}/dismiss", headers=director2).status_code == 200
+    again = client.post("/api/agents/inventory-prep", json=body, headers=director2)
+    assert again.status_code == 200 and again.json()["id"] == first["id"] and again.json()["status"] == "new"
+    assert client.post(f"/api/agents/notes/{first['id']}/accept", headers=director2).status_code == 200
+    taken = client.post("/api/agents/inventory-prep", json=body, headers=director2)
+    assert taken.status_code == 409 and "уже стал задачей" in taken.json()["detail"]
+
+
+def test_two_writers_of_one_reason_meet_on_the_row(world: World, owner_engine: Engine) -> None:
+    """TC-AG-14 (p. 4): a double click — two asks at once — gives one note, no unique-key error."""
+    import threading
+
+    from app.core.db import get_sessionmaker
+    from app.tenancy.context import load_access_context
+    from app.tenancy.models import User
+
+    with Session(owner_engine) as o:
+        director = o.execute(select(User.id).where(User.email == "director2@a.ru")).scalar_one()
+    barrier, ids, errors = threading.Barrier(2), [], []
+
+    def ask() -> None:
+        try:
+            with get_sessionmaker()() as s:
+                ctx = load_access_context(s, director, world.a)
+                assert ctx is not None
+                barrier.wait()
+                ids.append(service.ask_inventory(s, ctx, world.a2, date(2026, 10, 23), today=TODAY).id)
+                s.commit()
+        except Exception as e:  # pragma: no cover - the failure this test is about
+            errors.append(e)
+
+    threads = [threading.Thread(target=ask) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert errors == [] and len(set(ids)) == 1
+
+
+def test_a_run_does_not_undo_a_decision_made_meanwhile(world: World, owner_engine: Engine) -> None:
+    """TC-AG-15 (p. 5): the expiry touches only notes still new — an answer given during the run stays."""
+    service.run_all(TODAY)
+    (note,) = _notes(owner_engine, "task_due")
+    with Session(owner_engine) as s, s.begin():
+        n = s.get(AgentNote, note.id)
+        assert n is not None
+        n.status = "dismissed"
+        t = s.get(Task, world.due.id)
+        assert t is not None
+        t.status, t.done_on = "done", TODAY  # the reason is gone too
+    service.run_all(TODAY)
+    assert [n.status for n in _notes(owner_engine, "task_due")] == ["dismissed"]
+
+
+def test_answers_stay_within_the_restaurant(world: World, client: TestClient, owner_engine: Engine) -> None:
+    """TC-AG-16 (p. 7): another director of the network does not answer A1's notes (404); A1's director
+    answers a list the HQ admin asked for A1; a deadline proposal gone stale is refused."""
+    service.run_all(TODAY)
+    director1, director2 = login(client, "director1@a.ru"), login(client, "director2@a.ru")
+    prep = _by(client, director1)["inventory_prep:A1"]
+    for answer in ("accept", "dismiss"):
+        assert client.post(f"/api/agents/notes/{prep['id']}/{answer}", headers=director2).status_code == 404
+    admin = login(client, "admin@a.ru")
+    asked = client.post(
+        "/api/agents/inventory-prep",
+        json={"restaurant_id": str(world.a1), "count_on": "2026-10-25"},
+        headers=admin,
+    ).json()
+    assert client.post(f"/api/agents/notes/{asked['id']}/accept", headers=director1).status_code == 200
+    stuck = _by(client, admin)["task_stuck:A1"]
+    app.dependency_overrides[get_today] = lambda: date(2026, 10, 28)  # the proposal said 27.10
+    assert client.post(f"/api/agents/notes/{stuck['id']}/accept", headers=admin).status_code == 422
 
 
 # ------------------------------------------------------------------ № 7: deadlines

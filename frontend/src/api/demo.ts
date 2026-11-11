@@ -78,6 +78,8 @@ const findingPatch = new Map<string, Partial<ApiFinding>>();
  * director no checks, so a director's stage never becomes «checking»). */
 interface WorkDelta {
   tasks: number;
+  /** Late tasks that stopped being late (a moved deadline): the server recounts `tasks_late` from the tasks. */
+  late: number;
   taken: boolean;
   waiting: boolean;
   checking: boolean;
@@ -86,11 +88,17 @@ const workPatch = new Map<string, WorkDelta>();
 const touchWork = (id: string, change: Partial<WorkDelta>) => {
   const w = workPatch.get(id) ?? {
     tasks: 0,
+    late: 0,
     taken: false,
     waiting: false,
     checking: false,
   };
-  workPatch.set(id, { ...w, ...change, tasks: w.tasks + (change.tasks ?? 0) });
+  workPatch.set(id, {
+    ...w,
+    ...change,
+    tasks: w.tasks + (change.tasks ?? 0),
+    late: w.late + (change.late ?? 0),
+  });
 };
 const taskPatch = new Map<string, Partial<ApiTask>>();
 const checkPatch = new Map<string, Partial<Check>>();
@@ -147,6 +155,7 @@ function overlay<T>(v: Viewer, value: T): T {
           if (w) {
             const work = { ...(o.work as ApiFinding["work"]) };
             work.tasks_total += w.tasks;
+            work.tasks_late = Math.max(0, work.tasks_late + w.late);
             if (w.taken && work.stage === "new") work.stage = "doing";
             if (v.hq && w.checking)
               Object.assign(work, {
@@ -901,6 +910,7 @@ function answerNote(v: Viewer, id: string, answer: string): AgentNote {
   let result: string | null = null;
   if (answer === "accept") {
     if (note.action === "create_task" && note.action_due_on && note.action_title) {
+      if (note.action_due_on < TODAY) throw new ApiError(422, "День пересчета уже прошел");
       const [task] = createTasks(v, {
         title: note.action_title,
         due_on: note.action_due_on,
@@ -911,6 +921,11 @@ function answerNote(v: Viewer, id: string, answer: string): AgentNote {
     } else if (note.action === "move_due" && note.task_id && note.action_due_on) {
       forbid(v.admin, "Срок задачи переносит администратор УК");
       const due = note.action_due_on;
+      const current = tasksOf(v, false).find((t) => t.id === note.task_id);
+      if (!current) throw new ApiError(422, "Задачи больше нет");
+      if (current.status === "done") throw new ApiError(422, "Задача уже выполнена");
+      if (due < TODAY) throw new ApiError(422, "Due date is in the past");
+      if (current.late && current.finding_id) touchWork(current.finding_id, { late: -1 });
       taskPatch.set(note.task_id, {
         ...taskPatch.get(note.task_id),
         due_on: due,
@@ -1094,6 +1109,12 @@ export function demoRequest(
       inbox: awaitingOf(v).length + proposed.length + tasksOf(v, true).length,
     };
   }
+  // A director's «Задачи» counter: the open tasks, also those made in this tab (as the server counts them).
+  if (path === "/overview/badges")
+    return {
+      ...(answers[path] as object),
+      open_tasks: tasksOf(v, false).filter((t) => t.status !== "done").length,
+    };
   if (route === "/overview/network" && answers[path]) {
     return {
       ...(overlay(v, clone(answers[path])) as object),

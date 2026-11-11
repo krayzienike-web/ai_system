@@ -72,10 +72,6 @@ def _money(value: Decimal) -> str:
     return str(value.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
 
 
-def _qty(value: Decimal) -> str:
-    return str(value.quantize(Decimal("0.001")).normalize())
-
-
 def _finding_products(key: str, codes: set[str]) -> list[str]:
     """Product codes of an engine finding's key: «M1:R01:P01[:under]», «M4:R11:P02-P03»."""
     parts = key.split(":")

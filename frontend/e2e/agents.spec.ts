@@ -3,7 +3,7 @@
 // deadline. What the notes say is the server's (the prototype replays it).
 import { expect, test } from "@playwright/test";
 
-import { open, signIn } from "./helpers";
+import { open, signIn, signInAs } from "./helpers";
 
 test("TC-UI-38: the director takes the inventory list into work", async ({ page }) => {
   await signIn(page, "Директор ресторана");
@@ -26,4 +26,12 @@ test("TC-UI-38: the HQ admin moves a stuck task's deadline", async ({ page }) =>
   await stuck.getByRole("button", { name: /Перенести на/ }).click();
   await expect(page.getByText(/Срок перенесен на/)).toBeVisible();
   await expect(stuck).toHaveCount(0);
+});
+
+test("TC-UI-38: the HQ analyst reads the notes but has no buttons to answer them", async ({ page }) => {
+  await signInAs(page, "analyst@demo.local");
+  const assistant = page.getByRole("region", { name: "Помощник" });
+  await expect(assistant.getByRole("listitem").filter({ hasText: "просрочена и не начата" })).toBeVisible();
+  for (const name of [/Перенести на/, "Создать задачу", "Не нужно", "Скрыть"])
+    await expect(assistant.getByRole("button", { name })).toHaveCount(0);
 });
