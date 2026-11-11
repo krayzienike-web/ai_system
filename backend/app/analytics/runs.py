@@ -132,21 +132,29 @@ def sweep(today: date) -> int:
         tenants = list(session.execute(text("SELECT app.tenant_ids()")).scalars())
     ran = 0
     for tenant_id in tenants:
-        with get_sessionmaker()() as session:
-            system_context(session, tenant_id)
-            _fail_interrupted(session)
-            waiting = session.execute(
-                select(AnalyticsRun.id).where(
-                    AnalyticsRun.status == RunStatus.QUEUED,
-                    AnalyticsRun.requested_at < datetime.now(UTC) - LOST,
-                )
-            ).scalar_one_or_none()
-            session.commit()
-        if waiting is not None:
-            log.warning("analytics run %s waited for over %s: running it now", waiting, LOST)
-            execute(waiting, tenant_id, today)
-            ran += 1
+        try:
+            ran += _sweep_network(tenant_id, today)
+        except Exception:  # one network's failure does not stop the others'
+            log.exception("sweeping the runs of network %s failed", tenant_id)
     return ran
+
+
+def _sweep_network(tenant_id: UUID, today: date) -> int:
+    with get_sessionmaker()() as session:
+        system_context(session, tenant_id)
+        _fail_interrupted(session)
+        waiting = session.execute(
+            select(AnalyticsRun.id).where(
+                AnalyticsRun.status == RunStatus.QUEUED,
+                AnalyticsRun.requested_at < datetime.now(UTC) - LOST,
+            )
+        ).scalar_one_or_none()
+        session.commit()
+    if waiting is None:
+        return 0
+    log.warning("analytics run %s waited for over %s: running it now", waiting, LOST)
+    execute(waiting, tenant_id, today)
+    return 1
 
 
 def dispatch(run: AnalyticsRun, today: date, background: BackgroundTasks) -> None:

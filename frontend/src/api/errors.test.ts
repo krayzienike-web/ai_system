@@ -3,6 +3,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { fileProblem } from "../app/DataPage";
+import { passwordProblem } from "../pages/Password";
 import { safeNext } from "../lib/safeNext";
 import {
   api,
@@ -175,5 +176,68 @@ describe("the session in a cookie (TC-UI-34, pre-pilot review p. 5)", () => {
     vi.stubGlobal("fetch", vi.fn(async () => json({ access_token: "a2", must_change_password: false })));
     await changePassword("abcd-efgh-jkmn-pqrs", "my-own-password");
     expect(tokens.access).toBe("a2");
+  });
+});
+
+describe("the session in a cookie: edge cases (TC-UI-35…37)", () => {
+  const json = (body: unknown, status = 200, headers: Record<string, string> = {}) =>
+    new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json", ...headers } });
+
+  it("TC-UI-35: a reload without a connection says the server is unreachable, not «sign in»; the next try refreshes again", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Promise.reject(new TypeError("Failed to fetch"))));
+    await expect(restoreSession()).rejects.toMatchObject({ status: 503 });
+    expect(tokens.access).toBeNull();
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("<html>502</html>", { status: 502 })));
+    await expect(restoreSession()).rejects.toMatchObject({ status: 503 }); // a proxy's page instead of the API
+    const fetch = vi.fn(async () => json({ access_token: "back" }));
+    vi.stubGlobal("fetch", fetch);
+    await expect(restoreSession()).resolves.toBe(true); // a failed refresh is not remembered
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(tokens.access).toBe("back");
+    await expect(restoreSession()).resolves.toBe(true); // signed in: no second refresh
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("TC-UI-35: the server down while refreshing is not the end of the session: the token stays, no login", async () => {
+    tokens.set("old");
+    const ended = vi.fn();
+    onSessionEnded(ended);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        url === "/api/auth/refresh" ? new Response("Bad Gateway", { status: 502 }) : json({ detail: "Войдите в систему" }, 401),
+      ),
+    );
+    await expect(api("/tasks")).rejects.toMatchObject({ status: 503 });
+    await expect(stream("/chat/stream", {}, () => {})).rejects.toMatchObject({ status: 503 });
+    expect(ended).not.toHaveBeenCalled();
+    expect(tokens.access).toBe("old");
+  });
+
+  it("TC-UI-36: the chat's stream with a handed-out password leads to its change, as any request does", async () => {
+    tokens.set("a1");
+    const required = vi.fn();
+    onPasswordRequired(required);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => json({ detail: "Сначала смените пароль, выданный администратором" }, 403, { "X-Password-Change": "required" })),
+    );
+    await expect(stream("/chat/stream", { question: "Почему?" }, () => {})).rejects.toMatchObject({
+      status: 403,
+      message: "Сначала смените пароль, выданный администратором",
+    });
+    expect(required).toHaveBeenCalledTimes(1);
+    expect(tokens.access).toBe("a1"); // not the end of the session
+  });
+
+  it("TC-UI-37: the password page refuses before sending: too short, not repeated, the same as the current one", () => {
+    const issued = "abcd-efgh-jkmn-pqrs";
+    expect(passwordProblem(issued, "short", "short")).toBe("Новый пароль — не короче 10 символов");
+    expect(passwordProblem(issued, "123456789", "123456789")).toMatch(/не короче 10/); // 9 characters
+    expect(passwordProblem(issued, "😀😀😀😀😀", "😀😀😀😀😀")).toMatch(/не короче 10/); // 5 characters, 10 UTF-16 units
+    expect(passwordProblem(issued, "my-own-password", "my-own-passwort")).toBe("Пароли не совпадают");
+    expect(passwordProblem(issued, issued, issued)).toBe("Новый пароль должен отличаться от текущего");
+    expect(passwordProblem(issued, "1234567890", "1234567890")).toBeNull(); // exactly 10: as the server allows
+    expect(passwordProblem(issued, "my-own-password", "my-own-password")).toBeNull();
   });
 });

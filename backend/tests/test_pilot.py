@@ -454,3 +454,332 @@ def test_the_pilots_deployment_files() -> None:
     assert "CASHIER_KEY=" in pilot and "TIMEZONE=" in pilot
     assert "CASHIER_KEY=" in (ROOT / "deploy" / ".env.example").read_text()
     subprocess.run(["bash", "-n", str(ROOT / "deploy" / "db-backup.sh")], check=True)  # noqa: S603, S607
+
+
+# --- Edge cases of the pilot's configuration (test pass 11.11.2026; TC-AUTH-20…26, TC-OPS-10…13) -----------
+
+
+def _owner_waits_on_a_lock(owner_engine: Engine, deadline: float = 10.0) -> None:
+    """Until some transaction of this database waits for a lock (the second request of a race)."""
+    import time
+
+    started = time.monotonic()
+    while time.monotonic() - started < deadline:
+        with owner_engine.connect() as conn:
+            waiting = conn.execute(
+                text(
+                    "SELECT count(*) FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid "
+                    "WHERE NOT l.granted AND a.datname = current_database()"
+                )
+            ).scalar_one()
+        if waiting:
+            return
+        time.sleep(0.05)
+    raise AssertionError("the second transaction never waited for the lock")
+
+
+def _as_user(network: Network, email: str = "admin@a.ru") -> Session:
+    from app.tenancy.context import load_access_context
+
+    s = get_sessionmaker()()
+    assert load_access_context(s, network.a.users[email], network.a.id) is not None
+    return s
+
+
+def test_two_refreshes_of_one_token_at_once_both_go_on(
+    client: TestClient, network: Network, owner_engine: Engine
+) -> None:
+    """TC-AUTH-20: two tabs refresh the same token at the same moment: the second waits for the first (FOR
+    UPDATE), sees the token already replaced within its 30 s and gets a token of its own; the sign-in stays
+    one family, the replaced token keeps the time of its first replacement."""
+    import threading
+
+    from app.auth import sessions
+
+    _sign_in(client)
+    token = _cookie(client)
+    first = get_sessionmaker()()
+    second = get_sessionmaker()()
+    out: dict[str, object] = {}
+
+    def other_tab() -> None:
+        try:
+            out["token"] = sessions.rotate(second, token).token
+            second.commit()
+        except Exception as e:  # pragma: no cover - reported by the assert below
+            out["error"] = e
+
+    try:
+        mine = sessions.rotate(first, token).token  # holds the token's row
+        tab = threading.Thread(target=other_tab)
+        tab.start()
+        _owner_waits_on_a_lock(owner_engine)
+        first.commit()
+        tab.join(10)
+    finally:
+        first.close()
+        second.close()
+    assert "error" not in out and out["token"] not in (mine, token)
+    with Session(owner_engine) as s:
+        rows = list(s.execute(select(AuthSession)).scalars())
+    assert len(rows) == 3 and len({r.family_id for r in rows}) == 1
+    assert [r.revoked_at for r in rows] == [None, None, None]
+    for value in (mine, out["token"]):
+        _with_cookie(client, str(value))
+        assert client.post("/api/auth/refresh").status_code == 200
+
+
+def test_a_new_password_while_another_tab_refreshes_still_ends_it(
+    client: TestClient, network: Network, owner_engine: Engine
+) -> None:
+    """TC-AUTH-21: a new password (or reset-password, disable-user) ends every sign-in, also one whose token
+    is being replaced at that very moment: the token the refresh hands out must not outlive the change."""
+    import threading
+
+    from app.auth import sessions
+
+    _sign_in(client)
+    token = _cookie(client)
+    refreshing = get_sessionmaker()()
+    changing = _as_user(network)
+    out: dict[str, object] = {}
+
+    def change_password() -> None:
+        try:
+            out["ended"] = sessions.end_all(changing, network.a.users["admin@a.ru"])
+            changing.commit()
+        except Exception as e:  # pragma: no cover - reported by the assert below
+            out["error"] = e
+
+    try:
+        fresh = sessions.rotate(refreshing, token).token  # the other tab's refresh, not committed yet
+        worker = threading.Thread(target=change_password)
+        worker.start()
+        _owner_waits_on_a_lock(owner_engine)
+        refreshing.commit()
+        worker.join(10)
+    finally:
+        refreshing.close()
+        changing.close()
+    assert "error" not in out
+    _with_cookie(client, fresh)
+    assert client.post("/api/auth/refresh").status_code == 401
+
+
+def test_signing_out_while_another_tab_refreshes_ends_both(
+    client: TestClient, network: Network, owner_engine: Engine
+) -> None:
+    """TC-AUTH-22: one tab signs out with the token replaced a moment ago while the other tab is replacing its
+    successor: the token that refresh hands out must not outlive the sign-out."""
+    import threading
+
+    from app.auth import sessions
+
+    _sign_in(client)
+    replaced = _cookie(client)
+    assert client.post("/api/auth/refresh").status_code == 200
+    successor = _cookie(client)
+    refreshing = get_sessionmaker()()
+    signing_out = get_sessionmaker()()
+    out: dict[str, object] = {}
+
+    def sign_out() -> None:
+        try:
+            out["ctx"] = sessions.end(signing_out, replaced)
+            signing_out.commit()
+        except Exception as e:  # pragma: no cover - reported by the assert below
+            out["error"] = e
+
+    try:
+        fresh = sessions.rotate(refreshing, successor).token
+        worker = threading.Thread(target=sign_out)
+        worker.start()
+        _owner_waits_on_a_lock(owner_engine)
+        refreshing.commit()
+        worker.join(10)
+    finally:
+        refreshing.close()
+        signing_out.close()
+    assert "error" not in out and out["ctx"] is not None
+    _with_cookie(client, fresh)
+    assert client.post("/api/auth/refresh").status_code == 401
+
+
+def test_a_reset_password_ends_a_token_still_in_its_grace(client: TestClient, network: Network) -> None:
+    """TC-AUTH-23: the 30 s of a replaced token do not outlive a reset password: neither the replaced token
+    nor its successor refreshes."""
+    _sign_in(client)
+    replaced = _cookie(client)
+    assert client.post("/api/auth/refresh").status_code == 200
+    successor = _cookie(client)
+    accounts.reset_password("admin@a.ru")
+    for value in (replaced, successor):
+        _with_cookie(client, value)
+        assert client.post("/api/auth/refresh").status_code == 401
+
+
+def test_signing_out_with_a_replaced_token_ends_the_whole_sign_in(
+    client: TestClient, network: Network, owner_engine: Engine
+) -> None:
+    """TC-AUTH-24: a tab still holding the token replaced a moment ago (or long ago) signs out: the sign-in
+    ends with all its tokens, the successor included; each sign-out is audited once."""
+    for age in (timedelta(seconds=0), timedelta(minutes=5)):
+        client.cookies.clear()
+        _sign_in(client)
+        replaced = _cookie(client)
+        assert client.post("/api/auth/refresh").status_code == 200
+        successor = _cookie(client)
+        with owner_engine.begin() as conn:
+            conn.execute(
+                update(AuthSession)
+                .where(AuthSession.rotated_at.is_not(None))
+                .values(rotated_at=datetime.now(UTC) - age)
+            )
+        _with_cookie(client, replaced)
+        assert client.post("/api/auth/logout").status_code == 204
+        _with_cookie(client, successor)
+        assert client.post("/api/auth/refresh").status_code == 401
+    with owner_engine.connect() as conn:
+        actions = list(conn.execute(text("SELECT action FROM audit_log")).scalars())
+        alive = conn.execute(text("SELECT count(*) FROM auth_sessions WHERE revoked_at IS NULL")).scalar_one()
+    assert actions.count("auth.logout") == 2 and alive == 0
+
+
+def test_signing_out_with_a_disabled_users_cookie(
+    client: TestClient, network: Network, owner_engine: Engine
+) -> None:
+    """TC-AUTH-25: the login was disabled while the browser kept its cookie: signing out still answers 204 and
+    removes the cookie; after the login is enabled again the old cookie does not come back to life."""
+    _sign_in(client)
+    token = _cookie(client)
+    assert accounts.set_active("admin@a.ru", False) == 1
+    _with_cookie(client, token)
+    r = client.post("/api/auth/logout")
+    assert r.status_code == 204 and 'fai_refresh=""' in r.headers["set-cookie"]
+    accounts.set_active("admin@a.ru", True)
+    _with_cookie(client, token)
+    assert client.post("/api/auth/refresh").status_code == 401
+    with owner_engine.connect() as conn:
+        actions = list(conn.execute(text("SELECT action FROM audit_log")).scalars())
+    assert "auth.logout" not in actions  # nobody signed out: the login was disabled
+
+
+def test_a_handed_out_password_refreshes_but_does_not_reach_the_chat(
+    client: TestClient, network: Network
+) -> None:
+    """TC-AUTH-26: with a handed-out password the session survives a reload (refresh answers, and says the
+    password is to be changed), but the chat — also its stream — refuses with `X-Password-Change`."""
+    issued = accounts.add_user("Сеть А", "new.analyst@a.ru", "Новый аналитик", Role.HQ_ANALYST, None)
+    _sign_in(client, issued.email, issued.password)
+    r = client.post("/api/auth/refresh")
+    assert r.status_code == 200 and r.json()["must_change_password"] is True
+    auth = {"Authorization": f"Bearer {r.json()['access_token']}"}
+    question = {"question": "Почему вырос фудкост?"}
+    for method, path, body in (
+        ("POST", "/api/chat/stream", question),
+        ("POST", "/api/chat", question),
+        ("GET", "/api/chat/threads", None),
+        ("GET", "/api/chat/suggestions", None),
+    ):
+        r = client.request(method, path, headers=auth, json=body)
+        assert r.status_code == 403 and r.headers["x-password-change"] == "required", path
+
+
+def test_a_rollback_that_needs_a_deleted_file_changes_nothing(
+    client: TestClient, network: Network, owner_engine: Engine, pinned: None
+) -> None:
+    """TC-OPS-10 (review p. 18): rolling back a later file would rebuild its days from an earlier file whose
+    source is deleted — the rollback refuses, names the file, and the data stay as they were. The deleted
+    file's own batch can still be rolled back (its days are not read again)."""
+    from tests.test_imports_api import MENU, _sales, _sales_by_day, publish
+
+    hq, a1 = login(client, "admin@a.ru"), network.a.restaurants["A1"]
+    for template, content in (("products", PRODUCTS), ("menu_items", MENU)):
+        publish(client, hq, upload(client, hq, template, content).json()["id"])
+    early = upload(client, hq, "sales", _sales(("01", 1), ("02", 1), ("03", 1)), a1, "early.csv").json()
+    publish(client, hq, early["id"])
+    _age(owner_engine, early["id"], 91)
+    assert retention.purge_all() == 1
+    late = upload(client, hq, "sales", _sales(("02", 5), ("03", 5), ("04", 5)), a1, "late.csv").json()
+    publish(client, hq, late["id"])
+    both = {"01.10": 1, "02.10": 5, "03.10": 5, "04.10": 5}
+    assert _sales_by_day(owner_engine) == both
+
+    r = client.post(f"/api/imports/{late['id']}/rollback", headers=hq)
+    assert r.status_code == 422
+    assert "«early.csv»" in r.json()["detail"] and "удален по сроку хранения" in r.json()["detail"]
+    assert _sales_by_day(owner_engine) == both  # nothing half-done
+    assert client.get(f"/api/imports/{late['id']}", headers=hq).json()["status"] == "published"
+
+    r = client.post(f"/api/imports/{early['id']}/rollback", headers=hq)
+    assert r.status_code == 200 and r.json()["status"] == "rolled_back"
+    assert _sales_by_day(owner_engine) == {"02.10": 5, "03.10": 5, "04.10": 5}
+
+
+def test_the_nightly_jobs_with_no_networks_do_nothing(owner_engine: Engine) -> None:
+    """TC-OPS-11: a fresh installation without a single network: the sweeper and the purge pass quietly."""
+    with owner_engine.connect() as conn:
+        assert conn.execute(text("SELECT count(*) FROM tenants")).scalar_one() == 0
+    assert runs.sweep(TODAY) == 0
+    assert retention.purge_all() == 0
+
+
+def test_a_table_without_row_level_security_stops_the_api(owner_engine: Engine) -> None:
+    """TC-OPS-12 (review p. 21): a table a migration forgot to protect is named, and the API does not start;
+    the app's role neither owns it nor is otherwise suspect."""
+    with owner_engine.begin() as conn:
+        conn.execute(text("CREATE TABLE forgotten_rls (id int)"))
+    try:
+        with get_sessionmaker()() as s:
+            assert role_problems(s) == ["forgotten_rls has no row-level security"]
+        with pytest.raises(RuntimeError, match="forgotten_rls has no row-level security"):
+            check_database_role()
+    finally:
+        with owner_engine.begin() as conn:
+            conn.execute(text("DROP TABLE forgotten_rls"))
+    check_database_role()
+
+
+def test_empty_pilot_secrets_are_missing_secrets() -> None:
+    """TC-OPS-13: compose passes an unset variable as an empty string: an empty queue address or cashier key
+    is refused just like a missing one, not taken for a value."""
+    with pytest.raises(ValidationError, match="FAI_REDIS_URL"):
+        Settings(env="prod", **{**PROD, "redis_url": ""})
+    with pytest.raises(ValidationError, match="FAI_CASHIER_KEY"):
+        Settings(env="prod", **{**PROD, "cashier_key": ""})
+    with pytest.raises(ValidationError, match="FAI_TIMEZONE"):
+        Settings(env="prod", **PROD, timezone="")
+
+
+def test_one_failing_network_does_not_stop_the_nightly_jobs(
+    network: Network, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """TC-OPS-14: the sweeper and the purge go network by network; one failing is logged, the rest run."""
+    seen: list[UUID] = []
+
+    def flaky_sweep(tenant_id: UUID, today: date) -> int:
+        seen.append(tenant_id)
+        if tenant_id == network.a.id:
+            raise RuntimeError("broken network")
+        return 1
+
+    monkeypatch.setattr(runs, "_sweep_network", flaky_sweep)
+    assert runs.sweep(TODAY) == 1 and set(seen) == {network.a.id, network.b.id}
+
+    purged: list[UUID] = []
+
+    def flaky_purge(session: Session, tenant_id: UUID, now: datetime) -> int:
+        purged.append(tenant_id)
+        if tenant_id == network.a.id:
+            raise RuntimeError("broken network")
+        return 2
+
+    monkeypatch.setattr(retention, "purge", flaky_purge)
+    assert retention.purge_all() == 2 and set(purged) == {network.a.id, network.b.id}
+
+
+def test_an_unknown_time_zone_is_refused_in_development_too() -> None:
+    """TC-OPS-15: a wrong FAI_TIMEZONE would break every «today»: refused in dev and tests as in prod."""
+    for env in ("dev", "test"):
+        with pytest.raises(ValidationError, match="FAI_TIMEZONE"):
+            Settings(env=env, timezone="Europe/Atlantis")

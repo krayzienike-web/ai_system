@@ -7,6 +7,18 @@ import { useMe } from "../api/hooks";
 import { Button, Card, ErrorText } from "../ds/primitives";
 
 const MIN = 10;
+
+/**
+ * What is wrong with the new password before it is sent, in the order the person fixes it; null — send it. Length
+ * in characters as the server counts them (code points: an emoji is one), not in UTF-16 units.
+ */
+export function passwordProblem(current: string, fresh: string, repeat: string): string | null {
+  if (Array.from(fresh).length < MIN) return `Новый пароль — не короче ${MIN} символов`;
+  if (fresh !== repeat) return "Пароли не совпадают";
+  if (fresh === current) return "Новый пароль должен отличаться от текущего";
+  return null;
+}
+
 const INPUT =
   "mt-1.5 h-11 w-full rounded-[10px] border border-line-strong bg-surface px-3 outline-none focus:border-brand";
 
@@ -31,10 +43,9 @@ export function PasswordPage() {
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
-    if (fresh.length < MIN) return setProblem(`Новый пароль — не короче ${MIN} символов`);
-    if (fresh !== repeat) return setProblem("Пароли не совпадают");
-    if (fresh === current) return setProblem("Новый пароль должен отличаться от текущего");
-    setProblem(null);
+    const found = passwordProblem(current, fresh, repeat);
+    setProblem(found);
+    if (found) return;
     setPending(true);
     try {
       await changePassword(current, fresh);

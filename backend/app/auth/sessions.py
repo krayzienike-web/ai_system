@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, ForeignKey, String, select, text, update
+from sqlalchemy import ColumnElement, DateTime, ForeignKey, String, select, text, update
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from app.core.config import get_settings
@@ -85,12 +85,23 @@ def _find(session: Session, token: str) -> tuple[AuthSession, AccessContext]:
     return row, ctx
 
 
-def _revoke_family(session: Session, family_id: UUID, now: datetime) -> None:
-    session.execute(
-        update(AuthSession)
-        .where(AuthSession.family_id == family_id, AuthSession.revoked_at.is_(None))
-        .values(revoked_at=now)
-    )
+def _revoke(session: Session, *where: ColumnElement[bool]) -> int:
+    """Revokes the live tokens matching `where`, also one a concurrent refresh is replacing right now.
+
+    That refresh holds its token's row and inserts the successor; an UPDATE alone would wait for the row and
+    then miss the successor, committed after the UPDATE's snapshot was taken. So the rows are locked first —
+    waiting for the refresh to commit — and the UPDATE, a statement of its own, sees the successor too
+    (READ COMMITTED takes a snapshot per statement). A refresh starting later waits for these locks and then
+    finds its token revoked."""
+    live = (AuthSession.revoked_at.is_(None), *where)
+    # In one order everywhere: two revocations of overlapping tokens do not deadlock.
+    session.execute(select(AuthSession.id).where(*live).order_by(AuthSession.id).with_for_update()).all()
+    result = session.execute(update(AuthSession).where(*live).values(revoked_at=datetime.now(UTC)))
+    return int(getattr(result, "rowcount", 0) or 0)
+
+
+def _revoke_family(session: Session, family_id: UUID) -> None:
+    _revoke(session, AuthSession.family_id == family_id)
 
 
 def rotate(session: Session, token: str) -> Refreshed:
@@ -101,7 +112,7 @@ def rotate(session: Session, token: str) -> Refreshed:
     if row.revoked_at is not None or row.expires_at <= now:
         raise SessionEnded
     if row.rotated_at is not None and now - row.rotated_at > GRACE:
-        _revoke_family(session, row.family_id, now)
+        _revoke_family(session, row.family_id)
         raise SessionEnded
     if row.rotated_at is None:
         row.rotated_at = now
@@ -114,19 +125,14 @@ def end(session: Session, token: str) -> AccessContext | None:
         row, ctx = _find(session, token)
     except SessionEnded:
         return None
-    _revoke_family(session, row.family_id, datetime.now(UTC))
+    _revoke_family(session, row.family_id)
     return ctx
 
 
 def end_all(session: Session, user_id: UUID) -> int:
     """Every sign-in of the user (a new password, the account disabled). Under the user's own row-level
     security, or as the schema owner from the command line."""
-    result = session.execute(
-        update(AuthSession)
-        .where(AuthSession.user_id == user_id, AuthSession.revoked_at.is_(None))
-        .values(revoked_at=datetime.now(UTC))
-    )
-    return int(getattr(result, "rowcount", 0) or 0)
+    return _revoke(session, AuthSession.user_id == user_id)
 
 
 def active(session: Session, user_id: UUID) -> int:

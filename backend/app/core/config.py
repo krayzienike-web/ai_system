@@ -80,6 +80,10 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def no_dev_secret_outside_dev(self) -> "Settings":
+        try:  # everywhere: a wrong zone would break every «today»
+            ZoneInfo(self.timezone)
+        except (ZoneInfoNotFoundError, ValueError) as e:
+            raise ValueError(f"FAI_TIMEZONE: unknown time zone {self.timezone}") from e
         if self.env in ("dev", "test"):
             return self
         if self.jwt_secret == DEV_JWT_SECRET:
@@ -92,10 +96,6 @@ class Settings(BaseSettings):
             raise ValueError("FAI_CASHIER_KEY must be set outside dev/test: 32+ random characters")
         if self.demo_reset_nightly and self.demo_password == DEV_DEMO_PASSWORD:
             raise ValueError("FAI_DEMO_PASSWORD must be set on the demo stand")
-        try:
-            ZoneInfo(self.timezone)
-        except (ZoneInfoNotFoundError, ValueError) as e:
-            raise ValueError(f"FAI_TIMEZONE: unknown time zone {self.timezone}") from e
         return self
 
 

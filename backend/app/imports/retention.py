@@ -8,6 +8,7 @@ bytes are deleted; the batch stays with its report, and the data loaded from it 
 The worker runs it every night; `python -m app.cli purge-files` does it by hand. Safe twice.
 """
 
+import logging
 from datetime import UTC, date, datetime, timedelta
 from uuid import UUID
 
@@ -19,6 +20,8 @@ from app.core.db import get_sessionmaker
 from app.imports.models import BatchStatus, ImportBatch
 from app.tenancy.audit import audit
 from app.tenancy.context import system_context
+
+log = logging.getLogger(__name__)
 
 
 def purge(session: Session, tenant_id: UUID, now: datetime) -> int:
@@ -58,7 +61,10 @@ def purge_all(today: date | None = None) -> int:
         tenants = list(session.execute(text("SELECT app.tenant_ids()")).scalars())
     total = 0
     for tenant_id in tenants:
-        with get_sessionmaker()() as session:
-            total += purge(session, tenant_id, now)
-            session.commit()
+        try:
+            with get_sessionmaker()() as session:
+                total += purge(session, tenant_id, now)
+                session.commit()
+        except Exception:  # one network's failure does not keep the others' files
+            log.exception("purging the source files of network %s failed", tenant_id)
     return total

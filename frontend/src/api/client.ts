@@ -112,19 +112,22 @@ function onSessionEnd(): void {
   sessionEnded();
 }
 
-let refreshing: Promise<boolean> | null = null;
+type Refresh = "ok" | "ended" | "unavailable";
+let refreshing: Promise<Refresh> | null = null;
 
-/** A new access token from the cookie's sign-in; requests that meet a 401 at once share one refresh. */
-function tryRefresh(): Promise<boolean> {
-  if (DEMO) return Promise.resolve(false);
-  refreshing ??= (async () => {
+/** A new access token from the cookie's sign-in; requests that meet a 401 at once share one refresh. The server
+ * down or the connection lost is not the end of the session: the cookie is still good. */
+function tryRefresh(): Promise<Refresh> {
+  if (DEMO) return Promise.resolve("ended");
+  refreshing ??= (async (): Promise<Refresh> => {
     try {
       const response = await send("/api/auth/refresh", { method: "POST", credentials: "same-origin" });
-      if (!response.ok) return false; // the caller ends the session (onSessionEnd)
+      if (response.status >= 500) return "unavailable";
+      if (!response.ok) return "ended"; // the caller ends the session (onSessionEnd)
       tokens.set(((await response.json()) as { access_token: string }).access_token);
-      return true;
+      return "ok";
     } catch {
-      return false;
+      return "unavailable";
     } finally {
       refreshing = null;
     }
@@ -132,9 +135,15 @@ function tryRefresh(): Promise<boolean> {
   return refreshing;
 }
 
-/** Signed in, or signed in again from the cookie after a reload: the router asks before any screen. */
+const UNAVAILABLE = () => new ApiError(503, statusText(503));
+
+/** Signed in, or signed in again from the cookie after a reload: the router asks before any screen. The server
+ * unreachable: an error the screen shows with «Обновить», not the login (the cookie may well be good). */
 export async function restoreSession(): Promise<boolean> {
-  return tokens.access !== null || (await tryRefresh());
+  if (tokens.access !== null) return true;
+  const refreshed = await tryRefresh();
+  if (refreshed === "unavailable") throw UNAVAILABLE();
+  return refreshed === "ok";
 }
 
 export async function api<T>(
@@ -157,8 +166,10 @@ export async function api<T>(
     headers.set("Content-Type", "application/json");
   if (tokens.access) headers.set("Authorization", `Bearer ${tokens.access}`);
   const response = await send(`/api${path}`, { ...init, headers });
-  if (response.status === 401 && retry && (await tryRefresh())) {
-    return api<T>(path, init, false);
+  if (response.status === 401 && retry) {
+    const refreshed = await tryRefresh();
+    if (refreshed === "ok") return api<T>(path, init, false);
+    if (refreshed === "unavailable") throw UNAVAILABLE();
   }
   if (!response.ok) {
     const body = (await response.json().catch(() => ({}))) as { code?: unknown };
@@ -243,10 +254,15 @@ export async function stream<T>(
   const headers = new Headers({ "Content-Type": "application/json" });
   if (tokens.access) headers.set("Authorization", `Bearer ${tokens.access}`);
   const response = await send(`/api${path}`, { method: "POST", headers, body: JSON.stringify(body), signal });
-  if (response.status === 401 && retry && (await tryRefresh())) return stream<T>(path, body, onStatus, signal, false);
+  if (response.status === 401 && retry) {
+    const refreshed = await tryRefresh();
+    if (refreshed === "ok") return stream<T>(path, body, onStatus, signal, false);
+    if (refreshed === "unavailable") throw UNAVAILABLE();
+  }
   if (!response.ok || !response.body) {
     const detail: unknown = await response.json().catch(() => ({}));
     if (response.status === 401) onSessionEnd();
+    if (response.status === 403 && response.headers.get("X-Password-Change") === "required") passwordRequired();
     throw new ApiError(response.status, errorDetail(response.status, detail));
   }
   const reader = response.body.getReader();
