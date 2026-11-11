@@ -46,6 +46,9 @@ test:          ## Backend tests with the coverage gate (90 %) and frontend unit 
 e2e:           ## End-to-end scenarios on the demo build (docs/13-testing.md)
 	cd frontend && npm run e2e
 
+e2e-live:      ## The session on the real API: production build + uvicorn on the FAI_DATABASE_URL database (migrated)
+	cd frontend && npx playwright test -c playwright.live.config.ts --trace off
+
 lint:
 	cd backend && uv run ruff check . && uv run ruff format --check . && uv run mypy app tests && uv run lint-imports
 	cd frontend && npm run lint && npm run typecheck

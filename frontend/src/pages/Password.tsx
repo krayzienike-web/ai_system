@@ -80,10 +80,13 @@ export function PasswordPage() {
               autoComplete="new-password"
               value={fresh}
               onChange={(e) => setFresh(e.target.value)}
+              aria-describedby="new-password-hint"
               required
             />
-            <span className="mt-1 block text-xs text-ink-3">Не короче {MIN} символов</span>
           </label>
+          <p id="new-password-hint" className="-mt-3 text-xs text-ink-3">
+            Не короче {MIN} символов
+          </p>
           <label className="block">
             <span className="text-sm font-medium">Повторите новый пароль</span>
             <input
