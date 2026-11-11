@@ -9,9 +9,10 @@ the earliest of the restaurants' last counts — every restaurant's own period f
 """
 
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from enum import StrEnum
 from typing import Annotated
+from zoneinfo import ZoneInfo
 
 from fastapi import Depends
 
@@ -116,9 +117,11 @@ def resolve_period(
 
 
 def get_today() -> date:
-    """Today for the request; tests override this dependency to pin the calendar, the demo stand sets
+    """Today for the request, in the network's time zone (FAI_TIMEZONE): at 01:00 in Moscow it is already
+    the next day, though not in UTC. Tests override this dependency to pin the calendar, the demo stand sets
     FAI_DEMO_TODAY."""
-    return get_settings().demo_today or date.today()
+    settings = get_settings()
+    return settings.demo_today or datetime.now(ZoneInfo(settings.timezone)).date()
 
 
 TodayDep = Annotated[date, Depends(get_today)]

@@ -1,5 +1,13 @@
 // Generated from the API's OpenAPI schema by `python -m app.openapi` (backend). Do not edit.
 
+/** The access token goes to the page's memory, the refresh token only to an httpOnly cookie (review,
+ * p. 5). */
+export interface AccessToken {
+  access_token: string;
+  token_type?: string;
+  must_change_password?: boolean;
+}
+
 export interface AliasChangeIn {
   target_id: string;
 }
@@ -650,6 +658,7 @@ export interface Me {
   role: Role;
   restaurant: app__auth__api__RestaurantRef | null;
   permissions: Permission[];
+  must_change_password: boolean;
 }
 
 export interface MetricView {
@@ -714,6 +723,11 @@ export interface OutcomeOut {
   effect_rub_month: string | null;
   text: string | null;
   measured_on: string | null;
+}
+
+export interface PasswordChange {
+  current_password: string;
+  new_password: string;
 }
 
 export interface PeriodOption {
@@ -810,10 +824,6 @@ export interface ReasonOut {
 
 export interface RebuildIn {
   restaurant_id?: string | null;
-}
-
-export interface RefreshRequest {
-  refresh_token: string;
 }
 
 export type RejectReason = "data" | "logic" | "false_alarm" | "other";
@@ -979,12 +989,6 @@ export interface ThreadOut {
 export interface TickIn {
   index: number;
   done: boolean;
-}
-
-export interface TokenPair {
-  access_token: string;
-  refresh_token: string;
-  token_type?: string;
 }
 
 export interface TrendOut {

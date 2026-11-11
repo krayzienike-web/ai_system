@@ -19,6 +19,7 @@ from app.analytics import runs
 from app.core.config import get_settings
 from app.core.period import get_today
 from app.digests import weekly
+from app.imports import retention
 
 
 async def run_engine(ctx: dict[str, Any], run_id: str, tenant_id: str, today: str) -> None:
@@ -45,10 +46,24 @@ async def weekly_digests(ctx: dict[str, Any]) -> None:
     await asyncio.to_thread(build_digests, get_today())
 
 
+async def sweep_runs(ctx: dict[str, Any]) -> None:
+    await asyncio.to_thread(runs.sweep, get_today())
+
+
+async def purge_files(ctx: dict[str, Any]) -> None:
+    await asyncio.to_thread(retention.purge_all)
+
+
 def cron_jobs() -> list[CronJob]:
     # The digests: Monday 08:31 Moscow time (05:31 UTC), about the week before (Q24; off the round minute),
     # then every hour until 14:31 for what is still missing (code review 03.11.2026, p. 17).
-    jobs = [cron(weekly_digests, weekday={0}, hour=set(range(5, 12)), minute={31}, timeout=3600)]
+    jobs = [
+        cron(weekly_digests, weekday={0}, hour=set(range(5, 12)), minute={31}, timeout=3600),
+        # Runs lost with the queue or left by a dead process (pre-pilot review 10.11.2026, p. 20)
+        cron(sweep_runs, minute=set(range(3, 60, 10)), timeout=int(runs.JOB_TIMEOUT.total_seconds())),
+        # Source files past their retention period: 03:37 Moscow time (00:37 UTC; p. 18)
+        cron(purge_files, hour={0}, minute={37}, timeout=1800),
+    ]
     if get_settings().demo_reset_nightly:  # 03:07 Moscow time (00:07 UTC): nobody looks at the demo then
         jobs.append(cron(reset_demo, hour={0}, minute={7}, timeout=1800))
     return jobs
@@ -59,3 +74,5 @@ class WorkerSettings:
     cron_jobs = cron_jobs()
     redis_settings = RedisSettings.from_dsn(get_settings().redis_url or "redis://localhost:6379")
     max_jobs = 4
+    # A run stops before it would count as interrupted (runs.STALE): never two runs of one network at once
+    job_timeout = int(runs.JOB_TIMEOUT.total_seconds())

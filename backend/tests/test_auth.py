@@ -42,8 +42,10 @@ def test_inactive_user_cannot_login_and_token_stops_working(
 
 
 def test_refresh_flow(client: TestClient, network: Network) -> None:
+    """The refresh token comes only as an httpOnly cookie, never in the body (pre-pilot review, p. 5)."""
     tokens = client.post("/api/auth/login", json={"email": "admin@a.ru", "password": "secret-pass-1"}).json()
-    refreshed = client.post("/api/auth/refresh", json={"refresh_token": tokens["refresh_token"]})
+    assert "refresh_token" not in tokens
+    refreshed = client.post("/api/auth/refresh")
     assert refreshed.status_code == 200
     me = client.get("/api/auth/me", headers={"Authorization": f"Bearer {refreshed.json()['access_token']}"})
     assert me.json()["role"] == "hq_admin"
@@ -51,9 +53,9 @@ def test_refresh_flow(client: TestClient, network: Network) -> None:
 
 def test_access_token_is_not_a_refresh_token(client: TestClient, network: Network) -> None:
     tokens = client.post("/api/auth/login", json={"email": "admin@a.ru", "password": "secret-pass-1"}).json()
-    assert client.post("/api/auth/refresh", json={"refresh_token": tokens["access_token"]}).status_code == 401
-    bad = {"Authorization": f"Bearer {tokens['refresh_token']}"}
-    assert client.get("/api/auth/me", headers=bad).status_code == 401
+    client.cookies.clear()
+    client.cookies.set("fai_refresh", tokens["access_token"], path="/api/auth")
+    assert client.post("/api/auth/refresh").status_code == 401
 
 
 def test_missing_or_garbage_token(client: TestClient, network: Network) -> None:

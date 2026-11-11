@@ -36,6 +36,8 @@ class ImportBatch(IdMixin, TenantMixin, TimestampMixin, Base):
     sha256: Mapped[str] = mapped_column(String(64))
     # MVP keeps the original file in the database; object storage comes with real volumes.
     raw: Mapped[bytes] = mapped_column(LargeBinary, deferred=True)  # up to 20 MB: loaded only when needed
+    # The source file is deleted after its retention period (imports/retention.py); batch and data stay
+    raw_deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     status: Mapped[str] = mapped_column(String(20))
     rows_total: Mapped[int] = mapped_column(default=0)
     rows_valid: Mapped[int] = mapped_column(default=0)

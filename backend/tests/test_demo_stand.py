@@ -29,15 +29,14 @@ def settings_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[Env]:
 
 
 def test_the_stand_lives_on_the_demos_today(settings_env: Env) -> None:
-    assert get_today() == date.today()
     settings_env(FAI_DEMO_TODAY="2026-10-20")
     assert get_today() == date(2026, 10, 20)
 
 
 def test_the_nightly_rebuild_is_scheduled_only_on_the_stand(settings_env: Env) -> None:
-    assert [j.name for j in worker.cron_jobs()] == ["cron:weekly_digests"]
+    assert "cron:reset_demo" not in [j.name for j in worker.cron_jobs()]
     settings_env(FAI_DEMO_RESET_NIGHTLY="true")
-    _, job = worker.cron_jobs()
+    job = next(j for j in worker.cron_jobs() if j.name == "cron:reset_demo")
     assert (job.hour, job.minute) == ({0}, {7})  # 03:07 Moscow
 
 
@@ -52,13 +51,11 @@ def test_the_stand_refuses_the_prototypes_demo_password(settings_env: Env) -> No
     from pydantic import ValidationError
 
     from app.core.config import Settings
+    from tests.test_config import PROD
 
     with pytest.raises(ValidationError, match="FAI_DEMO_PASSWORD"):
-        Settings(env="prod", jwt_secret="x" * 40, demo_reset_nightly=True)
-    assert (
-        Settings(env="prod", jwt_secret="x" * 40, demo_reset_nightly=True, demo_password="s3cret-pass").env
-        == "prod"
-    )
+        Settings(env="prod", **PROD, demo_reset_nightly=True)
+    assert Settings(env="prod", **PROD, demo_reset_nightly=True, demo_password="s3cret-pass").env == "prod"
 
 
 def test_the_rebuild_brings_the_demo_network_back_as_on_the_first_day(owner_engine: Engine) -> None:

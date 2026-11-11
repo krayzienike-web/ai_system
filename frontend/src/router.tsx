@@ -9,12 +9,13 @@ import {
 } from "@tanstack/react-router";
 import { type ComponentType, lazy, Suspense } from "react";
 
-import { DEMO, tokens } from "./api/client";
+import { DEMO, restoreSession } from "./api/client";
 import { Shell } from "./app/Shell";
 import { buttonClass, EmptyState, Skeleton } from "./ds/primitives";
 import { safeNext } from "./lib/safeNext";
 import { useViewer } from "./lib/useViewer";
 import { LoginPage } from "./pages/Login";
+import { PasswordPage } from "./pages/Password";
 
 /** A screen loaded when first opened: the first visit downloads the shell, not every screen and chart library. */
 function screen<M, K extends keyof M>(load: () => Promise<M>, name: K): () => React.JSX.Element {
@@ -85,8 +86,9 @@ const appRoute = createRoute({
   getParentRoute: () => rootRoute,
   id: "app",
   component: Shell,
-  beforeLoad: ({ location }) => {
-    if (!tokens.access && !tokens.refresh) throw redirect({ to: "/login", search: { next: location.href } });
+  // After a reload the page has no token: the cookie's sign-in gives one, or the person signs in.
+  beforeLoad: async ({ location }) => {
+    if (!(await restoreSession())) throw redirect({ to: "/login", search: { next: location.href } });
   },
 });
 
@@ -183,6 +185,12 @@ const settingsRoute = createRoute({
   path: "/settings",
   component: hqOnly(SettingsPage),
 });
+const passwordRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/password",
+  validateSearch: (search: Record<string, unknown>): { next?: string } => ({ next: safeNext(search.next) }),
+  component: PasswordPage,
+});
 
 const routeTree = rootRoute.addChildren([
   loginRoute,
@@ -204,6 +212,7 @@ const routeTree = rootRoute.addChildren([
     reviewRoute,
     reviewFindingRoute,
     settingsRoute,
+    passwordRoute,
   ]),
 ]);
 

@@ -1,3 +1,6 @@
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,6 +13,7 @@ from app.auth.api import router as auth_router
 from app.catalog.api import router as catalog_router
 from app.chat.api import router as chat_router
 from app.core.config import get_settings
+from app.core.db import role_problems, transaction
 from app.core.deps import SessionDep
 from app.core.errors import RuleError
 from app.core.limits import BodyLimit
@@ -24,9 +28,24 @@ from app.tasks.api import router as tasks_router
 from app.tenancy.api import router as tenancy_router
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    if get_settings().env not in ("dev", "test"):
+        check_database_role()
+    yield
+
+
+def check_database_role() -> None:
+    """Refuses to serve if row-level security would not hold for the API's connection (review, p. 21)."""
+    with transaction() as session:
+        problems = role_problems(session)
+    if problems:
+        raise RuntimeError("Row-level security would not hold: " + "; ".join(problems))
+
+
 def create_app() -> FastAPI:
     settings = get_settings()
-    app = FastAPI(title="Franchise AI Center", version="0.1.0")
+    app = FastAPI(title="Franchise AI Center", version="0.1.0", lifespan=lifespan)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,

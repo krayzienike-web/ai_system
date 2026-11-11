@@ -45,6 +45,8 @@ class User(IdMixin, TenantMixin, TimestampMixin, Base):
     full_name: Mapped[str] = mapped_column(String(200))
     password_hash: Mapped[str] = mapped_column(String(200))
     is_active: Mapped[bool] = mapped_column(default=True, server_default=text("true"))
+    # A password the operator handed out (create-tenant, add-user, reset-password): changed at first sign-in
+    must_change_password: Mapped[bool] = mapped_column(default=False, server_default=text("false"))
 
 
 class RoleAssignment(IdMixin, TenantMixin, TimestampMixin, Base):

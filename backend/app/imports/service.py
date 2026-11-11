@@ -550,9 +550,20 @@ def reprocess(session: Session, ctx: AccessContext, batch_id: UUID, *, today: da
     return batch
 
 
+def _source(batch: ImportBatch) -> bytes:
+    """The file as uploaded; past its retention period it is gone (imports/retention.py), and whatever needs
+    to read it again — publishing, matching, re-processing, a rollback that rebuilds the period — stops."""
+    if batch.raw_deleted_at is not None:
+        raise InvalidError(
+            f"Исходный файл «{batch.filename}» удален по сроку хранения "
+            f"({batch.raw_deleted_at:%d.%m.%Y}): загрузите его заново"
+        )
+    return batch.raw
+
+
 def _write(session: Session, batch: ImportBatch, template: Template, today: date) -> None:
     # Validate again: reference data and matches may have changed since the upload.
-    result, _, _, lk = _run(session, template, batch.raw, batch.filename, today, batch.restaurant_id)
+    result, _, _, lk = _run(session, template, _source(batch), batch.filename, today, batch.restaurant_id)
     if result is None or result.errors or result.unmatched:
         raise InvalidError("Файл больше не проходит проверку — загрузите его заново, отчет покажет почему")
     batch.rows_valid = len(result.records)
@@ -611,7 +622,7 @@ def _replay(
         delete(model).where(model.restaurant_id == batch.restaurant_id, model.day >= first, model.day <= last)
     )
     for b in files:
-        result, _, _, lk = _run(session, template, b.raw, b.filename, today, b.restaurant_id)
+        result, _, _, lk = _run(session, template, _source(b), b.filename, today, b.restaurant_id)
         if result is None or result.errors or result.unmatched:
             raise InvalidError(
                 f"Файл «{b.filename}» больше не проходит проверку — загрузите его заново, "
@@ -741,7 +752,7 @@ def match(
             existing.target_id = target_id
     session.flush()
     result, file_errors, _, lk = _run(
-        session, template, batch.raw, batch.filename, today, batch.restaurant_id
+        session, template, _source(batch), batch.filename, today, batch.restaurant_id
     )
     _apply(batch, result, file_errors, lk)
     session.flush()

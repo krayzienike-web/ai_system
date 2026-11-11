@@ -4,7 +4,21 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { fileProblem } from "../app/DataPage";
 import { safeNext } from "../lib/safeNext";
-import { api, ApiError, errorDetail, OFFLINE, onSessionEnded, statusText, stream } from "./client";
+import {
+  api,
+  ApiError,
+  changePassword,
+  errorDetail,
+  login,
+  logout,
+  OFFLINE,
+  onPasswordRequired,
+  onSessionEnded,
+  restoreSession,
+  statusText,
+  stream,
+  tokens,
+} from "./client";
 
 function storage(entries: [string, string][] = []) {
   const store = new Map(entries);
@@ -19,6 +33,8 @@ function storage(entries: [string, string][] = []) {
 afterEach(() => {
   vi.unstubAllGlobals();
   onSessionEnded(() => {});
+  onPasswordRequired(() => {});
+  tokens.clear();
 });
 
 describe("errors in Russian (TC-UI-30)", () => {
@@ -50,10 +66,7 @@ describe("errors in Russian (TC-UI-30)", () => {
 
 describe("the end of a session (TC-UI-31)", () => {
   it("any refused request ends the session once the refresh fails, not only «me»", async () => {
-    const store = storage([
-      ["fai.access", "a1"],
-      ["fai.refresh", "r1"],
-    ]);
+    tokens.set("a1");
     const ended = vi.fn();
     onSessionEnded(ended);
     vi.stubGlobal(
@@ -62,7 +75,7 @@ describe("the end of a session (TC-UI-31)", () => {
     );
     await expect(api("/imports", { method: "POST" })).rejects.toMatchObject({ status: 401 });
     expect(ended).toHaveBeenCalledTimes(1);
-    expect(store.size).toBe(0);
+    expect(tokens.access).toBeNull();
   });
 
   it("a wrong password on the login is not the end of a session", async () => {
@@ -88,5 +101,79 @@ describe("the upload refuses before sending (TC-UI-32)", () => {
     expect(fileProblem({ name: "акт.pdf", size: 1000 })).toMatch(/не таблица/);
     expect(fileProblem({ name: "Продажи.xlsx", size: 20 * 1024 * 1024 + 1 })).toMatch(/больше 20 МБ/);
     expect(fileProblem({ name: "Продажи.xlsx", size: 0 })).toBe("Файл пустой");
+  });
+});
+
+describe("the session in a cookie (TC-UI-34, pre-pilot review p. 5)", () => {
+  const json = (body: unknown, status = 200, headers: Record<string, string> = {}) =>
+    new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json", ...headers } });
+
+  it("keeps the access token in memory only and never sees a refresh token", async () => {
+    const store = storage();
+    vi.stubGlobal("fetch", vi.fn(async () => json({ access_token: "a1", token_type: "bearer", must_change_password: false })));
+    expect(await login("admin@a.ru", "secret-pass-1")).toBe(false);
+    expect(tokens.access).toBe("a1");
+    expect(store.size).toBe(0);
+  });
+
+  it("after a reload restores the session from the cookie, or says it is over", async () => {
+    const fetch = vi.fn(async () => json({ access_token: "a2" }));
+    vi.stubGlobal("fetch", fetch);
+    expect(await restoreSession()).toBe(true);
+    expect(tokens.access).toBe("a2");
+    expect(fetch).toHaveBeenCalledWith("/api/auth/refresh", expect.objectContaining({ method: "POST", credentials: "same-origin" }));
+    tokens.clear();
+    vi.stubGlobal("fetch", vi.fn(async () => json({ detail: "Сессия закончилась — войдите снова" }, 401)));
+    expect(await restoreSession()).toBe(false);
+  });
+
+  it("requests refused at once share one refresh and go on with the new token", async () => {
+    tokens.set("old");
+    let refreshes = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init: RequestInit) => {
+        if (url === "/api/auth/refresh") {
+          refreshes += 1;
+          return json({ access_token: "new" });
+        }
+        const auth = new Headers(init.headers).get("Authorization");
+        return auth === "Bearer new" ? json({ ok: true }) : json({ detail: "Войдите в систему" }, 401);
+      }),
+    );
+    expect(await Promise.all([api("/tasks"), api("/findings")])).toEqual([{ ok: true }, { ok: true }]);
+    expect(refreshes).toBe(1);
+  });
+
+  it("signing out asks the server to end the sign-in and forgets the token, even offline", async () => {
+    tokens.set("a1");
+    const fetch = vi.fn(async () => new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetch);
+    await logout();
+    expect(fetch).toHaveBeenCalledWith("/api/auth/logout", expect.objectContaining({ method: "POST" }));
+    expect(tokens.access).toBeNull();
+    tokens.set("a1");
+    vi.stubGlobal("fetch", vi.fn(async () => Promise.reject(new TypeError("Failed to fetch"))));
+    await logout();
+    expect(tokens.access).toBeNull();
+  });
+
+  it("a handed-out password leads to its change first, and the change gives a new token", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => json({ access_token: "a1", must_change_password: true })));
+    expect(await login("new@a.ru", "abcd-efgh-jkmn-pqrs")).toBe(true);
+    const required = vi.fn();
+    onPasswordRequired(required);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => json({ detail: "Сначала смените пароль, выданный администратором" }, 403, { "X-Password-Change": "required" })),
+    );
+    await expect(api("/tasks")).rejects.toMatchObject({ status: 403 });
+    expect(required).toHaveBeenCalledTimes(1);
+    vi.stubGlobal("fetch", vi.fn(async () => json({ detail: "Нет доступа к этому действию" }, 403)));
+    await expect(api("/settings/norms")).rejects.toMatchObject({ status: 403 });
+    expect(required).toHaveBeenCalledTimes(1); // an ordinary «no access» is not about the password
+    vi.stubGlobal("fetch", vi.fn(async () => json({ access_token: "a2", must_change_password: false })));
+    await changePassword("abcd-efgh-jkmn-pqrs", "my-own-password");
+    expect(tokens.access).toBe("a2");
   });
 });

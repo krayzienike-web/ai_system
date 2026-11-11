@@ -1,5 +1,6 @@
-# The demo stand (docs/06, stage 5): the production build on one server, HTTPS by Caddy.
-# Usage — deploy/README.md. Secrets come from deploy/.env (copy .env.example), never from this file.
+# The production build on one server, HTTPS by Caddy: the demo stand (docs/06, stage 5) or the pilot with real
+# data (stage 8, step 7) — the same file, the difference is in deploy/.env (.env.example or .env.pilot.example).
+# Usage — deploy/README.md. Secrets come from deploy/.env, never from this file.
 name: souschef
 
 services:
@@ -13,6 +14,9 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ../infra/postgres/init-prod.sh:/docker-entrypoint-initdb.d/init.sh:ro
+      # Backups (deploy/README.md, «Бэкапы»): the script and where the dumps go
+      - ./db-backup.sh:/usr/local/bin/db-backup.sh:ro
+      - ./backups:/backups
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "postgres"]
       interval: 3s
@@ -32,9 +36,13 @@ services:
       FAI_MIGRATIONS_DATABASE_URL: postgresql+psycopg://franchise_owner:${OWNER_DB_PASSWORD}@db:5432/franchise
       FAI_REDIS_URL: redis://redis:6379
       FAI_CORS_ORIGINS: '["https://${DOMAIN}"]'
-      FAI_DEMO_TODAY: ${DEMO_TODAY:-2026-10-20}
-      FAI_DEMO_RESET_NIGHTLY: "true"
-      FAI_DEMO_PASSWORD: ${DEMO_PASSWORD:?set in deploy/.env}
+      FAI_CASHIER_KEY: ${CASHIER_KEY:?set in deploy/.env}
+      FAI_TIMEZONE: ${TIMEZONE:-Europe/Moscow}
+      # The demo stand only: empty on the pilot (.env.pilot.example), so «today» is the real day
+      FAI_DEMO_TODAY: ${DEMO_TODAY:-}
+      # Rebuilt nightly where the demo calendar is set (the demo stand), unless said otherwise
+      FAI_DEMO_RESET_NIGHTLY: ${DEMO_RESET_NIGHTLY:-${DEMO_TODAY:+true}}
+      FAI_DEMO_PASSWORD: ${DEMO_PASSWORD:-}
     command: alembic upgrade head
     depends_on:
       db: { condition: service_healthy }

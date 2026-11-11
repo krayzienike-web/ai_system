@@ -242,7 +242,8 @@ def test_the_eleventh_failed_sign_in_waits(client: TestClient, network: Network)
 def test_the_api_speaks_russian_when_it_refuses(client: TestClient, network: Network) -> None:
     """TC-AUTH-13 (frontend p. 1): no token, a bad token, a form it cannot read."""
     assert client.get("/api/auth/me").json()["detail"] == "Войдите в систему"
-    r = client.post("/api/auth/refresh", json={"refresh_token": "nonsense"})
+    client.cookies.set("fai_refresh", "nonsense", path="/api/auth")
+    r = client.post("/api/auth/refresh")
     assert r.json()["detail"] == "Сессия закончилась — войдите снова"
     r = client.post("/api/auth/login", json={"email": "admin@a.ru"})
     assert r.status_code == 422 and r.json()["detail"].startswith("Сервер не принял данные")

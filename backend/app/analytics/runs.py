@@ -28,6 +28,8 @@ from app.tenancy.context import AccessContext, system_context
 
 log = logging.getLogger(__name__)
 STALE = timedelta(minutes=30)  # a run «going on» for longer was interrupted (the process died)
+JOB_TIMEOUT = timedelta(minutes=25)  # the worker stops a run before it would count as interrupted
+LOST = timedelta(minutes=10)  # a run waiting longer lost its job (the queue restarted): the sweeper runs it
 
 
 class RunStatus(StrEnum):
@@ -85,18 +87,21 @@ def request(session: Session, ctx: AccessContext, trigger: str = "upload") -> An
     return run
 
 
+def _fail_interrupted(session: Session) -> int:
+    """Runs left «going on» by a process that died are failed: the next upload queues a new one."""
+    result = session.execute(
+        update(AnalyticsRun)
+        .where(AnalyticsRun.status == RunStatus.RUNNING, AnalyticsRun.started_at < datetime.now(UTC) - STALE)
+        .values(status=RunStatus.FAILED, finished_at=datetime.now(UTC), error="Пересчет прерван")
+    )
+    return int(getattr(result, "rowcount", 0) or 0)
+
+
 def execute(run_id: UUID, tenant_id: UUID, today: date) -> None:
     """Runs a queued run in a session of its own. Safe twice: a run that no longer waits is left alone."""
     with get_sessionmaker()() as session:
         system_context(session, tenant_id)
-        # Runs left «going on» by a process that died are failed: the next upload queues a new one.
-        session.execute(
-            update(AnalyticsRun)
-            .where(
-                AnalyticsRun.status == RunStatus.RUNNING, AnalyticsRun.started_at < datetime.now(UTC) - STALE
-            )
-            .values(status=RunStatus.FAILED, finished_at=datetime.now(UTC), error="Пересчет прерван")
-        )
+        _fail_interrupted(session)
         run = session.get(AnalyticsRun, run_id, with_for_update=True)
         if run is None or run.status != RunStatus.QUEUED:
             return
@@ -117,6 +122,31 @@ def execute(run_id: UUID, tenant_id: UUID, today: date) -> None:
                 failed.status, failed.finished_at = RunStatus.FAILED, datetime.now(UTC)
                 failed.error = str(e)[:500]
                 session.commit()
+
+
+def sweep(today: date) -> int:
+    """The worker every ten minutes (pre-pilot review 10.11.2026, p. 20): in every network, runs left
+    «going on» by a dead process are failed, and a run waiting for longer than `LOST` — its job was lost
+    with the queue — is run here. Returns how many were run."""
+    with get_sessionmaker()() as session:
+        tenants = list(session.execute(text("SELECT app.tenant_ids()")).scalars())
+    ran = 0
+    for tenant_id in tenants:
+        with get_sessionmaker()() as session:
+            system_context(session, tenant_id)
+            _fail_interrupted(session)
+            waiting = session.execute(
+                select(AnalyticsRun.id).where(
+                    AnalyticsRun.status == RunStatus.QUEUED,
+                    AnalyticsRun.requested_at < datetime.now(UTC) - LOST,
+                )
+            ).scalar_one_or_none()
+            session.commit()
+        if waiting is not None:
+            log.warning("analytics run %s waited for over %s: running it now", waiting, LOST)
+            execute(waiting, tenant_id, today)
+            ran += 1
+    return ran
 
 
 def dispatch(run: AnalyticsRun, today: date, background: BackgroundTasks) -> None:

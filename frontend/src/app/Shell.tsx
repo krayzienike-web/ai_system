@@ -12,6 +12,7 @@ import {
   Database,
   FileBarChart,
   Inbox,
+  KeyRound,
   LayoutDashboard,
   Lightbulb,
   ListChecks,
@@ -26,7 +27,7 @@ import {
 import { motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 
-import { ApiError, onSessionEnded, tokens } from "../api/client";
+import { ApiError, logout as signOut, onPasswordRequired, onSessionEnded } from "../api/client";
 import { useAppContext, useBadges, useMe, useRefreshWhenRunIsDone, useReviewCount } from "../api/hooks";
 import { ddmm } from "../lib/format";
 import { ROLE_LABELS } from "../api/types";
@@ -197,10 +198,20 @@ export function Shell() {
   const currentPath = () => router.state.location.href;
 
   function logout(next?: string) {
-    tokens.clear();
+    void signOut();
     queryClient.clear();
     void navigate({ to: "/login", search: { next } });
   }
+
+  // A password handed out by the operator: changed before anything else (docs/09 «Учетные записи»).
+  const toPassword = () => {
+    if (router.state.location.pathname !== "/password")
+      void navigate({ to: "/password", search: { next: currentPath() } });
+  };
+  useEffect(() => {
+    if (me?.must_change_password) toPassword();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [me?.must_change_password, pathname]);
 
   useEffect(() => {
     // Only an expired or revoked session signs out; a network blip or a server error must not.
@@ -212,7 +223,11 @@ export function Shell() {
     // Any request the server refuses for the session (an upload, a report, saving norms) leads to the login,
     // and back to this page after it (pre-pilot review 10.11.2026, p. 5).
     onSessionEnded(() => logout(currentPath()));
-    return () => onSessionEnded(() => {});
+    onPasswordRequired(toPassword);
+    return () => {
+      onSessionEnded(() => {});
+      onPasswordRequired(() => {});
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -291,12 +306,19 @@ export function Shell() {
           <div className="text-xs text-white/60">
             {me.restaurant ? me.restaurant.name : ROLE_LABELS[me.role]}
           </div>
-          <button
-            onClick={() => logout()}
-            className="mt-3 inline-flex items-center gap-1.5 text-xs text-white/60 hover:text-white"
-          >
-            <LogOut size={13} /> Выйти
-          </button>
+          <div className="mt-3 flex items-center gap-4">
+            <button
+              onClick={() => logout()}
+              className="inline-flex items-center gap-1.5 text-xs text-white/60 hover:text-white"
+            >
+              <LogOut size={13} /> Выйти
+            </button>
+            {!DEMO && (
+              <Link to="/password" className="inline-flex items-center gap-1.5 text-xs text-white/60 hover:text-white">
+                <KeyRound size={13} /> Сменить пароль
+              </Link>
+            )}
+          </div>
         </div>
       </aside>
 
@@ -443,6 +465,18 @@ export function Shell() {
                   </Link>
                 </li>
               ))}
+            {!DEMO && (
+              <li>
+                <Link
+                  to="/password"
+                  onClick={() => setMore(false)}
+                  className="flex items-center gap-3 rounded-[12px] px-3 py-3 text-[15px] text-ink hover:bg-paper"
+                >
+                  <KeyRound size={20} strokeWidth={1.75} />
+                  Сменить пароль
+                </Link>
+              </li>
+            )}
           </ul>
         </div>
       )}

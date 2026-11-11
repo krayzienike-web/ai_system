@@ -16,6 +16,8 @@ export interface Me {
   role: Role;
   restaurant: { id: string; code: string; name: string } | null;
   permissions: string[];
+  /** A password handed out by the operator: changed before anything else. The prototype's logins have none. */
+  must_change_password?: boolean;
 }
 
 export interface Restaurant {

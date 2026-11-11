@@ -28,10 +28,12 @@ export function LoginPage() {
     setPending(true);
     setError(null);
     try {
-      await login(e, p);
+      const mustChange = await login(e, p);
       queryClient.clear();
-      // Back to where the session ended; the router has already kept only a path of this app.
-      await navigate({ href: next ?? "/" });
+      // A password handed out by the operator is changed first; then back to where the session ended (the
+      // router has already kept only a path of this app).
+      if (mustChange) await navigate({ to: "/password", search: { next } });
+      else await navigate({ href: next ?? "/" });
     } catch (err) {
       setError(err instanceof ApiError && err.status === 401 ? "Неверный email или пароль" : "Не получилось войти, попробуйте еще раз");
     } finally {

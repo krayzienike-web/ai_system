@@ -894,7 +894,7 @@ export function demoRequest(
       .toLowerCase();
     if (!USERS[key] || body.password !== DEMO_PASSWORD)
       throw new DemoAuthError("invalid credentials");
-    return { access_token: key, refresh_token: key, token_type: "bearer" };
+    return { access_token: key, token_type: "bearer", must_change_password: false };
   }
   const v = viewer(token);
   const answers = v.user.answers;

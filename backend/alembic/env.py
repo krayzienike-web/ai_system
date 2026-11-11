@@ -6,6 +6,7 @@ from sqlalchemy import create_engine
 # Importing the model modules registers their tables on Base.metadata.
 import app.ai.models
 import app.analytics.runs
+import app.auth.sessions
 import app.catalog.models
 import app.digests.models
 import app.experiments.models

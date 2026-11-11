@@ -2,6 +2,7 @@
 «строка 154: неизвестная единица «кг.» у товара «Сыр Моцарелла»». Pure functions, no database."""
 
 import hashlib
+import hmac
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -10,6 +11,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 from uuid import UUID
 
+from app.core.config import get_settings
 from app.imports.matching import normalize
 from app.imports.reader import Table
 from app.imports.templates import Kind, Template
@@ -467,7 +469,10 @@ def cashier(value: object, salt: str = "") -> str | None:
     text = _text(value, 100)
     if text is None or PERSONNEL_NUMBER.fullmatch(text):
         return text
-    digest = hashlib.sha256(f"{salt}:{text.lower()}".encode()).hexdigest()[:6].upper()
+    # Keyed by the server's secret (FAI_CASHIER_KEY), not only by the network's id its users know: without the
+    # key nobody can find whose code it is by trying names (pre-pilot review 10.11.2026, p. 19).
+    key = get_settings().cashier_key.encode()
+    digest = hmac.new(key, f"{salt}:{text.lower()}".encode(), hashlib.sha256).hexdigest()[:8].upper()
     return "Кассир " + digest
 
 

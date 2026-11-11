@@ -38,9 +38,10 @@ from tests.conftest import Network, login
 
 TODAY = date(2026, 10, 20)
 
-PUBLIC = {"GET /api/health", "POST /api/auth/login", "POST /api/auth/refresh"}
+PUBLIC = {"GET /api/health", "POST /api/auth/login", "POST /api/auth/refresh", "POST /api/auth/logout"}
 # Writes that create or change things of the caller's own network only; their rules have their own tests.
 OWN_NETWORK = {
+    "POST /api/auth/password",  # the caller's own password only (tests/test_pilot.py, TC-AUTH-17)
     "POST /api/restaurants",
     "POST /api/users",
     "PUT /api/settings/norms",

@@ -8,6 +8,13 @@
 - `python -m app.cli analyze` — recompute findings of the demo tenant (analytics engine);
 - `python -m app.cli seed-test-network [--reset]` — the empty «Тестовая сеть» for the test kit (stage 8);
 - `python -m app.cli generate-test-kit --out DIR` — the test kit: Excel files shaped like real exports.
+
+The pilot's accounts (docs/09 «Учетные записи», deploy/README.md «Пилот»):
+- `create-tenant --name N --admin-email E --admin-name F` — a network and its first HQ admin;
+- `add-user --tenant N --email E --name F --role hq_admin|hq_analyst|director [--restaurant CODE]`;
+- `disable-user --email E`, `enable-user --email E`, `reset-password --email E`, `list-users --tenant N`.
+Passwords are generated and printed once; the person changes theirs at the first sign-in.
+- `purge-files` — deletes the source files past their retention period (the worker does it nightly).
 """
 
 import argparse
@@ -18,13 +25,16 @@ from sqlalchemy import create_engine, delete, select
 from sqlalchemy.orm import Session
 
 from app.analytics import engine
+from app.auth import accounts
 from app.core.config import get_settings
 from app.core.db import get_sessionmaker
+from app.core.period import get_today as date_today
 from app.core.security import hash_password
 from app.demo import showcase, test_kit
 from app.demo.generator import END, generate
 from app.demo.loader import load
 from app.digests import weekly
+from app.imports import retention
 from app.tenancy.context import load_access_context
 from app.tenancy.models import Restaurant, Role, RoleAssignment, Tenant, User
 
@@ -179,7 +189,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog="app.cli")
     sub = parser.add_subparsers(dest="command", required=True)
     seed = sub.add_parser("seed-demo", help="Create the demo tenant, its restaurants and users")
-    seed.add_argument("--password", default="demo12345")
+    seed.add_argument("--password", default=None, help="Default: FAI_DEMO_PASSWORD")
     gen = sub.add_parser("generate-demo", help="Write the files of the synthetic demo network")
     gen.add_argument("--out", default="demo-data")
     gen.add_argument("--seed", type=int, default=42)
@@ -198,11 +208,43 @@ def main() -> None:
     kit = sub.add_parser("generate-test-kit", help="Write the test kit: Excel files shaped like real exports")
     kit.add_argument("--out", default="test-kit")
     kit.add_argument("--seed", type=int, default=test_kit.SEED)
+    tenant = sub.add_parser("create-tenant", help="Create a network and its first HQ admin (the pilot)")
+    tenant.add_argument("--name", required=True)
+    tenant.add_argument("--admin-email", required=True)
+    tenant.add_argument("--admin-name", required=True)
+    user = sub.add_parser("add-user", help="Add a login to a network")
+    user.add_argument("--tenant", required=True)
+    user.add_argument("--email", required=True)
+    user.add_argument("--name", required=True)
+    user.add_argument("--role", required=True, choices=sorted(ROLES))
+    user.add_argument("--restaurant", default=None, help="The director's restaurant code")
+    for command in ("disable-user", "enable-user", "reset-password"):
+        sub.add_parser(command).add_argument("--email", required=True)
+    sub.add_parser("list-users").add_argument("--tenant", required=True)
+    sub.add_parser("purge-files", help="Delete the source files past their retention period")
     args = parser.parse_args()
+    try:
+        _run(args)
+    except accounts.AccountError as e:
+        raise SystemExit(str(e)) from None
+
+
+ROLES = {"hq_admin": Role.HQ_ADMIN, "hq_analyst": Role.HQ_ANALYST, "director": Role.RESTAURANT_DIRECTOR}
+
+
+def _issued(issued: accounts.Issued) -> None:
+    print(f"  {issued.email}  пароль: {issued.password}")
+    print("  Передайте пароль лично; при первом входе система попросит сменить его.")
+
+
+def _run(args: argparse.Namespace) -> None:
     if args.command == "analyze":
         analyze()
     elif args.command == "seed-demo":
-        seed_demo(args.password)
+        settings = get_settings()
+        if settings.env not in ("dev", "test") and not settings.is_demo_stand:
+            raise SystemExit("The demo network lives only on the demo stand (FAI_DEMO_TODAY)")
+        seed_demo(args.password or settings.demo_password)
     elif args.command == "generate-demo":
         generate_demo(args.out, args.seed)
     elif args.command == "load-demo":
@@ -215,6 +257,23 @@ def main() -> None:
         seed_test_network(args.password, args.reset)
     elif args.command == "generate-test-kit":
         generate_test_kit(args.out, args.seed)
+    elif args.command == "create-tenant":
+        print(f"Сеть «{args.name}» создана. Администратор УК:")
+        _issued(accounts.create_tenant(args.name, args.admin_email, args.admin_name))
+    elif args.command == "add-user":
+        _issued(accounts.add_user(args.tenant, args.email, args.name, ROLES[args.role], args.restaurant))
+    elif args.command in ("disable-user", "enable-user"):
+        ended = accounts.set_active(args.email, args.command == "enable-user")
+        state = "включен" if args.command == "enable-user" else f"отключен, завершено сессий: {ended}"
+        print(f"  {args.email}: {state}")
+    elif args.command == "reset-password":
+        _issued(accounts.reset_password(args.email))
+    elif args.command == "list-users":
+        for email, name, role, code, active in accounts.users(args.tenant):
+            print(f"  {email:<32} {name:<28} {role:<20} {code or '':<6} {'' if active else 'отключен'}")
+    elif args.command == "purge-files":
+        purged = retention.purge_all(date_today())
+        print(f"source files deleted: {purged}")
 
 
 if __name__ == "__main__":

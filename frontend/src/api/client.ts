@@ -1,13 +1,14 @@
-// Tokens live in localStorage for the MVP; moving the refresh token to an httpOnly cookie is planned.
-const ACCESS = "fai.access";
-const REFRESH = "fai.refresh";
+// The access token lives in the page's memory only; the refresh token in an httpOnly cookie the page never
+// sees (pre-pilot review 10.11.2026, p. 5). A reload restores the session from the cookie (`restoreSession`).
+// The prototype has no server and no cookie: it keeps its demo token in the browser's storage.
+const DEMO_ACCESS = "fai.access";
 
 /** Standalone demo build: no backend, auth and data are served in the browser (see demo.ts). */
 export const DEMO = import.meta.env.VITE_DEMO === "1";
 
 // Storage can be unavailable (private mode, sandboxed frames): fall back to memory.
 const memory = new Map<string, string>();
-const storage = {
+const demoStorage = {
   get(key: string): string | null {
     try {
       return localStorage.getItem(key);
@@ -76,47 +77,64 @@ async function send(input: string, init: RequestInit): Promise<Response> {
   }
 }
 
+let access: string | null = null;
+
 export const tokens = {
-  get access() {
-    return storage.get(ACCESS);
+  get access(): string | null {
+    return DEMO ? demoStorage.get(DEMO_ACCESS) : access;
   },
-  get refresh() {
-    return storage.get(REFRESH);
-  },
-  set(pair: { access_token: string; refresh_token: string }) {
-    storage.set(ACCESS, pair.access_token);
-    storage.set(REFRESH, pair.refresh_token);
+  set(token: string) {
+    if (DEMO) demoStorage.set(DEMO_ACCESS, token);
+    else access = token;
   },
   clear() {
-    storage.remove(ACCESS);
-    storage.remove(REFRESH);
+    if (DEMO) demoStorage.remove(DEMO_ACCESS);
+    access = null;
   },
 };
 
 let sessionEnded: () => void = () => {};
+let passwordRequired: () => void = () => {};
 
 /** What the app does when the server says the session is over (the shell sends the person to the login). */
 export function onSessionEnded(handler: () => void): void {
   sessionEnded = handler;
 }
 
+/** What the app does when the server asks for a new password first (a password handed out by the operator). */
+export function onPasswordRequired(handler: () => void): void {
+  passwordRequired = handler;
+}
+
 function onSessionEnd(): void {
-  if (!tokens.access && !tokens.refresh) return; // not signed in: a wrong password on the login is not «the end»
+  if (!tokens.access) return; // not signed in: a wrong password on the login is not «the end»
   tokens.clear();
   sessionEnded();
 }
 
-async function tryRefresh(): Promise<boolean> {
-  const refresh = tokens.refresh;
-  if (!refresh) return false;
-  const response = await send("/api/auth/refresh", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ refresh_token: refresh }),
-  });
-  if (!response.ok) return false; // the caller ends the session (onSessionEnd)
-  tokens.set(await response.json());
-  return true;
+let refreshing: Promise<boolean> | null = null;
+
+/** A new access token from the cookie's sign-in; requests that meet a 401 at once share one refresh. */
+function tryRefresh(): Promise<boolean> {
+  if (DEMO) return Promise.resolve(false);
+  refreshing ??= (async () => {
+    try {
+      const response = await send("/api/auth/refresh", { method: "POST", credentials: "same-origin" });
+      if (!response.ok) return false; // the caller ends the session (onSessionEnd)
+      tokens.set(((await response.json()) as { access_token: string }).access_token);
+      return true;
+    } catch {
+      return false;
+    } finally {
+      refreshing = null;
+    }
+  })();
+  return refreshing;
+}
+
+/** Signed in, or signed in again from the cookie after a reload: the router asks before any screen. */
+export async function restoreSession(): Promise<boolean> {
+  return tokens.access !== null || (await tryRefresh());
 }
 
 export async function api<T>(
@@ -145,6 +163,7 @@ export async function api<T>(
   if (!response.ok) {
     const body = (await response.json().catch(() => ({}))) as { code?: unknown };
     if (response.status === 401 && !path.startsWith("/auth/login")) onSessionEnd();
+    if (response.status === 403 && response.headers.get("X-Password-Change") === "required") passwordRequired();
     throw new ApiError(
       response.status,
       errorDetail(response.status, body),
@@ -155,14 +174,32 @@ export async function api<T>(
   return response.json() as Promise<T>;
 }
 
-export async function login(email: string, password: string): Promise<void> {
-  tokens.set(
-    await api(
-      "/auth/login",
-      { method: "POST", body: JSON.stringify({ email, password }) },
-      false,
-    ),
+/** Signs in; true when the password was handed out by the operator and must be changed first. */
+export async function login(email: string, password: string): Promise<boolean> {
+  const answer = await api<{ access_token: string; must_change_password?: boolean }>(
+    "/auth/login",
+    { method: "POST", body: JSON.stringify({ email, password }) },
+    false,
   );
+  tokens.set(answer.access_token);
+  return answer.must_change_password === true;
+}
+
+/** Signs out on this device: the server ends the sign-in and removes the cookie; offline, the page forgets
+ * its token anyway. */
+export async function logout(): Promise<void> {
+  tokens.clear();
+  if (DEMO) return;
+  await send("/api/auth/logout", { method: "POST", credentials: "same-origin" }).catch(() => undefined);
+}
+
+/** The person's own new password: the other sign-ins end, this one goes on with a new token. */
+export async function changePassword(current: string, next: string): Promise<void> {
+  const answer = await api<{ access_token: string }>("/auth/password", {
+    method: "POST",
+    body: JSON.stringify({ current_password: current, new_password: next }),
+  });
+  tokens.set(answer.access_token);
 }
 
 const BROKEN = "Ответ прервался";

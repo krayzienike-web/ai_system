@@ -1,7 +1,7 @@
 from collections.abc import Callable, Iterator
 from typing import Annotated
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
@@ -11,6 +11,8 @@ from app.tenancy.context import AccessContext, load_access_context
 from app.tenancy.permissions import Permission
 
 _bearer = HTTPBearer(auto_error=False)
+# What a person with a handed-out password (create-tenant, add-user, reset-password) may do before changing it
+BEFORE_NEW_PASSWORD = frozenset({"/api/auth/me", "/api/auth/password", "/api/auth/logout"})
 
 
 def get_session() -> Iterator[Session]:
@@ -28,6 +30,7 @@ SessionDep = Annotated[Session, Depends(get_session)]
 
 
 def get_access_context(
+    request: Request,
     session: SessionDep,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
 ) -> AccessContext:
@@ -45,6 +48,12 @@ def get_access_context(
     ctx = load_access_context(session, user_id, tenant_id)
     if ctx is None:
         raise unauthorized
+    if ctx.must_change_password and request.url.path not in BEFORE_NEW_PASSWORD:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Сначала смените пароль, выданный администратором",
+            headers={"X-Password-Change": "required"},
+        )
     return ctx
 
 

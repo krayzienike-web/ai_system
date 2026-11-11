@@ -57,3 +57,30 @@ def transaction() -> Iterator[Session]:
     """A session in an open transaction without any RLS context (sees nothing protected)."""
     with get_sessionmaker()() as session, session.begin():
         yield session
+
+
+def role_problems(session: Session) -> list[str]:
+    """Why row-level security would not hold for the connection the API runs on (pre-pilot review 10.11.2026,
+    p. 21). Policies do not apply to a superuser, a role with BYPASSRLS or a table's owner, so the API refuses
+    to start as one: `FORCE ROW LEVEL SECURITY` would also stop the schema owner, which seeds and migrates."""
+    problems: list[str] = []
+    role = session.execute(
+        text("SELECT rolname, rolsuper, rolbypassrls FROM pg_roles WHERE rolname = current_user")
+    ).one()
+    if role.rolsuper:
+        problems.append(f"{role.rolname} is a superuser")
+    if role.rolbypassrls:
+        problems.append(f"{role.rolname} has BYPASSRLS")
+    owned = session.execute(
+        text("SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tableowner = current_user")
+    ).scalars()
+    problems.extend(f"{role.rolname} owns {t}" for t in owned)
+    unprotected = session.execute(
+        text(
+            "SELECT relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+            "WHERE n.nspname = 'public' AND c.relkind = 'r' AND NOT c.relrowsecurity "
+            "AND relname <> 'alembic_version' ORDER BY relname"
+        )
+    ).scalars()
+    problems.extend(f"{t} has no row-level security" for t in unprotected)
+    return problems
