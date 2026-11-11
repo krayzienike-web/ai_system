@@ -183,22 +183,37 @@ def map_header(
     cells: list[str], template: Template, aliases: dict[str, str] | None = None
 ) -> tuple[dict[str, int], list[str]]:
     """Columns by the template's synonyms and by the network's confirmed profiles (`aliases`: a normalized
-    header → the template's column)."""
-    found: dict[str, int] = {}
-    unmapped = []
+    header → the template's column).
+
+    Two headers for one column: the synonym listed first wins, whatever the order in the file — «Сумма со
+    скидкой» is the revenue even when «Сумма» (before the discount) stands to its left (Q36). The other header
+    goes to the columns not used."""
+    best: dict[str, tuple[int, int]] = {}  # column → (rank of its synonym, index in the row)
     for i, cell in enumerate(cells):
         name = _norm(cell)
         if not name:
             continue
         # The template's own words first: a profile adds headers, it never takes a synonym away
         # (code review 02.11.2026, p. 5: «Сумма» stays the amount whatever a profile says).
-        column = next((c for c in template.columns if name in c.synonyms or name == c.name), None)
-        if column is None and (alias := (aliases or {}).get(name)):
+        match = next(
+            (
+                (c, 0 if name == c.name else c.synonyms.index(name))
+                for c in template.columns
+                if name in c.synonyms or name == c.name
+            ),
+            None,
+        )
+        if match is None and (alias := (aliases or {}).get(name)):
             column = next((c for c in template.columns if c.name == alias), None)
-        if column and column.name not in found:
-            found[column.name] = i
-        else:
-            unmapped.append(cell.strip())
+            match = (column, len(column.synonyms)) if column else None
+        if match is None:
+            continue
+        column, rank = match
+        if column.name not in best or rank < best[column.name][0]:
+            best[column.name] = (rank, i)
+    found = {name: i for name, (_, i) in best.items()}
+    used = set(found.values())
+    unmapped = [cell.strip() for i, cell in enumerate(cells) if _norm(cell) and i not in used]
     return found, unmapped
 
 

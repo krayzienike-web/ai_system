@@ -146,7 +146,8 @@ TEMPLATES: dict[str, Template] = {
                 _c("menu_item_code", "Код блюда", Kind.TEXT, False, "код"),
                 _c("menu_item_name", "Блюдо", Kind.TEXT, False, "наименование блюда", "наименование"),
                 _c("qty", "Количество", Kind.DECIMAL, True, "кол-во", "кол-во блюд", "количество блюд"),
-                _c("revenue", "Выручка", Kind.DECIMAL, True, "сумма", "сумма со скидкой", "выручка, ₽"),
+                # «Сумма со скидкой» before «Сумма»: the revenue is what the guest paid (Q36, map_header).
+                _c("revenue", "Выручка", Kind.DECIMAL, True, "сумма со скидкой", "выручка, ₽", "сумма"),
                 _c("discount", "Скидка", Kind.DECIMAL, False, "сумма скидки"),
                 _c(
                     "cashier", "Кассир", Kind.TEXT, False, "официант", "сотрудник", "кассир чека"
