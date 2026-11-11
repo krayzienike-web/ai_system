@@ -1,7 +1,7 @@
 """The demo stand (docs/06, stage 5; deploy/): the demo's calendar, the nightly rebuild and its guard."""
 
 from collections.abc import Callable, Iterator
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
@@ -9,9 +9,10 @@ from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session
 
 from app import cli, worker
+from app.agents.models import AgentNote
 from app.core.config import get_settings
 from app.core.period import get_today
-from app.tenancy.models import Tenant
+from app.tenancy.models import Restaurant, Tenant
 from tests.conftest import Network
 
 Env = Callable[..., None]
@@ -78,6 +79,18 @@ def test_the_rebuild_brings_the_demo_network_back_as_on_the_first_day(owner_engi
         assert s.execute(select(func.count()).select_from(User)).scalar_one() == 5
         assert s.execute(select(func.count()).select_from(Finding)).scalar_one() == findings > 0
         assert not s.execute(select(Finding).where(Finding.title == "изменил посетитель")).first()
+        # TC-AG-26: the agents' showcase (`_demo_agents`): the list for R01 asked for the day after tomorrow,
+        # the stuck task of R03 to the HQ, R09's missing export — the planted reasons and nothing else.
+        notes = s.execute(
+            select(AgentNote, Restaurant.code).join(Restaurant, Restaurant.id == AgentNote.restaurant_id)
+        ).all()
+        assert sorted((n.agent, code, n.for_date, n.status) for n, code in notes) == [
+            ("data_check", "R09", cli.DEMO_TODAY, "new"),
+            ("inventory_prep", "R01", cli.DEMO_TODAY + timedelta(days=2), "new"),
+            ("task_stuck", "R03", date(2026, 10, 17), "new"),
+        ]
+        (prep,) = [n for n, _ in notes if n.agent == "inventory_prep"]
+        assert prep.facts["asked"] is True and len(prep.items) == 5 and prep.source == "rules"
 
 
 DEPLOY = Path(__file__).resolve().parents[2] / "deploy"

@@ -84,4 +84,19 @@ describe("the agents' notes in the prototype", () => {
     expect(askRange("2026-10-20")).toEqual({ min: "2026-10-20", max: "2026-11-03" });
     expect(askRange("2026-12-25").max).toBe("2027-01-08");
   });
+
+  // Test engineer's pass after the stage 9 review (TC-UI-40). Runs last: the earlier answers stay in the tab.
+  it("puts a note away with «Не нужно» for everyone in the HQ; a second answer is 409", () => {
+    const check = note(ADMIN, "data_check");
+    expect(post<AgentNote>(`/agents/notes/${check.id}/dismiss`, ADMIN).status).toBe("dismissed");
+    expect(get<AgentNote[]>("/agents/notes", ADMIN).map((n) => n.id)).not.toContain(check.id);
+    expect(get<AgentNote[]>("/agents/notes", ANALYST).map((n) => n.id)).not.toContain(check.id);
+    expect(status(() => post(`/agents/notes/${check.id}/dismiss`, ADMIN))).toBe(409);
+    expect(status(() => post(`/agents/notes/${check.id}/accept`, ADMIN))).toBe(409);
+    expect(status(() => post("/agents/notes/no-such-note/dismiss", ADMIN))).toBe(404);
+  });
+
+  it("does not make a list for a chosen day without the server", () => {
+    expect(status(() => post("/agents/inventory-prep", DIRECTOR))).toBe(404);
+  });
 });

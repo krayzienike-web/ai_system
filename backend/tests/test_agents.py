@@ -20,6 +20,7 @@ from app.ai.gateway import FakeModel, Gateway, ModelRequest, Reply, text_reply
 from app.catalog.models import Product
 from app.core.period import get_today
 from app.imports.models import ImportBatch
+from app.imports.templates import TEMPLATES
 from app.insights.models import Finding
 from app.main import app
 from app.operations.models import InventoryCount, Receipt
@@ -561,6 +562,9 @@ def test_one_networks_failure_does_not_stop_the_others(
     monkeypatch.setattr(service, "run_network", flaky)
     service.run_all(TODAY)
     assert len(calls) == 2
+    with Session(owner_engine) as s:  # the failed network has nothing, the other one its notes
+        tenants = set(s.execute(select(AgentNote.tenant_id)).scalars())
+    assert tenants == {calls[1]}
 
 
 def test_the_rules_say_days_and_steps_in_russian() -> None:
@@ -577,3 +581,301 @@ def test_the_rules_say_days_and_steps_in_russian() -> None:
     assert "Отметьте ее выполненной" in texts.task_due(bare)[1]
     missing = {"template": "sales", "status": "stale", "last_date": "2026-10-11"}
     assert texts._missing_line(missing) == "Продажи — последние данные за 11.10"
+
+
+# ------------------------------------------------------------------ end-of-stage pass of the test engineer
+
+
+def test_the_rules_texts_at_their_edges() -> None:
+    """TC-AG-17: Russian plurals at 11–14, 21, 22, 101, 111; «сегодня» on the count's day; the stuck-task and
+    data-check texts say exactly the facts' days and dates."""
+    assert (
+        texts._days(1) == "завтра"
+        and texts._days(12) == "через 12 дней"
+        and texts._days(14) == "через 14 дней"
+    )
+    assert texts._days(22) == "через 22 дня" and texts._days(101) == "через 101 день"
+    assert texts._days(111) == "через 111 дней"
+    assert texts._positions(11) == "11 позиций" and texts._positions(12) == "12 позиций"
+    assert texts._positions(22) == "22 позиции" and texts._positions(111) == "111 позиций"
+    assert texts._steps(11) == "11 шагов" and texts._steps(21) == "21 шаг" and texts._steps(24) == "24 шага"
+    facts = {
+        "count_on": "2026-10-22",
+        "days_left": 0,
+        "last_count": "2026-09-21",
+        "products": [
+            {"code": "P1", "name": "Сыр", "reason": "finding", "finding": "Перерасход сыра"},
+            {"code": "P2", "name": "Филе", "reason": "shortage", "diff_rub": "1234567"},
+            {"code": "P3", "name": "Икра", "reason": "value", "stock_rub": "999"},
+        ],
+    }
+    title, text, items = texts.inventory(facts)
+    assert title == "Инвентаризация 22.10: что пересчитать внимательно"
+    assert text == (
+        "Пересчет сегодня, 22.10. По прошлому пересчету 21.09 и открытым находкам в списке 3 позиции: "
+        "их стоит пересчитать первыми и дважды."
+    )
+    assert items == [
+        "Сыр — по нему открыта находка «Перерасход сыра»",
+        "Филе — на пересчете 21.09 не хватило на 1 234 567 ₽",
+        "Икра — дорогой остаток: 999 ₽ на 21.09",
+    ]
+    stuck = {"task": "Т", "due_on": "2026-10-17", "days_late": 3, "move_to": "2026-10-27"}
+    assert texts.task_stuck(stuck) == (
+        "Задача просрочена и не начата",
+        "«Т» — срок был 17.10, просрочена на 3 дн., к ней еще не приступили. "
+        "Можно перенести срок на 27.10 или обсудить задачу с директором.",
+        [],
+    )
+    check = {
+        "missing": [
+            {"template": "sales", "status": "missing", "last_date": None},
+            {"template": "write_offs", "status": "stale", "last_date": "2026-10-11"},
+        ]
+    }
+    _, _, lines = texts.data_check(check)
+    assert lines == [
+        f"{TEMPLATES['sales'].title} — ни одной выгрузки",
+        f"{TEMPLATES['write_offs'].title} — последние данные за 11.10",
+    ]
+    assert texts.by_rules("task_stuck", stuck) == texts.task_stuck(stuck)
+
+
+def test_the_count_day_itself_gets_the_list_and_the_day_after_does_not(
+    world: World, owner_engine: Engine
+) -> None:
+    """TC-AG-18: «за 0–2 дня»: on 22.10, the day of the count, the list says «сегодня»; on 23.10 the count did
+    not happen — the next is a cycle on (22.11), no list."""
+    with Session(owner_engine) as s, s.begin():
+        system_context(s, world.a)
+        (today,) = inventory.drafts(s, list(_restaurants(s)), date(2026, 10, 22))
+        assert today.for_date == date(2026, 10, 22) and today.facts["days_left"] == 0
+        assert texts.inventory(today.facts)[1].startswith("Пересчет сегодня, 22.10")
+        assert inventory.drafts(s, list(_restaurants(s)), date(2026, 10, 23)) == []
+
+
+def test_the_list_holds_at_most_twelve_products_seen_by_the_director(
+    world: World, owner_engine: Engine
+) -> None:
+    """TC-AG-19: 13 checked findings with a task, plus one bigger finding still waiting for the review: the
+    list has 12 products — the 12 largest checked findings by effect; the pending one is not there (the
+    director does not see it, ADR 0009), and the shortage/stock lines no longer fit."""
+    with Session(owner_engine) as s, s.begin():
+        for i in range(14):
+            code = f"Q{i:02d}"
+            prod = Product(tenant_id=world.a, code=code, name=f"Товар {code}", base_unit="kg")
+            s.add(prod)
+            f = _finding(world.a, world.a1, f"M1:A1:{code}", f"Находка {code}")
+            # Q00 is the biggest (9999 ₽) but not checked; Q01…Q13: 4990, 4980, … 4870 ₽ — above P1's 1000.
+            f.effect_rub_month = Decimal(9999) if i == 0 else Decimal(5000 - 10 * i)
+            if i == 0:
+                f.review_status = "pending"
+            s.add(f)
+            s.flush()
+            s.add(_task(world.a, world.a1, f"Задача {code}", date(2026, 11, 30), finding=f.id))
+    service.run_all(TODAY)
+    (note,) = _notes(owner_engine, "inventory_prep")
+    codes = [p["code"] for p in note.facts["products"]]
+    assert inventory.MAX_ITEMS == 12
+    assert codes == [f"Q{i:02d}" for i in range(1, 13)]  # Q13 (4870 ₽), P1, P2, P3 are cut by the cap
+    assert {p["reason"] for p in note.facts["products"]} == {"finding"}
+    assert len(note.items) == 12 and "в списке 12 позиций" in note.text
+
+
+def test_the_morning_check_names_a_stale_export_with_its_last_day(world: World, owner_engine: Engine) -> None:
+    """TC-AG-20: today 20.10 (Tue), the last full week is 12.10–18.10. A2's write-offs up to 11.10 are stale:
+    «Списания — последние данные за 11.10»; up to 12.10 they are fresh and the note expires. A3 with no stock
+    count ever gets that line too. The next day — a note of its own, yesterday's expires."""
+
+    def a2_write_offs_until(day: date) -> None:
+        with Session(owner_engine) as s, s.begin():
+            for b in s.execute(
+                select(ImportBatch).where(
+                    ImportBatch.restaurant_id == world.a2, ImportBatch.template == "write_offs"
+                )
+            ).scalars():
+                b.period_from = b.period_to = day
+
+    a2_write_offs_until(date(2026, 10, 11))
+    with Session(owner_engine) as s, s.begin():
+        s.query(ImportBatch).filter(
+            ImportBatch.restaurant_id == world.a3, ImportBatch.template == "inventory_counts"
+        ).delete()
+    service.run_all(TODAY)
+    notes = {n.restaurant_id: n for n in _notes(owner_engine, "data_check")}
+    assert notes[world.a2].facts["missing"] == [
+        {"template": "write_offs", "status": "stale", "last_date": "2026-10-11"}
+    ]
+    assert notes[world.a2].items == [f"{TEMPLATES['write_offs'].title} — последние данные за 11.10"]
+    assert notes[world.a3].items == [
+        f"{TEMPLATES['write_offs'].title} — ни одной выгрузки",
+        f"{TEMPLATES['inventory_counts'].title} — ни одной выгрузки",
+    ]
+    assert world.a1 not in notes
+    a2_write_offs_until(date(2026, 10, 12))  # the first day of the last full week: fresh
+    service.run_all(TODAY)
+    status = {(n.restaurant_id, n.for_date): n.status for n in _notes(owner_engine, "data_check")}
+    assert status == {(world.a2, TODAY): "expired", (world.a3, TODAY): "new"}
+    service.run_all(TODAY + timedelta(days=1))
+    status = {(n.restaurant_id, n.for_date): n.status for n in _notes(owner_engine, "data_check")}
+    assert status == {
+        (world.a2, TODAY): "expired",
+        (world.a3, TODAY): "expired",
+        (world.a3, TODAY + timedelta(days=1)): "new",
+    }
+
+
+def test_the_api_names_what_create_task_does(world: World, client: TestClient) -> None:
+    """TC-AG-21: NoteOut — the list gives the task's title and day, the stuck task — the new deadline, a
+    reminder — nothing to do; the restaurant's code and name, the source and the status."""
+    service.run_all(TODAY)
+    director = _by(client, login(client, "director1@a.ru"))
+    prep, due = director["inventory_prep:A1"], director["task_due:A1"]
+    assert {k: prep[k] for k in ("action", "action_due_on", "action_title", "task_id", "for_date")} == {
+        "action": "create_task",
+        "action_due_on": "2026-10-22",
+        "action_title": "Подготовка к инвентаризации 22.10",
+        "task_id": None,
+        "for_date": "2026-10-22",
+    }
+    assert prep["restaurant_id"] == str(world.a1) and prep["restaurant_code"] == "A1"
+    assert prep["restaurant_name"].endswith("A1") and prep["audience"] == "director"
+    assert (prep["source"], prep["status"], prep["result_task_id"]) == ("rules", "new", None)
+    assert (due["action"], due["action_due_on"], due["action_title"]) == (None, None, None)
+    assert due["task_id"] == str(world.due.id) and due["for_date"] == "2026-10-21"
+    stuck = _by(client, login(client, "admin@a.ru"))["task_stuck:A1"]
+    assert (stuck["action"], stuck["action_due_on"], stuck["action_title"]) == (
+        "move_due",
+        "2026-10-27",
+        None,
+    )
+    assert stuck["audience"] == "hq" and stuck["task_id"] == str(world.stuck.id)
+
+
+def test_the_hq_filters_the_notes_by_restaurant(world: World, client: TestClient) -> None:
+    """TC-AG-22: `?restaurant=` — the HQ gets one restaurant's notes; a director asking for another restaurant
+    gets nothing (RLS), for their own — their notes."""
+    service.run_all(TODAY)
+
+    def codes(headers: dict[str, str], restaurant: UUID) -> list[str]:
+        response = client.get("/api/agents/notes", params={"restaurant": str(restaurant)}, headers=headers)
+        assert response.status_code == 200, response.text
+        return sorted(n["agent"] + ":" + n["restaurant_code"] for n in response.json())
+
+    admin, analyst = login(client, "admin@a.ru"), login(client, "analyst@a.ru")
+    assert codes(admin, world.a3) == ["data_check:A3"]
+    assert codes(analyst, world.a1) == ["inventory_prep:A1", "task_due:A1", "task_stuck:A1"]
+    assert codes(admin, world.a2) == []
+    director1 = login(client, "director1@a.ru")
+    assert codes(director1, world.a3) == []
+    assert codes(director1, world.a1) == ["inventory_prep:A1", "task_due:A1"]
+
+
+def test_the_writer_asks_once_to_correct_a_figure_then_keeps_the_rules(network: Network) -> None:
+    """TC-AG-23: `agent_writer` — a figure not in the facts (9 999) gets one request to correct it;
+    corrected — the model's text with the prompt's version; wrong twice — None (the rules' text stays), no
+    third call."""
+    from app.core.db import get_sessionmaker
+
+    facts = {
+        "count_on": "2026-10-22",
+        "days_left": 2,
+        "last_count": "2026-09-21",
+        "products": [{"code": "P2", "name": "Товар P2", "reason": "shortage", "diff_rub": "200"}],
+    }
+    rules = texts.inventory(facts)[1]
+    with get_sessionmaker()() as s:
+        ctx = system_context(s, network.a.id)
+        wrong = FakeModel()
+        wrong.replies += [_model("Недостача 9 999 ₽ — начните с нее.")] * 3
+        assert agent_writer.writer(Gateway(wrong), ctx)("inventory_prep", facts, rules) is None
+        assert len(wrong.requests) == 2  # the first answer and one correction, no more
+        assert "9999" in json.dumps(wrong.requests[1].messages, ensure_ascii=False).replace(" ", "")
+        fixed = FakeModel()
+        fixed.replies += [_model("Недостача 9 999 ₽."), _model("Недостача 200 ₽ — начните с нее.")]
+        assert agent_writer.writer(Gateway(fixed), ctx)("inventory_prep", facts, rules) == (
+            "Недостача 200 ₽ — начните с нее.",
+            1,
+        )
+        # Strict: a small count not in the facts is a figure too («7 позиций» while the list has 1).
+        counts = FakeModel()
+        counts.replies += [_model("Пересчитайте 7 позиций.")] * 2
+        assert agent_writer.writer(Gateway(counts), ctx)("inventory_prep", facts, rules) is None
+        # The model off (no reply): None, not an error.
+        assert agent_writer.writer(Gateway(FakeModel()), ctx)("inventory_prep", facts, rules) is None
+
+
+def test_the_worker_runs_the_agents_every_morning_at_0547_utc(
+    world: World, owner_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """TC-AG-24: the cron job `morning_agents` at 05:47 UTC (08:47 Moscow, Q38) every day, with or without the
+    demo rebuild; it runs every network with the model's writer when the gateway is on."""
+    import asyncio
+
+    from app import worker
+
+    job = {j.name: j for j in worker.cron_jobs()}["cron:morning_agents"]
+    assert job.hour == {5} and job.minute == {47} and job.weekday is None and job.day is None
+    fake = FakeModel()
+    fake.replies += [_model("Посмотрите это сообщение и решите, что делать.")] * 50
+    monkeypatch.setattr(worker, "get_gateway", lambda: Gateway(fake))
+    monkeypatch.setattr(worker, "get_today", lambda: TODAY)
+    asyncio.run(worker.morning_agents({}))
+    notes = _notes(owner_engine)
+    assert {n.agent for n in notes} == {"inventory_prep", "task_due", "task_stuck", "data_check"}
+    assert all(n.source == "model" and n.items == texts.by_rules(n.agent, n.facts)[2] for n in notes)
+
+
+def test_run_agents_from_the_command_line_is_idempotent(
+    world: World, owner_engine: Engine, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """TC-AG-25: `python -m app.cli run-agents` — the morning pass by hand, texts by rules without the model;
+    it prints how many notes wait; a second run writes nothing new."""
+    from app import cli
+
+    monkeypatch.setattr(cli, "date_today", lambda: TODAY)
+    monkeypatch.setattr("sys.argv", ["app.cli", "run-agents"])
+    cli.main()
+    with Session(owner_engine) as s:
+        waiting = s.execute(
+            select(func.count()).select_from(AgentNote).where(AgentNote.status == "new")
+        ).scalar()
+        total = s.execute(select(func.count()).select_from(AgentNote)).scalar()
+    assert capsys.readouterr().out == f"agents' notes waiting: {waiting}\n" and waiting and waiting >= 5
+    cli.main()
+    assert capsys.readouterr().out == f"agents' notes waiting: {waiting}\n"
+    with Session(owner_engine) as s:
+        assert s.execute(select(func.count()).select_from(AgentNote)).scalar() == total
+    assert all(n.source == "rules" for n in _notes(owner_engine))
+
+
+def test_a_deadline_moves_up_to_ninety_days_ahead(world: World, network: Network) -> None:
+    """TC-AG-07 (edge): exactly 90 days ahead and today itself are allowed; the move is audited."""
+    from app.core.db import get_sessionmaker
+    from app.tasks.service import move_due
+    from app.tenancy.context import load_access_context
+
+    with get_sessionmaker()() as s:
+        admin = load_access_context(s, network.a.users["admin@a.ru"], world.a)
+        assert admin is not None
+        assert move_due(s, admin, world.stuck.id, TODAY + timedelta(days=90), today=TODAY).due_on == date(
+            2027, 1, 18
+        )  # 20.10.2026 + 90 days: 11 left in October + 30 + 31 = 72 → 18 more days of January
+        assert move_due(s, admin, world.stuck.id, TODAY, today=TODAY).due_on == TODAY
+        s.rollback()
+
+
+def test_a_list_for_a_count_that_has_passed_is_not_taken_into_work(
+    world: World, client: TestClient, owner_engine: Engine
+) -> None:
+    """TC-AG-27: the list asked for today (20.10) and answered tomorrow, before the morning run expired it:
+    «Создать задачу» — 422 «День пересчета уже прошел», no task; «Не нужно» still works."""
+    director2 = login(client, "director2@a.ru")
+    body = {"restaurant_id": str(world.a2), "count_on": TODAY.isoformat()}
+    note = client.post("/api/agents/inventory-prep", json=body, headers=director2).json()
+    app.dependency_overrides[get_today] = lambda: TODAY + timedelta(days=1)
+    late = client.post(f"/api/agents/notes/{note['id']}/accept", headers=director2)
+    assert late.status_code == 422 and "уже прошел" in late.json()["detail"]
+    with Session(owner_engine) as s:
+        assert not s.execute(select(Task).where(Task.title == note["action_title"])).first()
+    assert client.post(f"/api/agents/notes/{note['id']}/dismiss", headers=director2).status_code == 200
