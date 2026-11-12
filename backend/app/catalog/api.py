@@ -1,11 +1,12 @@
 from datetime import datetime
+from decimal import Decimal
 from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from app.catalog import aliases
+from app.catalog import aliases, units
 from app.core.deps import SessionDep, require
 from app.imports.models import ImportBatch
 from app.tenancy.context import AccessContext
@@ -66,5 +67,52 @@ def change_alias(alias_id: UUID, body: AliasChangeIn, ctx: CanRead, session: Ses
 @router.delete("/aliases/{alias_id}")
 def delete_alias(alias_id: UUID, ctx: CanRead, session: SessionDep) -> AliasChangeOut:
     out = AliasChangeOut(affected_files=_refs(aliases.remove(session, ctx, alias_id)))
+    session.commit()
+    return out
+
+
+class UnitFactorOut(BaseModel):
+    id: UUID
+    product_id: UUID
+    product_code: str
+    product_name: str
+    base_unit: str
+    unit: str  # normalised: how the import compares it
+    unit_text: str  # as the export writes it
+    factor: Decimal  # base units in one `unit_text`
+    files: int  # published files converted by it
+    created_at: datetime
+
+
+class UnitFactorIn(BaseModel):
+    product_id: UUID
+    unit_text: str = Field(min_length=1, max_length=40)
+    factor: str = Field(min_length=1, max_length=30)  # «2,5» as a person types it: the service reads it
+
+
+class UnitFactorSaved(BaseModel):
+    factor: UnitFactorOut
+    # Files loaded with the old value: re-process them so the numbers follow the change.
+    affected_files: list[FileRef]
+
+
+@router.get("/settings/units")
+def list_unit_factors(ctx: CanRead, session: SessionDep) -> list[UnitFactorOut]:
+    return [UnitFactorOut(**row) for row in units.list_factors(session)]
+
+
+@router.put("/settings/units")
+def save_unit_factor(body: UnitFactorIn, ctx: CanRead, session: SessionDep) -> UnitFactorSaved:
+    row, affected = units.save(
+        session, ctx, product_id=body.product_id, unit_text=body.unit_text, factor=body.factor
+    )
+    out = UnitFactorSaved(factor=UnitFactorOut(**row), affected_files=_refs(affected))
+    session.commit()
+    return out
+
+
+@router.delete("/settings/units/{factor_id}")
+def delete_unit_factor(factor_id: UUID, ctx: CanRead, session: SessionDep) -> AliasChangeOut:
+    out = AliasChangeOut(affected_files=_refs(units.remove(session, ctx, factor_id)))
     session.commit()
     return out

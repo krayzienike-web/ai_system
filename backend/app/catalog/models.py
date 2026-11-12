@@ -119,3 +119,20 @@ class NameAlias(IdMixin, TenantMixin, TimestampMixin, Base):
     source_text: Mapped[str] = mapped_column(String(300))
     target_id: Mapped[UUID]
     created_by: Mapped[UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+
+
+class UnitFactor(IdMixin, TenantMixin, TimestampMixin, Base):
+    """How much of a product's base unit one unit of an export holds (Q35): «1 упак Моцареллы = 2,5 кг».
+    The HQ keeps the list for the whole network; an import never guesses a unit it does not know."""
+
+    __tablename__ = "unit_factors"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "product_id", "unit", name="one_factor_per_unit"),
+        CheckConstraint("factor > 0", name="factor_positive"),
+    )
+
+    product_id: Mapped[UUID] = mapped_column(ForeignKey("products.id", ondelete="CASCADE"))
+    unit: Mapped[str] = mapped_column(String(40))  # normalised: «упак», «бут 0 5»
+    unit_text: Mapped[str] = mapped_column(String(40))  # as the export writes it: «Упак.», «бут 0,5»
+    factor: Mapped[Decimal] = mapped_column(Numeric(14, 6))  # base units in one `unit`
+    created_by: Mapped[UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))

@@ -43,6 +43,8 @@ import type {
   Disagreement,
   DisagreeReason,
   AgentNote,
+  UnitFactor,
+  UnitFactorSaved,
 } from "./types";
 import type { PeriodChoice } from "../state/ui";
 
@@ -98,15 +100,16 @@ export function useUploadImport() {
   });
 }
 
-export function useBatchAction(action: "publish" | "rollback" | "reprocess") {
+export function useBatchAction(action: "publish" | "rollback" | "reprocess" | "recheck") {
   const client = useQueryClient();
   return useMutation({
     mutationFn: (id: string) =>
       api<ImportBatch>(`/imports/${id}/${action}`, { method: "POST" }),
-    // Publishing changes how many files rely on each remembered match.
+    // Publishing changes how many files rely on each remembered match and each unit factor.
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: ["imports"] });
       void client.invalidateQueries({ queryKey: ["aliases"] });
+      void client.invalidateQueries({ queryKey: ["unit-factors"] });
       void client.invalidateQueries({ queryKey: ["analytics-run"] }); // the findings are being recomputed
     },
   });
@@ -157,6 +160,27 @@ export function useAliasEdit() {
           })
         : api<AffectedFiles>(`/aliases/${id}`, { method: "DELETE" }),
     onSuccess: () => client.invalidateQueries({ queryKey: ["aliases"] }),
+  });
+}
+
+// Units of the exports per product (Q35): the HQ's list in «Нормы и настройки».
+export const useUnitFactors = () =>
+  useQuery({ queryKey: ["unit-factors"], queryFn: () => api<UnitFactor[]>("/settings/units") });
+
+export function useSaveUnitFactor() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { product_id: string; unit_text: string; factor: string }) =>
+      api<UnitFactorSaved>("/settings/units", { method: "PUT", body: JSON.stringify(body) }),
+    onSuccess: () => client.invalidateQueries({ queryKey: ["unit-factors"] }),
+  });
+}
+
+export function useDeleteUnitFactor() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api<AffectedFiles>(`/settings/units/${id}`, { method: "DELETE" }),
+    onSuccess: () => client.invalidateQueries({ queryKey: ["unit-factors"] }),
   });
 }
 

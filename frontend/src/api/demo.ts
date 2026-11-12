@@ -31,7 +31,9 @@ import {
   digestItems,
 } from "./demoDigests";
 import { demoNorms } from "./demoNorms";
+import { demoUnits } from "./demoUnits";
 import type {
+  CatalogOption,
   AgentNote,
   ApiFinding,
   ApiTask,
@@ -1004,6 +1006,10 @@ export function demoRequest(
     );
   if (path === "/settings/engine") return demoEngineParams(init, v.admin);
   if (path === "/settings/norms") return demoNorms(init, v.admin);
+  if (path.startsWith("/settings/units"))
+    return demoUnits(path, init, v.admin, (answers["/catalog/product"] as CatalogOption[]) ?? []);
+  if (/^\/imports\/[^/]+\/recheck$/.test(path))
+    throw new ApiError(422, "Проверить заново можно только файл с ошибками"); // demo files have no unknown units
 
   // Weekly digests (stage 6).
   const disagreeing = /^\/findings\/([^/]+)\/disagree$/.exec(path);

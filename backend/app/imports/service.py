@@ -5,12 +5,12 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import ColumnElement, delete, func, insert, or_, select, text
+from sqlalchemy import ColumnElement, delete, func, insert, or_, select, text, true
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from app.catalog.aliases import TARGETS
-from app.catalog.models import ContractPrice, MenuItem, NameAlias, Product, RecipeLine, Supplier
+from app.catalog.models import ContractPrice, MenuItem, NameAlias, Product, RecipeLine, Supplier, UnitFactor
 from app.catalog.recipes import Line, find_cycle, lines_on
 from app.core.errors import ConflictError, ForbiddenError, InvalidError, NotFoundError
 from app.core.period import last_full_week_end
@@ -110,6 +110,8 @@ def load_lookups(session: Session, restaurant_id: UUID | None = None) -> Lookups
         target = refs[a.kind].get(a.target_id)
         if target is not None:
             lk.aliases[(a.kind, a.source_key)] = target
+    for f in session.execute(select(UnitFactor)).scalars():
+        lk.unit_factors[(f.product_id, f.unit)] = f.factor
     return lk
 
 
@@ -302,6 +304,30 @@ def _apply(batch: ImportBatch, result: Result | None, file_errors: list[dict[str
         batch.errors = [{"row": None, "column": None, "message": "В файле нет строк с данными"}]
 
 
+def _not_loaded(
+    session: Session, sha: str, template: Template, restaurant_id: UUID | None, *, but: UUID | None = None
+) -> None:
+    duplicate = session.execute(
+        select(ImportBatch.id).where(
+            ImportBatch.sha256 == sha,
+            ImportBatch.template == template.name,
+            # The same file for another restaurant is not a duplicate (a transfer exported by both sides).
+            ImportBatch.restaurant_id.is_(None)
+            if restaurant_id is None
+            else ImportBatch.restaurant_id == restaurant_id,
+            ImportBatch.status.in_([BatchStatus.VALIDATED, BatchStatus.PUBLISHED]),
+            ImportBatch.id != but if but is not None else true(),
+        )
+    ).first()
+    if duplicate:
+        raise ConflictError(
+            "Этот файл уже загружен для этого ресторана"
+            if restaurant_id is not None
+            else "Этот файл справочника уже загружен для сети",
+            code="duplicate",
+        )
+
+
 def upload(
     session: Session,
     ctx: AccessContext,
@@ -329,24 +355,7 @@ def upload(
         template = _template(template_name)
     check_access(session, ctx, template, restaurant_id)
     sha = hashlib.sha256(raw).hexdigest()
-    duplicate = session.execute(
-        select(ImportBatch.id).where(
-            ImportBatch.sha256 == sha,
-            ImportBatch.template == template.name,
-            # The same file for another restaurant is not a duplicate (a transfer exported by both sides).
-            ImportBatch.restaurant_id.is_(None)
-            if restaurant_id is None
-            else ImportBatch.restaurant_id == restaurant_id,
-            ImportBatch.status.in_([BatchStatus.VALIDATED, BatchStatus.PUBLISHED]),
-        )
-    ).first()
-    if duplicate:
-        raise ConflictError(
-            "Этот файл уже загружен для этого ресторана"
-            if restaurant_id is not None
-            else "Этот файл справочника уже загружен для сети",
-            code="duplicate",
-        )
+    _not_loaded(session, sha, template, restaurant_id)
 
     result, file_errors, column_map, lk = _run(session, template, raw, filename, today, restaurant_id)
     batch = ImportBatch(
@@ -519,6 +528,41 @@ def publish(session: Session, ctx: AccessContext, batch_id: UUID, *, today: date
         entity="import_batch",
         entity_id=batch.id,
         payload={"rows": batch.rows_valid},
+    )
+    return batch
+
+
+def recheck(session: Session, ctx: AccessContext, batch_id: UUID, *, today: date) -> ImportBatch:
+    """Checks a failed file again with today's reference data — after the HQ set a unit's factor (Q35),
+    with no new upload. A file that passes waits for «Загрузить», as after an upload."""
+    batch = _locked(session, batch_id)
+    if batch is None:
+        raise NotFoundError("Загрузка не найдена")
+    template = _template(batch.template)
+    check_access(session, ctx, template, batch.restaurant_id)
+    if batch.status != BatchStatus.FAILED:
+        raise InvalidError("Проверить заново можно только файл с ошибками")
+    _not_loaded(session, batch.sha256, template, batch.restaurant_id, but=batch.id)
+    result, file_errors, column_map, lk = _run(
+        session, template, _source(batch), batch.filename, today, batch.restaurant_id
+    )
+    _apply(batch, result, file_errors, lk)
+    if column_map:
+        batch.column_map = column_map
+    if template.name == "recipes" and result is not None and batch.status == BatchStatus.VALIDATED:
+        cycle = recipe_cycle(session, result.records)
+        if cycle:
+            batch.status = BatchStatus.FAILED
+            batch.errors = [{"row": None, "column": None, "message": cycle}]
+    session.flush()
+    audit(
+        session,
+        tenant_id=ctx.tenant_id,
+        user_id=ctx.user_id,
+        action="import.recheck",
+        entity="import_batch",
+        entity_id=batch.id,
+        payload={"status": batch.status},
     )
     return batch
 
@@ -772,5 +816,8 @@ def catalog_options(session: Session, kind: str) -> list[dict[str, Any]]:
     model = TARGETS.get(kind)
     if model is None:
         raise InvalidError(f"Неизвестный справочник «{kind}»")
+    if model is Product:  # a product's base unit: what a unit factor converts to (Q35)
+        products = session.execute(select(Product).order_by(Product.name)).scalars()
+        return [{"id": p.id, "code": p.code, "name": p.name, "base_unit": p.base_unit} for p in products]
     rows = session.execute(select(model.id, model.code, model.name).order_by(model.name)).all()
     return [{"id": i, "code": c, "name": n} for i, c, n in rows]

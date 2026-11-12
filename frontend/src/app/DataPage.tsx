@@ -21,6 +21,7 @@ import { plural } from "../lib/format";
 import { useViewer } from "../lib/useViewer";
 import { RecalcNote } from "./analytics/RecalcNote";
 import { MarkWithAi } from "./MarkWithAi";
+import { UnitFixes } from "./UnitFactors";
 
 const NETWORK = "network";
 const MAX_MB = 20; // the server's limit (imports/service.py MAX_BYTES)
@@ -170,7 +171,7 @@ function Report({
   const rollback = useBatchAction("rollback");
   const [shown, setShown] = useState(8);
   const [matched, setMatched] = useState<ImportBatch | null>(null);
-  const current = rollback.data ?? publish.data ?? matched ?? batch;
+  const current = rollback.data ?? publish.data ?? matched ?? batch; // matched: after a match or a recheck
   const error = (publish.error ?? rollback.error) as Error | null;
 
   return (
@@ -228,7 +229,11 @@ function Report({
           <div className="flex items-center gap-2 font-medium text-loss">
             <XCircle size={17} /> Файл не загружен: {plural(current.errors.length, ["ошибка", "ошибки", "ошибок"])}
           </div>
-          <p className="mt-1 text-ink-2">Ни одна строка не попала в систему — исправьте файл и загрузите его снова.</p>
+          <p className="mt-1 text-ink-2">
+            {current.errors.every((e) => e.fix)
+              ? "Ни одна строка не попала в систему. Файл исправлять не нужно: задайте коэффициенты единиц ниже и проверьте его заново."
+              : "Ни одна строка не попала в систему — исправьте файл и загрузите его снова."}
+          </p>
           <ul className="mt-3 space-y-1.5">
             {current.errors.slice(0, shown).map((e, i) => (
               <li key={i} className="flex gap-2">
@@ -247,6 +252,8 @@ function Report({
           )}
         </div>
       )}
+
+      <UnitFixes key={`${current.id}:${current.errors.length}`} batch={current} onChecked={setMatched} />
 
       {current.unmatched.length > 0 && current.status === "needs_matching" && (
         <Matching key={current.id + current.unmatched.length} batch={current} onMatched={setMatched} />

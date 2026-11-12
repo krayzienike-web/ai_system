@@ -28,7 +28,7 @@ from sqlalchemy.orm import Session
 
 from app.agents.models import AgentNote
 from app.ai.models import AiSuggestion, ChatThread
-from app.catalog.models import NameAlias, Product
+from app.catalog.models import NameAlias, Product, UnitFactor
 from app.core.period import get_today
 from app.experiments.models import Experiment
 from app.imports.models import ImportBatch, SourceProfile
@@ -61,6 +61,8 @@ BODY_REFS = {
     "POST /api/digests/rebuild": {"restaurant_id": "{restaurant_id}"},
     # Stage 9: a list for another network's restaurant is refused
     "POST /api/agents/inventory-prep": {"restaurant_id": "{restaurant_id}", "count_on": "2026-10-21"},
+    # Q35: a factor for another network's product is refused
+    "PUT /api/settings/units": {"product_id": "{product_id}", "unit_text": "упак", "factor": "2"},
 }
 # Bodies that pass validation, so that a refusal is about access and not about the form (403 or 404 only).
 BODIES: dict[str, dict[str, Any]] = {
@@ -95,6 +97,8 @@ class Foreign:
     suggestion_id: UUID
     profile_id: UUID
     note_id: UUID
+    factor_id: UUID
+    product_id: UUID
     restaurant_id: UUID
     code: str
     names: list[str]
@@ -195,7 +199,10 @@ def foreign(network: Network, owner_engine: Engine) -> Foreign:
             source="rules",
             created_on=TODAY,
         )
-        s.add_all([alias, thread, proposal, profile, note])
+        factor = UnitFactor(
+            tenant_id=b.id, product_id=item.id, unit="упак", unit_text="упак", factor=Decimal(2)
+        )
+        s.add_all([alias, thread, proposal, profile, note, factor])
         s.flush()
         return Foreign(
             finding.id,
@@ -207,6 +214,8 @@ def foreign(network: Network, owner_engine: Engine) -> Foreign:
             proposal.id,
             profile.id,
             note.id,
+            factor.id,
+            item.id,
             b.restaurants["B1"],
             "B1",
             [
@@ -247,6 +256,8 @@ def _ids(f: Foreign) -> dict[str, str]:
         "suggestion_id": str(f.suggestion_id),
         "profile_id": str(f.profile_id),
         "note_id": str(f.note_id),
+        "factor_id": str(f.factor_id),
+        "product_id": str(f.product_id),
         "restaurant_id": str(f.restaurant_id),
         "code": f.code,
     }

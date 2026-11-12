@@ -106,8 +106,9 @@ def test_units_are_converted_to_base_and_unknown_or_incompatible_units_are_error
     r = run("receipts", text)
     assert [x["qty"] for x in r.records] == [Decimal("0.500"), Decimal(30)]
     assert [(e.row, e.column) for e in r.errors] == [(3, "Ед. изм."), (4, "Ед. изм.")]
-    assert "неизвестная единица «упак» у товара «Сыр Моцарелла»" in r.errors[0].message
-    assert "нужен коэффициент" in r.errors[1].message
+    assert "единица «упак» у товара «Сыр Моцарелла» неизвестна: задайте, сколько кг" in r.errors[0].message
+    assert "задайте коэффициент" in r.errors[1].message
+    assert r.errors[0].fix is not None and r.errors[0].fix["unit"] == "упак"
 
 
 def test_amount_check_is_a_warning_and_bad_values_are_errors() -> None:

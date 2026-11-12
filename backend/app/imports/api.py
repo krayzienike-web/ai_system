@@ -37,6 +37,31 @@ class TemplateOut(BaseModel):
     one_of: list[list[str]]
 
 
+class UnitFixOut(BaseModel):
+    """A unit of the file the network has no factor for (Q35): set it, then «Проверить заново»."""
+
+    product_id: UUID
+    product_name: str
+    unit: str
+    unit_text: str
+    base_unit: str
+    rows: int  # rows of the file with this product and unit (among the errors shown)
+
+
+def unit_fixes(errors: list[dict[str, Any]]) -> list[UnitFixOut]:
+    out: dict[tuple[str, str], UnitFixOut] = {}
+    for e in errors:
+        fix = e.get("fix")
+        if not fix or fix.get("kind") != "unit_factor":
+            continue
+        key = (fix["product_id"], fix["unit"])
+        if key in out:
+            out[key].rows += 1
+        else:
+            out[key] = UnitFixOut(**{k: v for k, v in fix.items() if k != "kind"}, rows=1)
+    return list(out.values())
+
+
 class BatchOut(BaseModel):
     id: UUID
     restaurant_id: UUID | None
@@ -57,11 +82,19 @@ class BatchOut(BaseModel):
 
     # The file's columns were not recognised: the screen offers «Разметить с ИИ» (stage 5.5).
     markable: bool = False
+    # Units without a factor, one per product and unit: the HQ sets them right on the report (Q35).
+    unit_fixes: list[UnitFixOut] = Field(default_factory=list)
 
     @classmethod
     def of(cls, b: ImportBatch) -> "BatchOut":
-        fields = {name: getattr(b, name) for name in cls.model_fields if name != "markable"}
-        return cls(**fields, markable=any(e.get("code") == "no_header" for e in b.errors or []))
+        computed = {"markable", "unit_fixes"}
+        fields = {name: getattr(b, name) for name in cls.model_fields if name not in computed}
+        errors = b.errors or []
+        return cls(
+            **fields,
+            markable=any(e.get("code") == "no_header" for e in errors),
+            unit_fixes=unit_fixes(errors),
+        )
 
 
 @router.get("/imports/templates")
@@ -175,6 +208,7 @@ class CatalogOption(BaseModel):
     id: UUID
     code: str
     name: str
+    base_unit: str | None = None  # products only: what a unit factor converts to
 
 
 @router.get("/catalog/{kind}")
@@ -188,6 +222,14 @@ def match(batch_id: UUID, body: MatchesIn, ctx: CanRead, session: SessionDep, to
         session, ctx, batch_id, [(m.kind, m.key, m.target_id) for m in body.matches], today=today
     )
     out = BatchOut.of(batch)
+    session.commit()
+    return out
+
+
+@router.post("/imports/{batch_id}/recheck")
+def recheck(batch_id: UUID, ctx: CanRead, session: SessionDep, today: TodayDep) -> BatchOut:
+    """A file that failed checked again with today's reference: after a unit factor was set (Q35)."""
+    out = BatchOut.of(service.recheck(session, ctx, batch_id, today=today))
     session.commit()
     return out
 

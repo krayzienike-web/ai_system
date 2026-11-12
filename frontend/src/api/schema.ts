@@ -68,6 +68,7 @@ export interface BatchOut {
   created_at: string;
   published_at: string | null;
   markable?: boolean;
+  unit_fixes?: UnitFixOut[];
 }
 
 export interface BoardOut {
@@ -103,6 +104,7 @@ export interface CatalogOption {
   id: string;
   code: string;
   name: string;
+  base_unit?: string | null;
 }
 
 export interface ChartView {
@@ -1026,6 +1028,40 @@ export interface TrendOut {
   change_pct: number | null;
   span: string;
   answer: string;
+}
+
+export interface UnitFactorIn {
+  product_id: string;
+  unit_text: string;
+  factor: string;
+}
+
+export interface UnitFactorOut {
+  id: string;
+  product_id: string;
+  product_code: string;
+  product_name: string;
+  base_unit: string;
+  unit: string;
+  unit_text: string;
+  factor: string;
+  files: number;
+  created_at: string;
+}
+
+export interface UnitFactorSaved {
+  factor: UnitFactorOut;
+  affected_files: FileRef[];
+}
+
+/** A unit of the file the network has no factor for (Q35): set it, then «Проверить заново». */
+export interface UnitFixOut {
+  product_id: string;
+  product_name: string;
+  unit: string;
+  unit_text: string;
+  base_unit: string;
+  rows: number;
 }
 
 export interface UserIn {

@@ -25,9 +25,14 @@ class Issue:
     row: int | None
     column: str | None
     message: str
+    # What a person can do about it on the spot: {"kind": "unit_factor", product, unit…} (Q35)
+    fix: dict[str, Any] | None = None
 
     def as_dict(self) -> dict[str, Any]:
-        return {"row": self.row, "column": self.column, "message": self.message}
+        out: dict[str, Any] = {"row": self.row, "column": self.column, "message": self.message}
+        if self.fix is not None:
+            out["fix"] = self.fix
+        return out
 
 
 @dataclass(frozen=True)
@@ -50,7 +55,8 @@ class Lookups:
     suppliers: dict[str, Ref] = field(default_factory=dict)
     supplier_names: dict[str, Ref] = field(default_factory=dict)
     aliases: dict[tuple[str, str], Ref] = field(default_factory=dict)  # (kind, source_key) -> ref
-    used: set[str] = field(default_factory=set)  # "kind:source_key" of aliases the file relied on
+    # "kind:source_key" of aliases and "unit:<product id>:<unit>" of unit factors the file relied on
+    used: set[str] = field(default_factory=set)
     # Transfers name other restaurants a director cannot see: the database resolves one name at a time.
     resolve_restaurant: Callable[[str], UUID | None] = lambda _text: None
     own_restaurant_id: UUID | None = None  # the restaurant the file is uploaded for
@@ -59,6 +65,8 @@ class Lookups:
     unknown_reasons: set[str] = field(default_factory=set)
     # Salt of a cashier's code: the network's own, so one person's code tells nothing in another network
     salt: str = ""
+    # (product id, normalised unit) -> base units in one such unit: the HQ's list (Q35)
+    unit_factors: dict[tuple[UUID, str], Decimal] = field(default_factory=dict)
 
 
 @dataclass
@@ -88,10 +96,11 @@ class Result:
 
 
 class _RowError(Exception):
-    def __init__(self, column: str | None, message: str) -> None:
+    def __init__(self, column: str | None, message: str, fix: dict[str, Any] | None = None) -> None:
         super().__init__(message)
         self.column = column
         self.message = message
+        self.fix = fix
 
 
 class _Skip(Exception):
@@ -222,20 +231,44 @@ def _resolve(
     raise _NotFound(kind, code, name)
 
 
-def _to_base(qty: Decimal, unit_text: str | None, product: Ref) -> Decimal:
+def unit_key(text: str) -> str:
+    """How an export's unit is remembered: «Упак.», «упак» — one unit; «бут 0,5» stays apart from «бут»."""
+    return normalize(text)
+
+
+def _to_base(qty: Decimal, unit_text: str | None, product: Ref, lk: Lookups) -> Decimal:
+    """A quantity in the product's base unit: a standard unit of the same kind, else the HQ's factor for this
+    product and unit (Q35), else an error that says what factor is missing — the import never guesses."""
     if not unit_text:
         return qty  # no unit column: the file is in base units
     unit = unit_of(unit_text)
+    if unit is not None and unit[0] == product.base_unit:
+        return qty * unit[1]
+    key = unit_key(unit_text)
+    factor = lk.unit_factors.get((product.id, key))
+    if factor is not None:
+        lk.used.add(f"unit:{product.id}:{key}")  # the file follows this factor: a change re-processes it
+        return qty * factor
+    expected = UNIT_TITLES.get(product.base_unit or "", product.base_unit)
+    fix = {
+        "kind": "unit_factor",
+        "product_id": str(product.id),
+        "product_name": product.name,
+        "unit": key,
+        "unit_text": unit_text.strip()[:40],
+        "base_unit": product.base_unit,
+    }
     if unit is None:
-        raise _RowError("Ед. изм.", f"неизвестная единица «{unit_text}» у товара «{product.name}»")
-    base, factor = unit
-    if base != product.base_unit:
-        expected = UNIT_TITLES.get(product.base_unit or "", product.base_unit)
-        raise _RowError(
-            "Ед. изм.",
-            f"«{unit_text}» не переводится в «{expected}» для товара «{product.name}»; нужен коэффициент",
+        message = (
+            f"единица «{unit_text}» у товара «{product.name}» неизвестна: задайте, сколько {expected} "
+            f"в 1 «{unit_text.strip()}», в «Нормах и настройках» → «Единицы в выгрузках»"
         )
-    return qty * factor
+    else:
+        message = (
+            f"«{unit_text}» не переводится в «{expected}» для товара «{product.name}»: задайте коэффициент "
+            "в «Нормах и настройках» → «Единицы в выгрузках»"
+        )
+    raise _RowError("Ед. изм.", message, fix)
 
 
 def _product(v: dict[str, Any], lk: Lookups) -> Ref:
@@ -288,7 +321,7 @@ def _record(template: str, v: dict[str, Any], lk: Lookups, warn: list[str]) -> d
                 "menu_item", parent_code, None, lk.menu_items, lk.menu_item_names, lk
             ).id
         product = _product(v, lk)
-        qty = _to_base(v["gross_qty"], v["unit"], product)
+        qty = _to_base(v["gross_qty"], v["unit"], product, lk)
         if qty <= 0:
             raise _RowError("Брутто", "количество должно быть больше нуля")
         return {
@@ -328,7 +361,7 @@ def _record(template: str, v: dict[str, Any], lk: Lookups, warn: list[str]) -> d
         vendor = _resolve(
             "supplier", v["supplier_code"], v["supplier_name"], lk.suppliers, lk.supplier_names, lk
         )
-        per_unit = _to_base(Decimal(1), v["unit"], product)  # how many base units one price unit is
+        per_unit = _to_base(Decimal(1), v["unit"], product, lk)  # how many base units one price unit is
         if v["price"] <= 0:
             raise _RowError("Цена по договору", "цена должна быть больше нуля")
         if v["valid_to"] is not None and v["valid_to"] < v["valid_from"]:
@@ -347,7 +380,7 @@ def _record(template: str, v: dict[str, Any], lk: Lookups, warn: list[str]) -> d
             supplier = _resolve(
                 "supplier", v["supplier_code"], v["supplier_name"], lk.suppliers, lk.supplier_names, lk
             )
-        qty = _to_base(v["qty"], v["unit"], product)
+        qty = _to_base(v["qty"], v["unit"], product, lk)
         if qty <= 0:
             raise _RowError("Количество", "количество в накладной должно быть больше нуля")
         if v["price"] is not None and v["qty"]:
@@ -375,13 +408,13 @@ def _record(template: str, v: dict[str, Any], lk: Lookups, warn: list[str]) -> d
         if sender != lk.own_restaurant_id:
             raise _Skip
         product = _product(v, lk)
-        qty = _to_base(v["qty"], v["unit"], product)
+        qty = _to_base(v["qty"], v["unit"], product, lk)
         if qty <= 0:
             raise _RowError("Количество", "количество должно быть больше нуля")
         return {"day": v["day"], "to_restaurant_id": receiver, "product_id": product.id, "qty": qty}
     if template == "write_offs":
         product = _product(v, lk)
-        qty = _to_base(v["qty"], v["unit"], product)
+        qty = _to_base(v["qty"], v["unit"], product, lk)
         if qty <= 0:
             raise _RowError("Количество", "количество списания должно быть больше нуля")
         code = lk.classify_reason(v["reason"])
@@ -396,16 +429,16 @@ def _record(template: str, v: dict[str, Any], lk: Lookups, warn: list[str]) -> d
         }
     if template == "inventory_counts":
         product = _product(v, lk)
-        actual = _to_base(v["actual_qty"], v["unit"], product)
+        actual = _to_base(v["actual_qty"], v["unit"], product, lk)
         if actual < 0:
             raise _RowError("Фактический остаток", "остаток не может быть отрицательным")
-        book = _to_base(v["book_qty"], v["unit"], product) if v["book_qty"] is not None else None
+        book = _to_base(v["book_qty"], v["unit"], product, lk) if v["book_qty"] is not None else None
         return {"day": v["day"], "product_id": product.id, "book_qty": book, "actual_qty": actual}
     if template == "stock_balances":
         product = _product(v, lk)
         # The books' stock: it may be below zero (a document missing) — that is what M7 catches, not an error
         # of the file (code review of stage 6.5, p. 5).
-        qty = _to_base(v["qty"], v["unit"], product)
+        qty = _to_base(v["qty"], v["unit"], product, lk)
         return {"day": v["day"], "product_id": product.id, "qty": qty}
     if template == "voids":
         dish: Ref | None = None
@@ -566,7 +599,7 @@ def validate(template: Template, table: Table, lookups: Lookups, *, today: date)
             values = _values(template, table, cells)
             record = _record(template.name, values, lookups, warn)
         except _RowError as e:
-            errors.append(Issue(number, e.column, e.message))
+            errors.append(Issue(number, e.column, e.message, e.fix))
             continue
         except ArithmeticError:  # an overflow on the way to base units
             errors.append(Issue(number, None, "слишком большое число: проверьте, та ли это колонка"))

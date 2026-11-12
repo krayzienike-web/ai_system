@@ -42,6 +42,8 @@ export interface ImportIssue {
   row: number | null;
   column: string | null;
   message: string;
+  /** What a person can do on the spot: a unit factor to set (Q35). */
+  fix?: { kind: "unit_factor" };
 }
 
 export interface ImportBatch {
@@ -62,7 +64,13 @@ export interface ImportBatch {
   published_at: string | null;
   /** The file's columns were not recognised: «Разметить с ИИ» is offered (the server decides). */
   markable?: boolean;
+  /** Units without a factor, one per product and unit (Q35): the HQ sets them right on the report. */
+  unit_fixes?: UnitFix[];
 }
+
+export type UnitFix = S.UnitFixOut;
+export type UnitFactor = S.UnitFactorOut;
+export type UnitFactorSaved = S.UnitFactorSaved;
 
 export type MatchKind = "product" | "menu_item" | "supplier";
 
@@ -81,6 +89,8 @@ export interface CatalogOption {
   id: string;
   code: string;
   name: string;
+  /** Products only: what a unit factor converts to (Q35). */
+  base_unit?: string | null;
 }
 
 export interface ImportTemplate {

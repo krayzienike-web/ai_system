@@ -13,6 +13,7 @@ import {
 } from "../../ds/primitives";
 import { useViewer } from "../../lib/useViewer";
 import { EngineParamsSection } from "./EngineParams";
+import { UnitFactorsSection } from "../UnitFactors";
 import { useUi } from "../../state/ui";
 
 const KINDS: { kind: ReasonKind; title: string }[] = [
@@ -76,6 +77,7 @@ export function SettingsPage() {
       ) : (
         <Skeleton className="h-64" />
       )}
+      <UnitFactorsSection />
       <EngineParamsSection />
     </div>
   );

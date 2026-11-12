@@ -364,6 +364,13 @@
       "title": "Template",
       "type": "string"
      },
+     "unit_fixes": {
+      "items": {
+       "$ref": "#/components/schemas/UnitFixOut"
+      },
+      "title": "Unit Fixes",
+      "type": "array"
+     },
      "unmatched": {
       "items": {
        "additionalProperties": true,
@@ -556,6 +563,17 @@
    },
    "CatalogOption": {
     "properties": {
+     "base_unit": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Base Unit"
+     },
      "code": {
       "title": "Code",
       "type": "string"
@@ -6379,6 +6397,155 @@
     "title": "TrendOut",
     "type": "object"
    },
+   "UnitFactorIn": {
+    "properties": {
+     "factor": {
+      "maxLength": 30,
+      "minLength": 1,
+      "title": "Factor",
+      "type": "string"
+     },
+     "product_id": {
+      "format": "uuid",
+      "title": "Product Id",
+      "type": "string"
+     },
+     "unit_text": {
+      "maxLength": 40,
+      "minLength": 1,
+      "title": "Unit Text",
+      "type": "string"
+     }
+    },
+    "required": [
+     "product_id",
+     "unit_text",
+     "factor"
+    ],
+    "title": "UnitFactorIn",
+    "type": "object"
+   },
+   "UnitFactorOut": {
+    "properties": {
+     "base_unit": {
+      "title": "Base Unit",
+      "type": "string"
+     },
+     "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+     },
+     "factor": {
+      "title": "Factor",
+      "type": "string"
+     },
+     "files": {
+      "title": "Files",
+      "type": "integer"
+     },
+     "id": {
+      "format": "uuid",
+      "title": "Id",
+      "type": "string"
+     },
+     "product_code": {
+      "title": "Product Code",
+      "type": "string"
+     },
+     "product_id": {
+      "format": "uuid",
+      "title": "Product Id",
+      "type": "string"
+     },
+     "product_name": {
+      "title": "Product Name",
+      "type": "string"
+     },
+     "unit": {
+      "title": "Unit",
+      "type": "string"
+     },
+     "unit_text": {
+      "title": "Unit Text",
+      "type": "string"
+     }
+    },
+    "required": [
+     "id",
+     "product_id",
+     "product_code",
+     "product_name",
+     "base_unit",
+     "unit",
+     "unit_text",
+     "factor",
+     "files",
+     "created_at"
+    ],
+    "title": "UnitFactorOut",
+    "type": "object"
+   },
+   "UnitFactorSaved": {
+    "properties": {
+     "affected_files": {
+      "items": {
+       "$ref": "#/components/schemas/FileRef"
+      },
+      "title": "Affected Files",
+      "type": "array"
+     },
+     "factor": {
+      "$ref": "#/components/schemas/UnitFactorOut"
+     }
+    },
+    "required": [
+     "factor",
+     "affected_files"
+    ],
+    "title": "UnitFactorSaved",
+    "type": "object"
+   },
+   "UnitFixOut": {
+    "description": "A unit of the file the network has no factor for (Q35): set it, then «Проверить заново».",
+    "properties": {
+     "base_unit": {
+      "title": "Base Unit",
+      "type": "string"
+     },
+     "product_id": {
+      "format": "uuid",
+      "title": "Product Id",
+      "type": "string"
+     },
+     "product_name": {
+      "title": "Product Name",
+      "type": "string"
+     },
+     "rows": {
+      "title": "Rows",
+      "type": "integer"
+     },
+     "unit": {
+      "title": "Unit",
+      "type": "string"
+     },
+     "unit_text": {
+      "title": "Unit Text",
+      "type": "string"
+     }
+    },
+    "required": [
+     "product_id",
+     "product_name",
+     "unit",
+     "unit_text",
+     "base_unit",
+     "rows"
+    ],
+    "title": "UnitFixOut",
+    "type": "object"
+   },
    "UserIn": {
     "properties": {
      "email": {
@@ -6902,7 +7069,7 @@
   },
   "/api/agents/notes/{note_id}/accept": {
    "post": {
-    "description": "«Взять в работу»: a task from the list, or the deadline moved (the HQ admin).",
+    "description": "«Создать задачу»: a task from the list, or the deadline moved (the HQ admin).",
     "operationId": "accept_api_agents_notes__note_id__accept_post",
     "parameters": [
      {
@@ -9555,6 +9722,55 @@
     ]
    }
   },
+  "/api/imports/{batch_id}/recheck": {
+   "post": {
+    "description": "A file that failed checked again with today's reference: after a unit factor was set (Q35).",
+    "operationId": "recheck_api_imports__batch_id__recheck_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "batch_id",
+      "required": true,
+      "schema": {
+       "format": "uuid",
+       "title": "Batch Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/BatchOut"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Recheck",
+    "tags": [
+     "imports"
+    ]
+   }
+  },
   "/api/imports/{batch_id}/reprocess": {
    "post": {
     "operationId": "reprocess_api_imports__batch_id__reprocess_post",
@@ -10372,6 +10588,128 @@
     "summary": "Put Norms",
     "tags": [
      "norms"
+    ]
+   }
+  },
+  "/api/settings/units": {
+   "get": {
+    "operationId": "list_unit_factors_api_settings_units_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "items": {
+          "$ref": "#/components/schemas/UnitFactorOut"
+         },
+         "title": "Response List Unit Factors Api Settings Units Get",
+         "type": "array"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "List Unit Factors",
+    "tags": [
+     "catalog"
+    ]
+   },
+   "put": {
+    "operationId": "save_unit_factor_api_settings_units_put",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/UnitFactorIn"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/UnitFactorSaved"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Save Unit Factor",
+    "tags": [
+     "catalog"
+    ]
+   }
+  },
+  "/api/settings/units/{factor_id}": {
+   "delete": {
+    "operationId": "delete_unit_factor_api_settings_units__factor_id__delete",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "factor_id",
+      "required": true,
+      "schema": {
+       "format": "uuid",
+       "title": "Factor Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/AliasChangeOut"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Delete Unit Factor",
+    "tags": [
+     "catalog"
     ]
    }
   },
