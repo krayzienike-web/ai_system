@@ -2,7 +2,7 @@
 // network; an import converts by it and never guesses. Two places: the import report (a unit the file needs)
 // and «Нормы и настройки» (the whole list).
 import { CheckCircle2, Plus, RotateCcw, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import {
   useBatchAction,
@@ -15,6 +15,7 @@ import type { AffectedFiles, ImportBatch, UnitFactor, UnitFix } from "../api/typ
 import { Button, ErrorText, QuestionBlock } from "../ds/primitives";
 import { plural } from "../lib/format";
 import { useViewer } from "../lib/useViewer";
+import { useUi } from "../state/ui";
 
 const BASE: Record<string, string> = { kg: "кг", l: "л", pcs: "шт" };
 
@@ -27,14 +28,17 @@ function FactorInput({
   onChange,
   label,
   disabled,
+  autoFocus,
 }: {
   value: string;
   onChange: (v: string) => void;
   label: string;
   disabled?: boolean;
+  autoFocus?: boolean;
 }) {
   return (
     <input
+      autoFocus={autoFocus}
       inputMode="decimal"
       value={value}
       disabled={disabled}
@@ -58,7 +62,7 @@ function FixRow({ fix, may, onSaved }: { fix: UnitFix; may: boolean; onSaved: ()
         <span className="text-ink-3"> · {plural(fix.rows, ["строка", "строки", "строк"])}</span>
       </span>
       {save.isSuccess ? (
-        <span className="inline-flex items-center gap-1 text-gain">
+        <span role="status" className="inline-flex items-center gap-1 text-gain">
           <CheckCircle2 size={14} /> = {showFactor(save.data.factor.factor)} {baseTitle(fix.base_unit)}
         </span>
       ) : may ? (
@@ -74,7 +78,7 @@ function FixRow({ fix, may, onSaved }: { fix: UnitFix; may: boolean; onSaved: ()
         >
           = <FactorInput value={value} onChange={setValue} label={label} disabled={save.isPending} />
           {baseTitle(fix.base_unit)}
-          <Button type="submit" size="sm" disabled={save.isPending || !value.trim()}>
+          <Button type="submit" size="sm" aria-label={`Сохранить: ${label}`} disabled={save.isPending || !value.trim()}>
             Сохранить
           </Button>
         </form>
@@ -88,6 +92,7 @@ function FixRow({ fix, may, onSaved }: { fix: UnitFix; may: boolean; onSaved: ()
 export function UnitFixes({ batch, onChecked }: { batch: ImportBatch; onChecked: (b: ImportBatch) => void }) {
   const viewer = useViewer();
   const recheck = useBatchAction("recheck");
+  const { notify } = useUi();
   const [saved, setSaved] = useState(0);
   const fixes = batch.unit_fixes ?? [];
   if (!fixes.length || batch.status !== "failed") return null;
@@ -110,7 +115,21 @@ export function UnitFixes({ batch, onChecked }: { batch: ImportBatch; onChecked:
           variant={saved >= fixes.length ? "primary" : "secondary"}
           size="sm"
           disabled={recheck.isPending}
-          onClick={() => recheck.mutate(batch.id, { onSuccess: onChecked })}
+          onClick={() =>
+            recheck.mutate(batch.id, {
+              onSuccess: (b) => {
+                // The same errors again: say so, the screen would not change (frontend review of stage 10, p. 5).
+                notify(
+                  b.status === "failed"
+                    ? (b.unit_fixes ?? []).length
+                      ? "Проверили: у части единиц все еще нет коэффициента"
+                      : "Проверили: в файле остались другие ошибки"
+                    : "Файл проходит проверку — его можно загрузить",
+                );
+                onChecked(b);
+              },
+            })
+          }
         >
           <RotateCcw size={14} /> Проверить заново
         </Button>
@@ -120,11 +139,27 @@ export function UnitFixes({ batch, onChecked }: { batch: ImportBatch; onChecked:
   );
 }
 
-function AffectedBox({ files }: { files: AffectedFiles["affected_files"] }) {
+export interface Change {
+  kind: "saved" | "deleted";
+  files: AffectedFiles["affected_files"];
+  n: number; // one more per change: the box starts afresh (frontend review of stage 10, p. 1)
+}
+
+function AffectedBox({ change }: { change: Change }) {
   const reprocess = useBatchAction("reprocess");
   const [redone, setRedone] = useState<string[]>([]);
+  const files = change.files;
+  if (change.kind === "deleted")
+    // A file converted by a removed factor no longer passes: its rows stay as loaded (p. 2).
+    return (
+      <div role="status" className="mb-4 rounded-[14px] bg-info-soft p-4 text-sm text-ink-2">
+        {files.length
+          ? `Коэффициент удален. ${plural(files.length, ["файл, загруженный", "файла, загруженных", "файлов, загруженных"])} по нему, остаются как были; пересчитать их можно, когда коэффициент задан снова: ${files.map((f) => f.filename).join(", ")}.`
+          : "Коэффициент удален. Файлов, загруженных по нему, нет."}
+      </div>
+    );
   return (
-    <div className="mb-4 rounded-[14px] bg-info-soft p-4 text-sm">
+    <div role="status" className="mb-4 rounded-[14px] bg-info-soft p-4 text-sm">
       {files.length ? (
         <>
           <div className="font-medium text-ink">Эти файлы загружены со старым коэффициентом — пересчитайте их:</div>
@@ -139,6 +174,7 @@ function AffectedBox({ files }: { files: AffectedFiles["affected_files"] }) {
                 ) : (
                   <Button
                     size="sm"
+                    aria-label={`Пересчитать файл ${f.filename}`}
                     disabled={reprocess.isPending}
                     onClick={() => reprocess.mutate(f.id, { onSuccess: () => setRedone((r) => [...r, f.id]) })}
                   >
@@ -164,14 +200,24 @@ function FactorRow({
 }: {
   factor: UnitFactor;
   may: boolean;
-  onChanged: (files: AffectedFiles["affected_files"]) => void;
+  onChanged: (kind: Change["kind"], files: AffectedFiles["affected_files"]) => void;
 }) {
   const save = useSaveUnitFactor();
   const remove = useDeleteUnitFactor();
   const [editing, setEditing] = useState(false);
   const [confirm, setConfirm] = useState(false);
   const [value, setValue] = useState(showFactor(factor.factor));
+  const edit = useRef<HTMLButtonElement>(null);
   const base = baseTitle(factor.base_unit);
+  const what = `«${factor.unit_text}» товара «${factor.product_name}»`;
+  const close = () => {
+    setEditing(false);
+    setConfirm(false);
+    setValue(showFactor(factor.factor));
+    save.reset();
+    remove.reset();
+    requestAnimationFrame(() => edit.current?.focus());
+  };
   return (
     <li className="grid gap-2 py-3 text-sm sm:grid-cols-[1fr_auto] sm:items-center">
       <span className="min-w-0">
@@ -192,7 +238,7 @@ function FactorRow({
         <span className="flex flex-wrap items-center gap-1 sm:justify-end">
           {editing ? (
             <form
-              className="flex items-center gap-2"
+              className="flex flex-wrap items-center gap-2"
               onSubmit={(e) => {
                 e.preventDefault();
                 save.mutate(
@@ -200,18 +246,24 @@ function FactorRow({
                   {
                     onSuccess: (r) => {
                       setEditing(false);
-                      onChanged(r.affected_files);
+                      onChanged("saved", r.affected_files);
                     },
                   },
                 );
               }}
             >
-              = <FactorInput value={value} onChange={setValue} label={`Сколько ${base} в 1 «${factor.unit_text}»`} />
+              ={" "}
+              <FactorInput
+                autoFocus
+                value={value}
+                onChange={setValue}
+                label={`Сколько ${base} в 1 «${factor.unit_text}» товара «${factor.product_name}»`}
+              />
               {base}
-              <Button type="submit" size="sm" disabled={save.isPending || !value.trim()}>
+              <Button type="submit" size="sm" aria-label={`Сохранить коэффициент ${what}`} disabled={save.isPending || !value.trim()}>
                 Сохранить
               </Button>
-              <Button size="sm" variant="ghost" onClick={() => setEditing(false)}>
+              <Button size="sm" variant="ghost" onClick={close}>
                 Отмена
               </Button>
             </form>
@@ -220,26 +272,23 @@ function FactorRow({
               <Button
                 size="sm"
                 variant="danger"
+                autoFocus
+                aria-label={`Удалить коэффициент ${what}`}
                 disabled={remove.isPending}
-                onClick={() => remove.mutate(factor.id, { onSuccess: (r) => onChanged(r.affected_files) })}
+                onClick={() => remove.mutate(factor.id, { onSuccess: (r) => onChanged("deleted", r.affected_files) })}
               >
                 Удалить
               </Button>
-              <Button size="sm" variant="ghost" onClick={() => setConfirm(false)}>
+              <Button size="sm" variant="ghost" aria-label={`Не удалять коэффициент ${what}`} onClick={close}>
                 Не надо
               </Button>
             </>
           ) : (
             <>
-              <Button size="sm" variant="ghost" onClick={() => setEditing(true)}>
+              <Button ref={edit} size="sm" variant="ghost" aria-label={`Исправить коэффициент ${what}`} onClick={() => setEditing(true)}>
                 Исправить
               </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => setConfirm(true)}
-                aria-label={`Удалить коэффициент «${factor.unit_text}» товара «${factor.product_name}»`}
-              >
+              <Button size="sm" variant="ghost" onClick={() => setConfirm(true)} aria-label={`Удалить коэффициент ${what}`}>
                 <Trash2 size={14} />
               </Button>
             </>
@@ -317,7 +366,7 @@ function AddFactor({ onSaved }: { onSaved: () => void }) {
 export function UnitFactorsSection() {
   const viewer = useViewer();
   const { data: factors = [], isError } = useUnitFactors();
-  const [affected, setAffected] = useState<AffectedFiles["affected_files"] | null>(null);
+  const [change, setChange] = useState<Change | null>(null);
   const may = viewer?.can("norms.manage") ?? false;
   return (
     <QuestionBlock
@@ -329,16 +378,21 @@ export function UnitFactorsSection() {
       }
     >
       {isError && <p className="text-sm text-loss">Не получилось загрузить список — обновите страницу</p>}
-      {affected && <AffectedBox files={affected} />}
+      {change && <AffectedBox key={change.n} change={change} />}
       {factors.length > 0 && (
         <ul className="divide-y divide-line">
           {factors.map((f) => (
-            <FactorRow key={f.id} factor={f} may={may} onChanged={setAffected} />
+            <FactorRow
+              key={f.id}
+              factor={f}
+              may={may}
+              onChanged={(kind, files) => setChange((c) => ({ kind, files, n: (c?.n ?? 0) + 1 }))}
+            />
           ))}
         </ul>
       )}
       {may ? (
-        <AddFactor onSaved={() => setAffected(null)} />
+        <AddFactor onSaved={() => setChange(null)} />
       ) : (
         <p className="mt-2 text-sm text-ink-3">Коэффициенты задает администратор управляющей компании.</p>
       )}

@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from app.agents.drafts import NoteDraft
 from app.agents.models import Agent, Audience
 from app.experiments.models import Experiment, ExperimentStatus
-from app.insights.models import Finding, FindingStatus
+from app.insights.models import Finding, FindingStatus, ReviewStatus
 from app.overview import service as overview
 from app.tasks.models import Task, TaskStatus
 from app.tenancy.models import Restaurant
@@ -38,8 +38,14 @@ def draft(session: Session, restaurants: list[Restaurant], today: date) -> NoteD
     names = {r.id: r.name for r in restaurants}
     findings = session.execute(
         select(Finding)
-        .where(Finding.status.in_(OPEN), Finding.effect_rub_month.is_not(None))
+        .where(
+            Finding.status.in_(OPEN),
+            Finding.effect_rub_month.is_not(None),
+            # checked, in the database: five rows, not the network's every finding (backend review, p. 5)
+            Finding.review_status.is_(None) | (Finding.review_status == ReviewStatus.CONFIRMED),
+        )
         .order_by(Finding.effect_rub_month.desc(), Finding.key)
+        .limit(TOP_FINDINGS)
     ).scalars()
     top = [
         {
@@ -49,8 +55,7 @@ def draft(session: Session, restaurants: list[Restaurant], today: date) -> NoteD
             "status": f.status,
         }
         for f in findings
-        if f.checked
-    ][:TOP_FINDINGS]
+    ]
     late_rows = list(
         session.execute(
             select(Task)

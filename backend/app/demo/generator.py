@@ -650,6 +650,14 @@ def generate(seed: int = 42, restaurants: int = 12, start: date = START, end: da
                         drawn = rnd.uniform(-0.02, 0.02)
                     if code == "R04" and p_code == "P15" and day == SHORT_DELIVERY:
                         need *= 0.55  # a short delivery: the pasta runs out before the next one
+                    if (
+                        code == "R02"
+                        and p_code == "P15"
+                        and SHORT_DELIVERY <= day <= SHORT_DELIVERY + timedelta(days=4)
+                    ):
+                        need *= (
+                            2.5  # stage 10: R02 ordered too much pasta that week — it can give some to R04
+                        )
                     if need > 0:
                         delivered = _q(need) if unit != "pcs" else _q(round(need), "1")
                         sup = supplier

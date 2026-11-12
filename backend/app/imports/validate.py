@@ -686,7 +686,23 @@ def validate(template: Template, table: Table, lookups: Lookups, *, today: date)
     )
     if days:
         result.period_from, result.period_to = min(days), max(days)
+    # Each unit without a factor once with its count of rows — kept past the cap of shown errors, so the
+    # report asks for every factor at once (backend review of stage 10, p. 7).
+    fixes: dict[tuple[str, str], int] = {}
+    for issue in errors:
+        if issue.fix is not None and issue.fix.get("kind") == "unit_factor":
+            k = (issue.fix["product_id"], issue.fix["unit"])
+            fixes[k] = fixes.get(k, 0) + 1
+    seen: set[tuple[str, str]] = set()
+    for i, issue in enumerate(errors):
+        if issue.fix is not None and issue.fix.get("kind") == "unit_factor":
+            k = (issue.fix["product_id"], issue.fix["unit"])
+            fix = {**issue.fix, "rows": fixes[k]} if k not in seen else {**issue.fix, "rows": 0}
+            seen.add(k)
+            errors[i] = Issue(issue.row, issue.column, issue.message, fix)
     if len(errors) > MAX_ISSUES:
         hidden = len(errors) - MAX_ISSUES
-        result.errors = [*errors[:MAX_ISSUES], Issue(None, None, f"и еще {hidden} ошибок того же рода")]
+        shown = errors[:MAX_ISSUES]
+        first_of_each = [i for i in errors[MAX_ISSUES:] if i.fix is not None and i.fix.get("rows")]
+        result.errors = [*shown, *first_of_each, Issue(None, None, f"и еще {hidden} ошибок того же рода")]
     return result

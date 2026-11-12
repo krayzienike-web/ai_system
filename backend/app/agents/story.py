@@ -29,6 +29,9 @@ from app.operations.models import Receipt, Transfer
 from app.tenancy.models import Restaurant
 
 MIN_RUB_MONTH = Decimal(10_000)
+NO_SUPPLIER = (
+    "без поставщика"  # receipts with no supplier: not a supplier of their own (backend review, p. 8)
+)
 MAX_VERSIONS = 3
 GROWING = Decimal("1.5")  # the last period's overuse this many times the first one's
 OPEN = (FindingStatus.NEW, FindingStatus.IN_WORK, FindingStatus.IN_EXPERIMENT)
@@ -53,7 +56,7 @@ def _period(
         )
         .group_by(Receipt.supplier_id)
     ):
-        bought[suppliers.get(supplier_id, "без поставщика")] += qty
+        bought[suppliers.get(supplier_id, NO_SUPPLIER)] += qty
 
     def moved(column: Any) -> Decimal:
         return Decimal(
@@ -73,7 +76,8 @@ def _period(
         "actual": _q(Decimal(p["actual"])),
         "theory": _q(Decimal(p["theory"])),
         "share": plain((Decimal(p["share"]) * 100).quantize(Decimal("0.1"))),
-        "written_off": _q(Decimal(p["write_off"])),
+        # Three decimals: 0,03 kg written off is not «nothing written off» (backend review, p. 8)
+        "written_off": plain(Decimal(p["write_off"]).quantize(Decimal("0.001"))),
         "bought": {name: _q(qty) for name, qty in sorted(bought.items())},
         "moved_in": _q(moved(Transfer.to_restaurant_id)),
         "moved_out": _q(moved(Transfer.restaurant_id)),
@@ -83,7 +87,7 @@ def _period(
 def versions(periods: list[dict[str, Any]], benchmark: Decimal) -> list[str]:
     """The rules, most specific first; at least one — the overuse itself."""
     out = []
-    names = [set(p["bought"]) for p in periods]
+    names = [set(p["bought"]) - {NO_SUPPLIER} for p in periods]
     if len(set().union(*names)) > 1:
         out.append("supplier")
     if all(Decimal(p["written_off"]) == 0 for p in periods):

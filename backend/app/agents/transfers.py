@@ -9,6 +9,7 @@ it compares restaurants. «Поставить задачи» gives B a task to h
 on the day the product runs out; nothing moves without that.
 """
 
+from collections import defaultdict
 from datetime import date, timedelta
 from decimal import ROUND_UP, Decimal
 from typing import Any
@@ -42,33 +43,37 @@ def _need(ev: dict[str, Any], start: date, delivery: date, unit: str) -> Decimal
     return (need / step).to_integral_value(rounding=ROUND_UP) * step
 
 
-def _spare(
-    session: Session, product: Product, restaurant: Restaurant, since: date, until: date
-) -> dict[str, Any] | None:
-    snapshot = session.execute(
-        select(StockBalance.day, StockBalance.qty)
-        .where(
-            StockBalance.restaurant_id == restaurant.id,
-            StockBalance.product_id == product.id,
-            StockBalance.day >= since,
-            StockBalance.day <= until,
-        )
-        .order_by(StockBalance.day.desc())
-        .limit(1)
-    ).first()
-    if snapshot is None or snapshot.qty <= 0:
-        return None
-    bought = session.execute(
-        select(func.coalesce(func.sum(Receipt.qty), 0)).where(
-            Receipt.restaurant_id == restaurant.id,
-            Receipt.product_id == product.id,
-            Receipt.day > until - timedelta(days=USE_DAYS),
-            Receipt.day <= until,
-        )
-    ).scalar_one()
-    daily = Decimal(bought) / USE_DAYS
-    spare = snapshot.qty - daily * KEEP_DAYS
-    return {"day": snapshot.day, "stock": snapshot.qty, "daily": daily, "spare": spare}
+def _givers(
+    session: Session, product: Product, since: date, until: date, start: date
+) -> dict[UUID, dict[str, Any]]:
+    """Every restaurant's latest «Остатки на дату» of the product in the window and its use — two queries for
+    the network, not two per restaurant (backend review, p. 5). What it can give keeps `KEEP_DAYS` of its own
+    use after the transfer day, and its use from the count to that day is gone too (p. 1)."""
+    snapshots = session.execute(
+        select(StockBalance.restaurant_id, StockBalance.day, StockBalance.qty)
+        .where(StockBalance.product_id == product.id, StockBalance.day >= since, StockBalance.day <= until)
+        .order_by(StockBalance.restaurant_id, StockBalance.day.desc())
+        .distinct(StockBalance.restaurant_id)
+    ).all()
+    bought = dict(
+        session.execute(
+            select(Receipt.restaurant_id, func.sum(Receipt.qty))
+            .where(
+                Receipt.product_id == product.id,
+                Receipt.day > until - timedelta(days=USE_DAYS),
+                Receipt.day <= until,
+            )
+            .group_by(Receipt.restaurant_id)
+        ).all()
+    )
+    out = {}
+    for rid, day, qty in snapshots:
+        if qty <= 0:
+            continue
+        daily = Decimal(bought.get(rid) or 0) / USE_DAYS
+        spare = qty - daily * (KEEP_DAYS + max((start - day).days, 0))
+        out[rid] = {"day": day, "stock": qty, "daily": daily, "spare": spare}
+    return out
 
 
 def _short_codes(found: list[Finding]) -> set[tuple[UUID | None, str]]:
@@ -90,6 +95,7 @@ def drafts(session: Session, restaurants: list[Restaurant], today: date) -> list
         ).scalars()
     ]
     short = _short_codes(found)
+    promised: dict[tuple[UUID, UUID], Decimal] = defaultdict(Decimal)
     places = {r.id: r for r in restaurants}
     out = []
     for f in found:
@@ -106,16 +112,19 @@ def drafts(session: Session, restaurants: list[Restaurant], today: date) -> list
             continue
         need = _need(ev, start, delivery, product.base_unit)
         until = date.fromisoformat(ev["data_until"])
+        givers = _givers(session, product, until - timedelta(days=SNAPSHOT_AGE), until, start)
         best: tuple[Decimal, Restaurant, dict[str, Any]] | None = None
         for r in restaurants:
-            if r.id == short_place.id or (r.id, product.code) in short:
+            g = givers.get(r.id)
+            if g is None or r.id == short_place.id or (r.id, product.code) in short:
                 continue
-            s = _spare(session, product, r, until - timedelta(days=SNAPSHOT_AGE), until)
-            if s is not None and s["spare"] >= need and (best is None or s["spare"] > best[0]):
-                best = (s["spare"], r, s)
+            left = g["spare"] - promised[(r.id, product.id)]  # what other notes already ask of it (p. 1)
+            if left >= need and (best is None or left > best[0]):
+                best = (left, r, g)
         if best is None:
             continue
         _, giver, s = best
+        promised[(giver.id, product.id)] += need
         out.append(
             NoteDraft(
                 agent=Agent.TRANSFER,

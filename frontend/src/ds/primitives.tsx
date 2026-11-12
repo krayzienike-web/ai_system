@@ -1,6 +1,6 @@
 import { AlertTriangle, CheckCircle2, Info, OctagonAlert } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
-import { type ButtonHTMLAttributes, type ReactNode, useEffect, useId, useRef, useState } from "react";
+import { type ButtonHTMLAttributes, type ReactNode, type Ref, useEffect, useId, useRef, useState } from "react";
 
 export const cx = (...classes: (string | false | null | undefined)[]) => classes.filter(Boolean).join(" ");
 
@@ -37,7 +37,7 @@ export function Button({
   size = "md",
   className,
   ...props
-}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: Variant; size?: Size }) {
+}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: Variant; size?: Size; ref?: Ref<HTMLButtonElement> }) {
   return <button type="button" className={buttonClass(variant, size, className)} {...props} />;
 }
 

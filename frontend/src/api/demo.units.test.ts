@@ -48,12 +48,21 @@ describe("units of the exports in the prototype", () => {
     expect(factorProblem("20000")).toBe("Коэффициент больше 10 000 — проверьте, та ли единица");
     expect(factorProblem("0,0000001")).toBe("Коэффициент — не больше шести знаков после запятой");
     expect(factorProblem("2,5")).toBeNull();
+    // As the server's Decimal (frontend review of stage 10, p. 9)
+    expect(factorProblem("2,5000000")).toBeNull();
+    expect(factorProblem(".5")).toBeNull();
+    expect(factorProblem("1e3")).toBeNull();
     expect(unitKey("Бут. 0,5")).toBe("бут 0 5");
     expect(showFactor("2.500000")).toBe("2,5");
     const kg = (call("/catalog/product", {}, ADMIN) as CatalogOption[]).find((p) => (p.base_unit ?? "kg") === "kg")!;
     expect(fails(() => put(ADMIN, { product_id: kg.id, unit_text: "г", factor: "0,001" }))).toEqual([
       422,
       "«г» и так переводится в кг — коэффициент не нужен",
+    ]);
+    expect(fails(() => put(ADMIN, { product_id: kg.id, unit_text: "g", factor: "0,001" }))?.[0]).toBe(422);
+    expect(fails(() => put(ADMIN, { product_id: kg.id, unit_text: "у".repeat(41), factor: "1" }))).toEqual([
+      422,
+      "Единица — не длиннее 40 символов",
     ]);
   });
 });

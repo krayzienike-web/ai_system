@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 
 from app.agents import service, story, texts
 from app.agents.models import AgentNote
-from app.catalog.models import Product, Supplier
+from app.catalog.models import ContractPrice, Product, Supplier
 from app.core.period import get_today
 from app.experiments.models import Experiment
 from app.imports.models import ImportBatch
@@ -164,6 +164,27 @@ class World:
             receipt(self.a1, b1, date(2026, 9, 5), cheese.id, old.id, "10", "5500", "Н-1")
             receipt(self.a2, b2, date(2026, 9, 12), cheese.id, old.id, "5", "2500", "Н-2")
             receipt(self.a2, b2, date(2026, 9, 20), cheese.id, old.id, "4", "2200", "Н-3")
+            # From 16.09 the contract is 540 ₽: Н-3 (550) is above it, Н-4 (545) within its 1 % rounding.
+            receipt(self.a2, b2, date(2026, 9, 25), cheese.id, old.id, "4", "2180", "Н-4")
+            s.add(
+                ContractPrice(
+                    tenant_id=a.id,
+                    supplier_id=old.id,
+                    product_id=cheese.id,
+                    price=Decimal(500),
+                    valid_from=date(2026, 8, 1),
+                    valid_to=date(2026, 9, 15),
+                )
+            )
+            s.add(
+                ContractPrice(
+                    tenant_id=a.id,
+                    supplier_id=old.id,
+                    product_id=cheese.id,
+                    price=Decimal(540),
+                    valid_from=date(2026, 9, 16),
+                )
+            )
             s.add(
                 _finding(
                     a.id,
@@ -364,11 +385,16 @@ def test_a_claim_lists_the_invoices_above_the_contract(
     assert claim.key == "supplier_claim:M3:A1:P2:jump" or jump.key == "supplier_claim:M3:A1:P2:jump"
     if claim.key.endswith(":jump"):
         claim, jump = jump, claim
-    assert claim.restaurant_id is None and claim.facts["extra"] == "700.00"
-    assert [(x["doc"], x["extra"]) for x in claim.facts["invoices"]] == [("Н-1", "500.00"), ("Н-3", "200.00")]
+    # Each invoice against the contract of its day (500, then 540), Н-4 within the 1 % (backend review, p. 2)
+    assert claim.restaurant_id is None and claim.facts["extra"] == "540.00"
+    assert [(x["doc"], x["reference"], x["extra"]) for x in claim.facts["invoices"]] == [
+        ("Н-1", "500.00", "500.00"),
+        ("Н-3", "540.00", "40.00"),
+    ]
+    assert "цена товара «Сыр» — от 500\u00a0₽ до 540\u00a0₽/кг" in claim.text
     assert claim.items[0] == "№ Н-1 от 05.09, Сеть А A1: 10 кг по 550\u00a0₽ — переплата 500\u00a0₽"
     assert claim.title == "Претензия «Сырный дом»: сыр дороже договора"
-    assert "(п. ___)" in claim.text and "Переплата — 700\u00a0₽" in claim.text
+    assert "(п. ___)" in claim.text and "Переплата — 540\u00a0₽" in claim.text
     assert jump.facts["growth_pct"] == "20.0" and [x["doc"] for x in jump.facts["invoices"]] == ["П-2"]
     assert "выросла с 100\u00a0₽ до 120\u00a0₽/кг (+20,0%)" in jump.text
 
@@ -414,20 +440,20 @@ def test_a_transfer_bridges_the_days_to_the_delivery(
     assert texts.by_rules("transfer", note.facts)[1] == (
         "В «Сеть А A1» паста по расчету закончится 20.10, поставка — 22.10: до нее нужно 5 кг. "
         "В «Сеть А A2» по остаткам на 19.10 — 20 кг при закупке ≈ 1 кг в день: после передачи у них "
-        "останется больше чем на 3 дня. Передать 5 кг до 20.10."
+        "останется запас больше чем на 3 дня. Передать 5 кг до 20.10."
     )
     planned = _api(client, login(client, "admin@a.ru"))["transfer:A1"]["action_tasks"]
     assert [(t["restaurant_id"], t["title"]) for t in planned] == [
-        (str(world.a2), "Передать 5 кг паста в «Сеть А A1»"),
-        (str(world.a1), "Принять 5 кг паста из «Сеть А A2»"),
+        (str(world.a2), "Передать в «Сеть А A1»: паста, 5 кг"),
+        (str(world.a1), "Принять из «Сеть А A2»: паста, 5 кг"),
     ]
     director = login(client, "director1@a.ru")
     assert client.post(f"/api/agents/notes/{note.id}/accept", headers=director).status_code == 404
     r = client.post(f"/api/agents/notes/{note.id}/accept", headers=login(client, "admin@a.ru"))
     assert r.status_code == 200, r.text
     assert [(t, rid, due) for t, rid, due in _tasks(owner_engine) if "паста" in t] == [
-        ("Передать 5 кг паста в «Сеть А A1»", world.a2, TODAY),
-        ("Принять 5 кг паста из «Сеть А A2»", world.a1, TODAY),
+        ("Передать в «Сеть А A1»: паста, 5 кг", world.a2, TODAY),
+        ("Принять из «Сеть А A2»: паста, 5 кг", world.a1, TODAY),
     ]
 
 
@@ -527,3 +553,28 @@ def test_no_director_and_no_other_network_sees_the_hqs_notes(
     for n in hq.values():
         r = client.post(f"/api/agents/notes/{n['id']}/dismiss", headers=login(client, "director1@a.ru"))
         assert r.status_code == 404
+
+
+def test_one_giver_is_not_promised_twice(world: World, owner_engine: Engine) -> None:
+    """TC-AG-30 (backend review of stage 10, p. 1): A2 can spare 16 kg (20 on 19.10 less 3 days and the
+    day to the transfer, at 1 kg a day); A1 takes 5 of them, so A3 asking for 12 gets no note."""
+    with Session(owner_engine) as s, s.begin():
+        s.add(
+            _finding(
+                world.tenant,
+                world.a3,
+                "M6:A3:P2:shortage",
+                "Закончится до поставки: Паста (А3)",
+                review_status="pending",
+                evidence={
+                    "kind": "shortage",
+                    "product": "P2",
+                    "zero_day": "2026-10-20",
+                    "next_delivery": "2026-10-21",
+                    "data_until": "2026-10-19",
+                    "need_by_weekday": ["12"] * 7,
+                },
+            )
+        )
+    service.run_all(TODAY)
+    assert [n.key for n in _notes(owner_engine, "transfer")] == ["transfer:M6:A1:P2:shortage"]

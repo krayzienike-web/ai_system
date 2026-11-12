@@ -297,16 +297,16 @@ def transfer_plan(note: AgentNote) -> list[Planned]:
     if proposal.get("action") != "transfer":
         return []
     unit = texts.UNITS.get(f["unit"], f["unit"])
-    what = f"{texts.num(f['qty'])} {unit} {f['product'].lower()}"
+    what = f"{f['product'].lower()}, {texts.num(f['qty'])} {unit}"  # «паста спагетти, 3 кг»: no case to agree
     return [
         Planned(
             UUID(proposal["from_id"]),
-            f"Передать {what} в «{f['to']}»",
+            f"Передать в «{f['to']}»: {what}",
             ("Отобрать и взвесить", "Оформить перемещение в учетной системе", "Передать водителю"),
         ),
         Planned(
             UUID(proposal["to_id"]),
-            f"Принять {what} из «{f['from']}»",
+            f"Принять из «{f['from']}»: {what}",
             ("Взвесить при приемке", "Проверить, что перемещение есть в учетной системе"),
         ),
     ]

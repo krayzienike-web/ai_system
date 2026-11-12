@@ -6,12 +6,12 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from app.catalog.models import Product, UnitFactor
-from app.core.errors import ForbiddenError, InvalidError, NotFoundError
+from app.core.errors import ConflictError, ForbiddenError, InvalidError, NotFoundError
 from app.imports.matching import normalize
 from app.imports.models import BatchStatus, ImportBatch
 from app.imports.validate import unit_of
@@ -41,7 +41,7 @@ def files_using(session: Session, f: UnitFactor) -> list[ImportBatch]:
     )
 
 
-def _row(session: Session, f: UnitFactor, product: Product) -> dict[str, Any]:
+def _row(session: Session, f: UnitFactor, product: Product, files: int | None = None) -> dict[str, Any]:
     return {
         "id": f.id,
         "product_id": f.product_id,
@@ -50,8 +50,8 @@ def _row(session: Session, f: UnitFactor, product: Product) -> dict[str, Any]:
         "base_unit": product.base_unit,
         "unit": f.unit,
         "unit_text": f.unit_text,
-        "factor": f.factor.normalize(),
-        "files": len(files_using(session, f)),
+        "factor": format(f.factor.normalize(), "f"),  # «10», never «1E+1» (backend review, p. 6)
+        "files": len(files_using(session, f)) if files is None else files,
         "created_at": f.created_at,
     }
 
@@ -62,7 +62,17 @@ def list_factors(session: Session) -> list[dict[str, Any]]:
         .join(Product, Product.id == UnitFactor.product_id)
         .order_by(Product.name, UnitFactor.unit)
     ).all()
-    return [_row(session, f, p) for f, p in rows]
+    # How many published files each factor converted: one query for the whole list (backend review, p. 5).
+    used: dict[str, int] = {}
+    for tags in session.execute(
+        select(ImportBatch.aliases_used).where(
+            ImportBatch.status == BatchStatus.PUBLISHED,
+            ImportBatch.aliases_used.op("@?")(text("""'$[*] ? (@ starts with "unit:")'::jsonpath""")),
+        )
+    ).scalars():
+        for t in tags:
+            used[t] = used.get(t, 0) + 1
+    return [_row(session, f, p, used.get(tag(f.product_id, f.unit), 0)) for f, p in rows]
 
 
 def _may(ctx: AccessContext) -> None:
@@ -141,6 +151,12 @@ def remove(session: Session, ctx: AccessContext, factor_id: UUID) -> list[Import
     if f is None:
         raise NotFoundError("Коэффициент не найден")
     affected = files_using(session, f)
+    if affected:
+        # Those files would no longer pass a check: a rollback of a file next to them would stop (p. 4).
+        raise ConflictError(
+            f"По этому коэффициенту загружено файлов: {len(affected)}. Исправьте коэффициент вместо удаления "
+            "или сначала отмените эти загрузки"
+        )
     session.delete(f)
     session.flush()
     audit(

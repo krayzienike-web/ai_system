@@ -44,7 +44,7 @@ const ACTION = {
     label: () => "Поставить задачи",
     done: () => "Задачи поставлены: директора обоих ресторанов увидят их в «Задачах»",
   },
-  claim: { label: () => "Отправлено", done: () => "Отметили: письмо отправлено" },
+  claim: { label: () => "Отметить: отправлено", done: () => "Отметили: письмо отправлено" },
 } as const;
 
 const SHOWN = 5; // longer lists open on «Показать все»
@@ -80,11 +80,13 @@ export function NoteCard({ note, hq, onAnswered }: { note: AgentNote; hq: boolea
         onError: (e) => notify(errorText(e)),
       },
     );
-  const copy = () =>
-    navigator.clipboard
-      .writeText([note.text, "", ...note.items].join("\n")) // the letter and its invoices
+  const copy = () => {
+    // No clipboard outside a secure page or in some web views: say so instead of failing silently (review, p. 4)
+    const writing = navigator.clipboard?.writeText([note.text, "", ...note.items].join("\n")); // with the invoices
+    (writing ?? Promise.reject(new Error("no clipboard")))
       .then(() => notify("Текст письма скопирован"))
       .catch(() => notify("Не получилось скопировать — выделите текст вручную"));
+  };
   // Each button names its note for a screen reader: «Скрыть» of which of the three?
   const answerButton = (kind: "accept" | "dismiss", variant: "primary" | "ghost", label: string) => (
     <Button

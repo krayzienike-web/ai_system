@@ -55,10 +55,12 @@ def unit_fixes(errors: list[dict[str, Any]]) -> list[UnitFixOut]:
         if not fix or fix.get("kind") != "unit_factor":
             continue
         key = (fix["product_id"], fix["unit"])
+        rows = fix.get("rows")  # counted over the whole file by the check; older reports count shown rows
         if key in out:
-            out[key].rows += 1
+            out[key].rows += 0 if rows is not None else 1
         else:
-            out[key] = UnitFixOut(**{k: v for k, v in fix.items() if k != "kind"}, rows=1)
+            fields = {k: v for k, v in fix.items() if k not in ("kind", "rows")}
+            out[key] = UnitFixOut(**fields, rows=rows if rows else 1)
     return list(out.values())
 
 

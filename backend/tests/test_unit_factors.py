@@ -122,9 +122,14 @@ def test_a_changed_factor_names_the_files_to_reprocess(
         Decimal("6.0000"),
     ]
 
-    gone = client.delete(f"/api/settings/units/{listed['бут 0 5']['id']}", headers=hq).json()
-    assert [f["id"] for f in gone["affected_files"]] == [batch["id"]]
-    assert client.delete(f"/api/settings/units/{listed['бут 0 5']['id']}", headers=hq).status_code == 404
+    # A factor files were loaded with is not deleted: they would no longer pass (backend review, p. 4).
+    in_use = client.delete(f"/api/settings/units/{listed['бут 0 5']['id']}", headers=hq)
+    assert in_use.status_code == 409 and "загружено файлов: 1" in in_use.text
+    spare = _save(client, hq, products["Сливки 33%"], "кор", "10").json()["factor"]
+    assert spare["factor"] == "10"  # never «1E+1» (p. 6)
+    gone = client.delete(f"/api/settings/units/{spare['id']}", headers=hq)
+    assert gone.status_code == 200 and gone.json()["affected_files"] == []
+    assert client.delete(f"/api/settings/units/{spare['id']}", headers=hq).status_code == 404
 
 
 @pytest.mark.parametrize(
@@ -168,3 +173,16 @@ def test_a_standard_unit_of_another_kind_takes_the_products_factor(
     publish(client, other, hq_b["id"])
     b_batch = upload(client, other, "receipts", content, network.b.restaurants["B1"]).json()
     assert b_batch["status"] == "failed" and b_batch["unit_fixes"][0]["unit"] == "шт"
+
+
+def test_every_unit_without_a_factor_is_asked_for_past_the_shown_errors(
+    client: TestClient, network: Network, products: dict[str, str]
+) -> None:
+    """TC-IMP-39 (backend review of stage 10, p. 7): 250 rows of «упак» and then one of «бут» — the report
+    shows 200 errors, yet asks for both factors with the count of all their rows."""
+    rows = ["01.10.2026;Сыр Моцарелла;1;упак;100"] * 250 + ["02.10.2026;Сливки 33%;1;бут;100"]
+    content = "Дата;Номенклатура;Количество;Ед. изм.;Сумма\n" + "\n".join(rows) + "\n"
+    batch = upload(
+        client, login(client, "admin@a.ru"), "receipts", content, network.a.restaurants["A1"]
+    ).json()
+    assert {(f["unit"], f["rows"]) for f in batch["unit_fixes"]} == {("упак", 250), ("бут", 1)}

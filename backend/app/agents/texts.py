@@ -39,6 +39,15 @@ def _positions(n: int) -> str:
     return f"{n} позиций"
 
 
+def _count(n: int, words: tuple[str, str, str]) -> str:
+    """«1 день», «3 дня», «5 дней»."""
+    if n % 10 == 1 and n % 100 != 11:
+        return f"{n} {words[0]}"
+    if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14:
+        return f"{n} {words[1]}"
+    return f"{n} {words[2]}"
+
+
 def _steps(n: int) -> str:
     if n % 10 == 1 and n % 100 != 11:
         return f"{n} шаг"
@@ -127,6 +136,11 @@ def _ddmm(iso: str) -> str:
     return date.fromisoformat(iso).strftime("%d.%m")
 
 
+def _agreed(f: dict[str, Any]) -> str:
+    low, high = Decimal(f.get("reference_min") or f["reference"]), Decimal(f["reference"])
+    return rub(high) if low == high else f"от {rub(low)} до {rub(high)}"
+
+
 def supplier_claim(f: dict[str, Any]) -> tuple[str, str, list[str]]:
     u, contract = _u(f), f["kind"] == "contract"
     lines = [
@@ -140,7 +154,7 @@ def supplier_claim(f: dict[str, Any]) -> tuple[str, str, list[str]]:
         title = f"Претензия «{f['supplier']}»: {f['product'].lower()} дороже договора"
         text = (
             f"«{f['supplier']}», по договору поставки (п. ___) цена товара «{f['product']}» — "
-            f"{rub(Decimal(f['reference']))}/{u}. С {_d(f['since'])} по {_d(f['until'])} в "
+            f"{_agreed(f)}/{u}. С {_d(f['since'])} по {_d(f['until'])} в "
             f"{f['invoices_total']} накладных она выше, в среднем {rub(Decimal(f['price']))}/{u}. "
             f"Переплата — {rub(Decimal(f['extra']))}. Просим вернуть переплату или выставить "
             f"корректировочные счета-фактуры.{more}"
@@ -168,7 +182,8 @@ def transfer(f: dict[str, Any]) -> tuple[str, str, list[str]]:
         f"В «{f['to']}» {f['product'].lower()} {runs_out}, поставка — {_ddmm(f['next_delivery'])}: до нее "
         f"нужно {qty} {u}. В «{f['from']}» по остаткам на {_ddmm(f['from_stock_day'])} — "
         f"{num(f['from_stock'])} {u} при закупке ≈ {num(f['from_daily'])} {u} в день: после передачи у них "
-        f"останется больше чем на {f['keep_days']} дня. Передать {qty} {u} до {_ddmm(f['by'])}."
+        f"останется запас больше чем на {_count(f['keep_days'], ('день', 'дня', 'дней'))}. "
+        f"Передать {qty} {u} до {_ddmm(f['by'])}."
     )
     return title, text, []
 

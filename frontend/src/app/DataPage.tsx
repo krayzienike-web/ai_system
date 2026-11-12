@@ -167,6 +167,7 @@ function Report({
   marking?: { file: File; restaurantId: string | null; template: string | null; templates: { name: string; title: string }[]; onConfirmed: () => void };
 }) {
   const names = useNames();
+  const viewer = useViewer();
   const publish = useBatchAction("publish");
   const rollback = useBatchAction("rollback");
   const [shown, setShown] = useState(8);
@@ -230,8 +231,10 @@ function Report({
             <XCircle size={17} /> Файл не загружен: {plural(current.errors.length, ["ошибка", "ошибки", "ошибок"])}
           </div>
           <p className="mt-1 text-ink-2">
-            {current.errors.every((e) => e.fix)
-              ? "Ни одна строка не попала в систему. Файл исправлять не нужно: задайте коэффициенты единиц ниже и проверьте его заново."
+            {current.errors.length > 0 && current.errors.every((e) => e.fix)
+              ? viewer?.can("norms.manage")
+                ? "Ни одна строка не попала в систему. Файл исправлять не нужно: задайте коэффициенты единиц ниже и проверьте его заново."
+                : "Ни одна строка не попала в систему. Файл исправлять не нужно: не хватает коэффициентов единиц — их задает управляющая компания, потом проверьте файл заново."
               : "Ни одна строка не попала в систему — исправьте файл и загрузите его снова."}
           </p>
           <ul className="mt-3 space-y-1.5">

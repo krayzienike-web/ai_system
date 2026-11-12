@@ -32,7 +32,7 @@ test("TC-UI-38: the HQ analyst reads the notes but has no buttons to answer them
   await signInAs(page, "analyst@demo.local");
   const assistant = page.getByRole("region", { name: "Помощник" });
   await expect(assistant.getByRole("listitem").filter({ hasText: "просрочена и не начата" })).toBeVisible();
-  for (const name of [/Перенести на/, "Создать задачу", "Не нужно", "Скрыть"])
+  for (const name of [/Перенести на/, "Создать задачу", "Поставить задачи", "Отметить: отправлено", "Не нужно", "Скрыть"])
     await expect(assistant.getByRole("button", { name })).toHaveCount(0);
 });
 
