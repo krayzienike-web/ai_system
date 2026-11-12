@@ -112,6 +112,20 @@ describe("the agents' notes in the prototype", () => {
     expect(status(() => post(`/agents/notes/${story.id}/accept`, ADMIN))).toBe(422);
   });
 
+  // Test engineer after the stage 10 review (TC-UI-42): who may answer the HQ's notes, as on the server.
+  it("lets only the HQ admin send the letter or put the agenda away; a director reaches none of them", () => {
+    const claim = note(ANALYST, "supplier_claim");
+    expect(status(() => post(`/agents/notes/${claim.id}/accept`, ANALYST))).toBe(403);
+    expect(status(() => post(`/agents/notes/${claim.id}/accept`, DIRECTOR))).toBe(404);
+    const agenda = note(ADMIN, "hq_agenda");
+    expect(agenda.action).toBeNull();
+    expect(status(() => post(`/agents/notes/${agenda.id}/dismiss`, DIRECTOR))).toBe(404);
+    expect(status(() => post(`/agents/notes/${agenda.id}/dismiss`, ANALYST))).toBe(403);
+    expect(post<AgentNote>(`/agents/notes/${agenda.id}/dismiss`, ADMIN).status).toBe("dismissed");
+    expect(get<AgentNote[]>("/agents/notes", ADMIN).some((n) => n.id === agenda.id)).toBe(false);
+    expect(status(() => post(`/agents/notes/${agenda.id}/dismiss`, ADMIN))).toBe(409);
+  });
+
   it("sets both tasks of a transfer, as the server plans them; «Отправлено» makes no task", () => {
     const move = note(ADMIN, "transfer");
     expect(move.action_tasks.map((t) => t.title)).toHaveLength(2);

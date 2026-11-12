@@ -16,13 +16,14 @@ from typing import Any
 from uuid import UUID
 
 from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import distinct_on
 from sqlalchemy.orm import Session
 
 from app.agents.drafts import NoteDraft
 from app.agents.models import Agent, Audience
 from app.agents.texts import plain
 from app.catalog.models import Product
-from app.insights.models import Finding, FindingStatus
+from app.insights.models import Finding, FindingStatus, ReviewStatus
 from app.operations.models import Receipt, StockBalance
 from app.tenancy.models import Restaurant
 
@@ -53,7 +54,7 @@ def _givers(
         select(StockBalance.restaurant_id, StockBalance.day, StockBalance.qty)
         .where(StockBalance.product_id == product.id, StockBalance.day >= since, StockBalance.day <= until)
         .order_by(StockBalance.restaurant_id, StockBalance.day.desc())
-        .distinct(StockBalance.restaurant_id)
+        .ext(distinct_on(StockBalance.restaurant_id))
     ).all()
     bought = dict(
         session.execute(
@@ -89,6 +90,8 @@ def drafts(session: Session, restaurants: list[Restaurant], today: date) -> list
                 Finding.module == "M6",
                 Finding.status.in_(OPEN),
                 Finding.key.like("%:shortage"),
+                # a rejected finding is wrong: nothing builds on it (test engineer, stage 10, TC-AG-36)
+                Finding.review_status.is_distinct_from(ReviewStatus.REJECTED),
                 Finding.restaurant_id.is_not(None),
             )
             .order_by(Finding.key)

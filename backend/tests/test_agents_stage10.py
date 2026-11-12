@@ -19,12 +19,13 @@ from sqlalchemy.orm import Session
 from app.agents import service, story, texts
 from app.agents.models import AgentNote
 from app.catalog.models import ContractPrice, Product, Supplier
+from app.core.db import get_sessionmaker
 from app.core.period import get_today
 from app.experiments.models import Experiment
 from app.imports.models import ImportBatch
 from app.insights.models import Finding
 from app.main import app
-from app.operations.models import Receipt, StockBalance
+from app.operations.models import Receipt, StockBalance, Transfer
 from app.tasks.models import Task
 from tests.conftest import Network, login
 
@@ -578,3 +579,379 @@ def test_one_giver_is_not_promised_twice(world: World, owner_engine: Engine) -> 
         )
     service.run_all(TODAY)
     assert [n.key for n in _notes(owner_engine, "transfer")] == ["transfer:M6:A1:P2:shortage"]
+
+
+# ------------------------------------------------------------------ test engineer after the stage 10 review
+
+
+def _strict(tenant: UUID, today: date) -> None:
+    """One network's pass with its failure raised: `run_all` logs a failed network and goes on, so a «no note»
+    after it could be a crash."""
+    with get_sessionmaker()() as s:
+        service.run_network(s, tenant, today)
+        s.commit()
+
+
+def _evidence(owner_engine: Engine, key: str, **changes: Any) -> None:
+    with Session(owner_engine) as s, s.begin():
+        f = s.execute(select(Finding).where(Finding.key == key)).scalar_one()
+        f.evidence = {**(f.evidence or {}), **changes}
+
+
+def test_the_agenda_on_friday_at_the_weekend_and_with_nothing_to_say(
+    network: Network, world: World, owner_engine: Engine
+) -> None:
+    """TC-AG-31: Friday still has the week's agenda (the late task due 17.10 is 6 days late on 23.10), Sunday
+    none; a week with nothing to say has no agenda — the one of the week expires; network B, empty, never has
+    one."""
+    _strict(world.tenant, date(2026, 10, 23))  # Friday
+    (friday,) = _notes(owner_engine, "hq_agenda")
+    assert (friday.key, friday.status, friday.for_date) == ("hq_agenda:2026-10-19", "new", date(2026, 10, 19))
+    assert friday.facts["late"] == [{"title": "Сверить остатки", "place": "Сеть А A2", "days": 6}]
+    _strict(world.tenant, date(2026, 10, 25))  # Sunday
+    assert [n.status for n in _notes(owner_engine, "hq_agenda")] == ["expired"]
+
+    _strict(world.tenant, date(2026, 10, 27))  # Tuesday of the next week: a new agenda
+    with Session(owner_engine) as s, s.begin():  # then everything is done: nothing to put on it
+        for model in (Task, Experiment, Finding):
+            for row in s.execute(select(model)).scalars():
+                s.delete(row)
+    _strict(world.tenant, date(2026, 10, 28))
+    assert [(n.key, n.status) for n in _notes(owner_engine, "hq_agenda")] == [
+        ("hq_agenda:2026-10-19", "expired"),
+        ("hq_agenda:2026-10-26", "expired"),
+    ]
+    _strict(network.b.id, date(2026, 10, 28))
+    with Session(owner_engine) as s:
+        b = select(AgentNote.agent).where(AgentNote.tenant_id == network.b.id)
+        assert "hq_agenda" not in s.execute(b).scalars().all()  # B has its «нет выгрузок» notes only
+
+
+def test_the_agenda_counts_beyond_its_top_five(world: World, owner_engine: Engine) -> None:
+    """TC-AG-31: at most five findings and five late tasks on the list, the text counts every late task; a
+    done task is not late."""
+    with Session(owner_engine) as s, s.begin():
+        for i in range(6):
+            s.add(
+                Task(
+                    tenant_id=world.tenant,
+                    restaurant_id=world.a3,
+                    title=f"Задача {i}",
+                    checklist=[],
+                    checklist_done=[],
+                    assigned_by="hq",
+                    created_on=date(2026, 10, 1),
+                    due_on=date(2026, 10, 18),
+                    status="done" if i == 5 else "in_progress",
+                    done_on=date(2026, 10, 17) if i == 5 else None,
+                )
+            )
+    _strict(world.tenant, TODAY)
+    (agenda,) = _notes(owner_engine, "hq_agenda")
+    assert len(agenda.facts["findings"]) == 5 and len(agenda.facts["late"]) == 5
+    assert agenda.facts["late_total"] == 6  # «Сверить остатки» and «Задача 0…4»
+    assert agenda.facts["late"][0]["title"] == "Сверить остатки"  # the most overdue first
+    assert "просроченных задач — 6" in agenda.text
+
+
+def test_a_claim_skips_an_invoice_with_no_contract_on_its_day(world: World, owner_engine: Engine) -> None:
+    """TC-AG-29: without the contract from 16.09 the invoices Н-3 and Н-4 have no agreed price — they are not
+    in the claim (no price to compare with), Н-1 is (550 − 500) × 10 = 500 ₽; the text names one price. With
+    no contract on any invoice's day there is no claim at all."""
+    with Session(owner_engine) as s, s.begin():
+        for c in s.execute(select(ContractPrice).where(ContractPrice.price == 540)).scalars():
+            s.delete(c)
+    _strict(world.tenant, TODAY)
+    (claim,) = [n for n in _notes(owner_engine, "supplier_claim") if n.restaurant_id is None]
+    assert [(x["doc"], x["extra"]) for x in claim.facts["invoices"]] == [("Н-1", "500.00")]
+    assert claim.facts["extra"] == "500.00"
+    assert "цена товара «Сыр» — 500 ₽/кг" in claim.text and "в 1 накладной" in claim.text
+
+    with Session(owner_engine) as s, s.begin():
+        for c in s.execute(select(ContractPrice)).scalars():
+            c.valid_from, c.valid_to = date(2026, 9, 6), date(2026, 9, 11)  # between Н-1 and Н-2
+    _strict(world.tenant, TODAY)
+    assert [n.status for n in _notes(owner_engine, "supplier_claim") if n.restaurant_id is None] == [
+        "expired"
+    ]
+
+
+def test_no_claim_when_two_suppliers_share_the_name(world: World, owner_engine: Engine) -> None:
+    """TC-AG-29 (backend review of stage 10, p. 3): a second «Сырный дом» in the network — the finding cannot
+    tell which one, so no letter; the jump of «Новый сыр» still has its request."""
+    with Session(owner_engine) as s, s.begin():
+        s.add(Supplier(tenant_id=world.tenant, code="S3", name="Сырный дом"))
+    _strict(world.tenant, TODAY)
+    assert [n.key for n in _notes(owner_engine, "supplier_claim")] == ["supplier_claim:M3:A1:P2:jump"]
+
+
+def test_a_request_follows_the_networks_price_and_averages_every_invoice(
+    world: World, owner_engine: Engine
+) -> None:
+    """TC-AG-29 (backend review of stage 10, p. 2): the network's prices moved +10 %, so the expected price is
+    100 × 1,1 = 110 ₽. П-2 at 120 ₽ is above it: (120 − 110) × 10 = 100 ₽; П-3 at 100 ₽ is not listed. The
+    price after the rise is the average of both: (1200 + 1000) / 20 = 110 ₽, +10,0 % on 100 ₽."""
+    _evidence(owner_engine, "M3:A1:P2:jump", network_growth="0.1")
+    with Session(owner_engine) as s, s.begin():
+        batch = _batch(s, world.tenant, world.a1, "receipts")
+        new = s.execute(select(Supplier).where(Supplier.code == "S2")).scalar_one()
+        s.add(
+            Receipt(
+                tenant_id=world.tenant,
+                restaurant_id=world.a1,
+                import_batch_id=batch,
+                day=date(2026, 9, 25),
+                doc_no="П-3",
+                supplier_id=new.id,
+                product_id=world.pasta,
+                qty=Decimal(10),
+                amount=Decimal(1000),
+            )
+        )
+    _strict(world.tenant, TODAY)
+    (jump,) = [n for n in _notes(owner_engine, "supplier_claim") if n.key.endswith(":jump")]
+    assert [(x["doc"], x["reference"], x["extra"]) for x in jump.facts["invoices"]] == [
+        ("П-2", "110.00", "100.00")
+    ]
+    assert (jump.facts["price"], jump.facts["growth_pct"], jump.facts["extra"]) == (
+        "110.00",
+        "10.0",
+        "100.00",
+    )
+    assert "выросла с 100 ₽ до 110 ₽/кг (+10,0%)" in jump.text
+    assert "разница — 100 ₽ в 1 накладной" in jump.text
+
+
+def test_a_transfer_when_the_day_it_runs_out_has_passed(
+    client: TestClient, world: World, owner_engine: Engine
+) -> None:
+    """TC-AG-30: the pasta ran out on 16.10 by the forecast; the need counts from today, 20.10 (Tuesday 0,75 +
+    Wednesday 1 = 1,75 → 1,8 kg up to the 0,1 kg one weighs), not from 16.10 (that would be 5,25); the text
+    says «закончилась», both tasks are due today."""
+    _evidence(
+        owner_engine,
+        "M6:A1:P2:shortage",
+        zero_day="2026-10-16",
+        need_by_weekday=["0.5", "0.75", "1", "1", "1", "1", "1"],
+    )
+    _strict(world.tenant, TODAY)
+    (note,) = _notes(owner_engine, "transfer")
+    assert (note.facts["qty"], note.facts["by"], note.for_date) == ("1.8", "2026-10-20", TODAY)
+    assert texts.by_rules("transfer", note.facts)[1].startswith(
+        "В «Сеть А A1» паста по расчету закончилась 16.10, поставка — 22.10: до нее нужно 1,8 кг."
+    )
+    r = client.post(f"/api/agents/notes/{note.id}/accept", headers=login(client, "admin@a.ru"))
+    assert r.status_code == 200, r.text
+    assert {due for t, _, due in _tasks(owner_engine) if "паста" in t} == {TODAY}
+
+
+@pytest.mark.parametrize(
+    ("zero_day", "delivery"),
+    [("2026-10-22", "2026-10-22"), ("2026-10-23", "2026-10-22"), ("2026-10-15", "2026-10-19")],
+)
+def test_no_transfer_when_the_delivery_comes_first(
+    world: World, owner_engine: Engine, zero_day: str, delivery: str
+) -> None:
+    """TC-AG-30: the delivery comes on the day it runs out, before it, or has come already (both past): there
+    are no days to bridge — no note, while the other agents of the pass still write theirs."""
+    _evidence(owner_engine, "M6:A1:P2:shortage", zero_day=zero_day, next_delivery=delivery)
+    _strict(world.tenant, TODAY)
+    assert _notes(owner_engine, "transfer") == []
+    assert len(_notes(owner_engine, "hq_agenda")) == 1
+
+
+def test_the_need_is_rounded_up_to_what_one_weighs_or_counts() -> None:
+    """TC-AG-30: 7 days × 0,3 = 2,1 — 3 шт (a piece is not cut), 2,1 kg and l; 3 days × 1 шт = 3 шт exactly;
+    0,01 kg → 0,1 kg; an unknown unit is weighed by 0,1."""
+    from app.agents import transfers
+
+    week = {"need_by_weekday": ["0.3"] * 7}
+    start, delivery = date(2026, 10, 20), date(2026, 10, 27)
+    assert transfers._need(week, start, delivery, "pcs") == Decimal(3)
+    assert transfers._need(week, start, delivery, "kg") == Decimal("2.1")
+    assert transfers._need(week, start, delivery, "l") == Decimal("2.1")
+    assert transfers._need(week, start, delivery, "упак") == Decimal("2.1")
+    assert transfers._need({"need_by_weekday": ["1"] * 7}, start, start + timedelta(days=3), "pcs") == 3
+    assert transfers._need(
+        {"need_by_weekday": ["0.01"] * 7}, start, start + timedelta(days=1), "kg"
+    ) == Decimal("0.1")
+
+
+def test_the_story_counts_what_was_moved_out_and_in(world: World, owner_engine: Engine) -> None:
+    """TC-AG-28: transfers in the database — A1 gave A2 4 kg on 15.09 and got 1,5 kg from A2 on 20.08; one
+    of 7 kg on 05.10 is outside the finding's periods. The periods show them; «moved out» is a version, the
+    third — the growing overuse does not fit (three at most)."""
+    with Session(owner_engine) as s, s.begin():
+        out1, in1 = (_batch(s, world.tenant, r, "transfers") for r in (world.a1, world.a2))
+        for sender, batch, receiver, day, qty in (
+            (world.a1, out1, world.a2, date(2026, 9, 15), "4"),
+            (world.a2, in1, world.a1, date(2026, 8, 20), "1.5"),
+            (world.a1, out1, world.a3, date(2026, 10, 5), "7"),
+        ):
+            s.add(
+                Transfer(
+                    tenant_id=world.tenant,
+                    restaurant_id=sender,
+                    import_batch_id=batch,
+                    day=day,
+                    to_restaurant_id=receiver,
+                    product_id=world.cheese,
+                    qty=Decimal(qty),
+                )
+            )
+    _strict(world.tenant, TODAY)
+    (note,) = _notes(owner_engine, "shortage_story")
+    assert [(p["moved_out"], p["moved_in"]) for p in note.facts["periods"]] == [("0", "1.5"), ("4", "0")]
+    assert note.facts["versions"] == ["supplier", "no_write_offs", "moved_out"]
+    assert note.items[0].endswith("закуплено 100 кг у «Сырный дом»; получено 1,5 кг")
+    assert note.items[1].endswith("; передано в другие рестораны 4 кг")
+    assert "3) товар уходил перемещениями" in note.text and "растет" not in note.text
+
+
+def test_the_texts_agree_with_their_numbers() -> None:
+    """TC-AG-34: «1 день, 3 дня, 5 дней, 11 дней, 21 день, 112 дней», the same for positions and steps;
+    «в 1 накладной», «в 3 накладных», «в 21 накладной»; a transfer in pieces says «шт»."""
+    days = ("день", "дня", "дней")
+    assert [texts._count(n, days) for n in (1, 3, 5, 11, 12, 14, 21, 22, 25, 101, 111, 112)] == [
+        "1 день",
+        "3 дня",
+        "5 дней",
+        "11 дней",
+        "12 дней",
+        "14 дней",
+        "21 день",
+        "22 дня",
+        "25 дней",
+        "101 день",
+        "111 дней",
+        "112 дней",
+    ]
+    assert [texts._days(n) for n in (0, 1, 2, 5, 21)] == [
+        "сегодня",
+        "завтра",
+        "через 2 дня",
+        "через 5 дней",
+        "через 21 день",
+    ]
+    assert [texts._positions(n) for n in (1, 2, 5, 11, 21)] == [
+        "1 позиция",
+        "2 позиции",
+        "5 позиций",
+        "11 позиций",
+        "21 позиция",
+    ]
+    assert [texts._steps(n) for n in (1, 3, 12, 22)] == ["1 шаг", "3 шага", "12 шагов", "22 шага"]
+
+    claim = {
+        "kind": "contract",
+        "supplier": "С",
+        "product": "Сыр",
+        "unit": "kg",
+        "reference": "500.00",
+        "reference_min": "500.00",
+        "price": "550.00",
+        "since": "2026-09-01",
+        "until": "2026-09-30",
+        "invoices": [],
+        "extra": "500.00",
+    }
+    for n, words in (
+        (1, "в 1 накладной"),
+        (3, "в 3 накладных"),
+        (21, "в 21 накладной"),
+        (166, "в 166 накладных"),
+    ):
+        for kind in ("contract", "jump"):
+            text = texts.supplier_claim({**claim, "kind": kind, "invoices_total": n, "growth_pct": "10.0"})[1]
+            assert words in text, (kind, text)
+    pieces = {
+        "product": "Багет",
+        "unit": "pcs",
+        "qty": "3",
+        "to": "А",
+        "from": "Б",
+        "by": "2026-10-20",
+        "zero_day": "2026-10-20",
+        "next_delivery": "2026-10-22",
+        "from_stock": "40",
+        "from_stock_day": "2026-10-19",
+        "from_daily": "2",
+        "keep_days": 1,
+    }
+    text = texts.transfer(pieces)[1]
+    assert "нужно 3 шт" in text and "≈ 2 шт в день" in text and "больше чем на 1 день" in text
+
+
+def test_the_model_writes_the_hqs_notes_only_with_the_facts_numbers(
+    world: World, owner_engine: Engine
+) -> None:
+    """TC-AG-35 (CLAUDE.md, p. 1; prompt `agent.v2`): the letter to the supplier by the model may quote 500 ₽,
+    540 ₽ — the facts; «верните 600 ₽» is in none of them: refused after one correction, the rules' letter
+    stays. The same for a transfer: «6 кг» while the facts say 5."""
+    from app.ai import agent_writer
+    from app.ai.gateway import FakeModel, Gateway
+    from app.tenancy.context import system_context
+    from tests.test_agents import _model
+
+    _strict(world.tenant, TODAY)
+    (claim,) = [n for n in _notes(owner_engine, "supplier_claim") if n.restaurant_id is None]
+    (move,) = _notes(owner_engine, "transfer")
+    with get_sessionmaker()() as s:
+        ctx = system_context(s, world.tenant)
+
+        def write(model: FakeModel) -> Any:
+            return agent_writer.writer(Gateway(model), ctx)
+
+        wrong = FakeModel()
+        wrong.replies += [_model("«Сырный дом», просим вернуть 600 ₽ (п. ___).")] * 2
+        assert write(wrong)("supplier_claim", claim.facts, claim.text) is None and len(wrong.requests) == 2
+        good = "«Сырный дом», по договору (п. ___) цена от 500 ₽ до 540 ₽ за кг; просим вернуть 540 ₽."
+        ok = FakeModel()
+        ok.replies += [_model(good)]
+        assert write(ok)("supplier_claim", claim.facts, claim.text) == (good, 2)
+        more = FakeModel()
+        more.replies += [_model("Передайте 6 кг пасты из «Сеть А A2» до 20.10.")] * 2
+        assert write(more)("transfer", move.facts, move.text) is None
+
+
+def test_nothing_to_ask_at_the_contract_price_or_of_a_negative_stock(
+    world: World, owner_engine: Engine
+) -> None:
+    """TC-AG-29, 30: every invoice of «Сырный дом» at the contract of its day (500 ₽ to 15.09, 540 ₽ after) —
+    no claim; A2's books show −2 kg of pasta (a document missing, M7's business) — it gives nothing, and A3's
+    count is too old: no transfer. A period with no purchases says «закупок не было»."""
+    with Session(owner_engine) as s, s.begin():
+        for r in s.execute(select(Receipt).where(Receipt.doc_no.in_(["Н-1", "Н-3"]))).scalars():
+            r.amount = r.qty * (500 if r.doc_no == "Н-1" else 540)
+        for b in s.execute(select(StockBalance).where(StockBalance.restaurant_id == world.a2)).scalars():
+            b.qty = Decimal(-2)
+    _strict(world.tenant, TODAY)
+    assert [n.key for n in _notes(owner_engine, "supplier_claim")] == ["supplier_claim:M3:A1:P2:jump"]
+    assert _notes(owner_engine, "transfer") == []
+    period: dict[str, Any] = {"from": "2026-08-01", "to": "2026-08-31", "actual": "5", "theory": "4"}
+    period |= {"share": "25", "written_off": "0", "bought": {}, "moved_out": "0", "moved_in": "0"}
+    facts: dict[str, Any] = {"product": "Сыр", "unit": "kg", "restaurant": "А", "effect": None}
+    facts["network_share"] = "2"
+    _, text, items = texts.shortage_story({**facts, "periods": [period], "versions": ["portions"]})
+    assert items == [
+        "01.08–31.08: по пересчетам 5 кг, по техкартам 4 кг (+25%), списано 0 кг; закупок не было"
+    ]
+    assert text.startswith("Перерасход, по сети обычно +2%.")
+
+
+def test_a_rejected_finding_gets_no_story_and_no_transfer(world: World, owner_engine: Engine) -> None:
+    """TC-AG-36: a finding the HQ rejected stays open, «hidden from everyone but the review page» — the story
+    and the transfer do not build on it; a pending one still does (a shortage cannot wait for the review)."""
+    with Session(owner_engine) as s, s.begin():
+        for f in s.execute(
+            select(Finding).where(Finding.key.in_(["M1:A1:P1", "M6:A1:P2:shortage"]))
+        ).scalars():
+            f.review_status, f.review_reason = "rejected", "data"
+    _strict(world.tenant, TODAY)
+    assert _notes(owner_engine, "shortage_story") == []
+    assert _notes(owner_engine, "transfer") == []
+    with Session(owner_engine) as s, s.begin():
+        for f in s.execute(select(Finding).where(Finding.key == "M1:A1:P1")).scalars():
+            f.review_status, f.review_reason = "pending", None
+    _strict(world.tenant, TODAY)
+    assert [n.status for n in _notes(owner_engine, "shortage_story")] == ["new"]

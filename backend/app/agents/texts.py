@@ -141,6 +141,11 @@ def _agreed(f: dict[str, Any]) -> str:
     return rub(high) if low == high else f"от {rub(low)} до {rub(high)}"
 
 
+def _invoices(n: int) -> str:
+    """«в 1 накладной», «в 3 накладных», «в 21 накладной» (test engineer after the stage 10 review)."""
+    return _count(n, ("накладной", "накладных", "накладных"))
+
+
 def supplier_claim(f: dict[str, Any]) -> tuple[str, str, list[str]]:
     u, contract = _u(f), f["kind"] == "contract"
     lines = [
@@ -155,7 +160,7 @@ def supplier_claim(f: dict[str, Any]) -> tuple[str, str, list[str]]:
         text = (
             f"«{f['supplier']}», по договору поставки (п. ___) цена товара «{f['product']}» — "
             f"{_agreed(f)}/{u}. С {_d(f['since'])} по {_d(f['until'])} в "
-            f"{f['invoices_total']} накладных она выше, в среднем {rub(Decimal(f['price']))}/{u}. "
+            f"{_invoices(f['invoices_total'])} она выше, в среднем {rub(Decimal(f['price']))}/{u}. "
             f"Переплата — {rub(Decimal(f['extra']))}. Просим вернуть переплату или выставить "
             f"корректировочные счета-фактуры.{more}"
         )
@@ -165,7 +170,7 @@ def supplier_claim(f: dict[str, Any]) -> tuple[str, str, list[str]]:
             f"«{f['supplier']}», с {_d(f['since'])} цена товара «{f['product']}» выросла с "
             f"{rub(Decimal(f['reference']))} до {rub(Decimal(f['price']))}/{u} (+{num(f['growth_pct'])}%). "
             f"Просим обосновать повышение или вернуть прежнюю цену. По {_d(f['until'])} разница — "
-            f"{rub(Decimal(f['extra']))} в {f['invoices_total']} накладных.{more}"
+            f"{rub(Decimal(f['extra']))} в {_invoices(f['invoices_total'])}.{more}"
         )
     return title, text, lines
 

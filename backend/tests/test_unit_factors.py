@@ -5,12 +5,14 @@ from collections.abc import Iterator
 from datetime import date
 from decimal import Decimal
 from typing import Any
+from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine, text
 
 from app.core.period import get_today
+from app.imports import validate
 from app.main import app
 from tests.conftest import Network, login
 from tests.test_imports_api import PRODUCTS, publish, upload
@@ -186,3 +188,136 @@ def test_every_unit_without_a_factor_is_asked_for_past_the_shown_errors(
         client, login(client, "admin@a.ru"), "receipts", content, network.a.restaurants["A1"]
     ).json()
     assert {(f["unit"], f["rows"]) for f in batch["unit_fixes"]} == {("упак", 250), ("бут", 1)}
+
+
+# ------------------------------------------------------------------ test engineer after the stage 10 review
+
+
+def test_recheck_of_a_file_whose_source_was_purged_says_so(
+    client: TestClient, network: Network, products: dict[str, str], owner_engine: Engine
+) -> None:
+    """TC-IMP-43: a failed file is kept 7 days (Q37); past that its bytes are gone, and «Проверить заново»
+    says to upload it again instead of checking an empty file — the report stays as it was."""
+    hq, a1 = login(client, "admin@a.ru"), network.a.restaurants["A1"]
+    batch = upload(client, hq, "receipts", RECEIPTS, a1).json()
+    with owner_engine.begin() as c:
+        c.execute(
+            text("UPDATE import_batches SET raw = '', raw_deleted_at = now() WHERE id = :id"),
+            {"id": batch["id"]},
+        )
+    _save(client, hq, products["Сыр Моцарелла"], "упак", "2.5")
+    _save(client, hq, products["Сливки 33%"], "бут 0,5", "0.5")
+    r = client.post(f"/api/imports/{batch['id']}/recheck", headers=hq)
+    assert r.status_code == 422 and "удален по сроку хранения" in r.text and "загрузите его заново" in r.text
+    again = client.get(f"/api/imports/{batch['id']}", headers=hq).json()
+    assert again["status"] == "failed" and len(again["unit_fixes"]) == 2
+
+
+def test_a_recheck_that_would_load_the_same_file_twice_is_a_duplicate(
+    client: TestClient, network: Network, products: dict[str, str]
+) -> None:
+    """TC-IMP-43: the same failed file uploaded twice for A1 (a failed file is no duplicate); once the first
+    passes the check, the second is the same file — 409 «уже загружен», and it stays failed. For A2 the same
+    file is not a duplicate (Q35 changes nothing in that rule)."""
+    hq, a1, a2 = login(client, "admin@a.ru"), network.a.restaurants["A1"], network.a.restaurants["A2"]
+    first, second = (upload(client, hq, "receipts", RECEIPTS, a1).json() for _ in range(2))
+    other = upload(client, hq, "receipts", RECEIPTS, a2).json()
+    assert first["id"] != second["id"] and {first["status"], second["status"]} == {"failed"}
+    _save(client, hq, products["Сыр Моцарелла"], "упак", "2.5")
+    _save(client, hq, products["Сливки 33%"], "бут 0,5", "0.5")
+    assert client.post(f"/api/imports/{first['id']}/recheck", headers=hq).json()["status"] == "validated"
+    dup = client.post(f"/api/imports/{second['id']}/recheck", headers=hq)
+    assert dup.status_code == 409 and "уже загружен для этого ресторана" in dup.text
+    assert client.get(f"/api/imports/{second['id']}", headers=hq).json()["status"] == "failed"
+    assert client.post(f"/api/imports/{other['id']}/recheck", headers=hq).json()["status"] == "validated"
+
+
+def test_a_recheck_and_the_factors_stay_within_the_restaurant_and_the_network(
+    client: TestClient, network: Network, products: dict[str, str]
+) -> None:
+    """TC-IMP-42: a director checks again only a file of their own restaurant; another network neither
+    deletes nor changes the network's factor (404), nor checks its file again, and the factor stays."""
+    hq, a1, a2 = login(client, "admin@a.ru"), network.a.restaurants["A1"], network.a.restaurants["A2"]
+    batch = upload(client, hq, "receipts", RECEIPTS, a2).json()
+    factor = _save(client, hq, products["Сыр Моцарелла"], "упак", "2.5").json()["factor"]
+    director1 = login(client, "director1@a.ru")
+    assert client.post(f"/api/imports/{batch['id']}/recheck", headers=director1).status_code in (403, 404)
+    assert upload(client, director1, "receipts", RECEIPTS, a1).status_code == 201  # their own: allowed
+
+    b = login(client, "admin@b.ru")
+    assert client.delete(f"/api/settings/units/{factor['id']}", headers=b).status_code == 404
+    assert _save(client, b, products["Сыр Моцарелла"], "упак", "9").status_code == 404
+    assert client.post(f"/api/imports/{batch['id']}/recheck", headers=b).status_code == 404
+    (kept,) = client.get("/api/settings/units", headers=hq).json()
+    assert (kept["id"], kept["factor"]) == (factor["id"], "2.5")
+    # A director and an analyst of A read the list (docs/04: «видят список, но не меняют его»).
+    for who in ("director1@a.ru", "analyst@a.ru"):
+        assert [f["id"] for f in client.get("/api/settings/units", headers=login(client, who)).json()] == [
+            factor["id"]
+        ]
+
+
+def test_a_unit_is_compared_without_case_and_dots_but_with_its_volume(
+    client: TestClient, network: Network, products: dict[str, str]
+) -> None:
+    """TC-IMP-39 (docs/04): «Бут.» and «бут» are one unit, «бут 0,5» another — a factor for «бут» does not
+    convert «бут 0,5»; a unit longer than 40 characters is refused."""
+    hq, a1, cream = login(client, "admin@a.ru"), network.a.restaurants["A1"], products["Сливки 33%"]
+    assert _save(client, hq, cream, "бут", "1").status_code == 200
+    content = "Дата;Номенклатура;Количество;Ед. изм.;Сумма\n02.10.2026;Сливки 33%;6;Бут.;720\n"
+    assert upload(client, hq, "receipts", content, a1).json()["status"] == "validated"
+    half = content.replace("Бут.", "бут 0,5")
+    failed = upload(client, hq, "receipts", half, a1).json()
+    assert failed["status"] == "failed" and [f["unit"] for f in failed["unit_fixes"]] == ["бут 0 5"]
+    long = _save(client, hq, cream, "у" * 41, "1")
+    assert long.status_code == 422
+
+
+def test_unit_fixes_count_rows_once_per_product_and_unit() -> None:
+    """TC-IMP-39: the report's list of units — the check's count of all rows of a pair is taken as it is
+    (repeats with 0 add nothing); a report saved before the counts counts the rows shown; other errors are
+    not in it."""
+    from app.imports.api import unit_fixes
+
+    fix = {"kind": "unit_factor", "product_id": str(uuid4()), "unit": "упак", "unit_text": "упак"}
+    fix |= {"product_name": "Сыр", "base_unit": "kg"}
+    other = {**fix, "product_id": str(uuid4()), "product_name": "Сливки"}
+    errors = [
+        {"row": 2, "message": "…", "fix": {**fix, "rows": 250}},
+        {"row": 3, "message": "…", "fix": {**fix, "rows": 0}},
+        {"row": 4, "message": "дата в будущем"},
+        {"row": 5, "message": "…", "fix": {"kind": "other"}},
+    ]
+    assert [(f.product_name, f.rows) for f in unit_fixes(errors)] == [("Сыр", 250)]
+    old = [{"row": i, "message": "…", "fix": other} for i in range(3)]
+    assert [(f.product_name, f.rows) for f in unit_fixes(old)] == [("Сливки", 3)]
+
+
+def test_past_the_error_cap_the_count_of_the_rest_is_right(
+    client: TestClient, network: Network, products: dict[str, str]
+) -> None:
+    """TC-IMP-39 (backend review of stage 10, p. 7): 250 rows of «упак» and one of «бут» are 251 errors: 200
+    are shown, the first «бут» row is added for its factor — so «и еще 50», not 51."""
+    rows = ["01.10.2026;Сыр Моцарелла;1;упак;100"] * 250 + ["02.10.2026;Сливки 33%;1;бут;100"]
+    content = "Дата;Номенклатура;Количество;Ед. изм.;Сумма\n" + "\n".join(rows) + "\n"
+    batch = upload(
+        client, login(client, "admin@a.ru"), "receipts", content, network.a.restaurants["A1"]
+    ).json()
+    *listed, tail = batch["errors"]
+    assert len(listed) == 201 and listed[-1]["row"] == 252  # the header is row 1
+    hidden = 251 - len(listed)
+    assert tail["message"] == f"и еще {validate._errors(hidden)} того же рода"
+    assert [validate._errors(n) for n in (1, 3, 11, 21, 50)] == [
+        "1 ошибка",
+        "3 ошибки",
+        "11 ошибок",
+        "21 ошибка",
+        "50 ошибок",
+    ]
+    # 200 rows of «упак» and one of «бут»: every error is listed, there is no «и еще 0».
+    rows = ["01.10.2026;Сыр Моцарелла;1;упак;100"] * 200 + ["02.10.2026;Сливки 33%;1;бут;100"]
+    content = "Дата;Номенклатура;Количество;Ед. изм.;Сумма\n" + "\n".join(rows) + "\n"
+    batch = upload(
+        client, login(client, "admin@a.ru"), "receipts", content, network.a.restaurants["A1"], "g.csv"
+    ).json()
+    assert len(batch["errors"]) == 201 and not batch["errors"][-1]["message"].startswith("и еще")

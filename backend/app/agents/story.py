@@ -24,7 +24,7 @@ from app.agents.drafts import NoteDraft
 from app.agents.models import Agent, Audience
 from app.agents.texts import plain
 from app.catalog.models import Product, Supplier
-from app.insights.models import Finding, FindingStatus
+from app.insights.models import Finding, FindingStatus, ReviewStatus
 from app.operations.models import Receipt, Transfer
 from app.tenancy.models import Restaurant
 
@@ -113,6 +113,8 @@ def drafts(session: Session, restaurants: list[Restaurant], today: date) -> list
             Finding.status.in_(OPEN),
             Finding.restaurant_id.is_not(None),
             Finding.effect_rub_month >= MIN_RUB_MONTH,
+            # a rejected finding is wrong: nothing builds on it (test engineer, stage 10, TC-AG-36)
+            Finding.review_status.is_distinct_from(ReviewStatus.REJECTED),
         )
         .order_by(Finding.key)
     ).scalars():

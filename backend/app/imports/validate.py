@@ -142,6 +142,15 @@ SEMI_WORDS = {"п/ф", "пф", "полуфабрикат", "заготовка"}
 GOODS_WORDS = {"", "товар", "сырье", "продукт"}
 
 
+def _errors(n: int) -> str:
+    """«1 ошибка», «3 ошибки», «51 ошибка», «12 ошибок»."""
+    if n % 10 == 1 and n % 100 != 11:
+        return f"{n} ошибка"
+    if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14:
+        return f"{n} ошибки"
+    return f"{n} ошибок"
+
+
 def unit_of(text: str) -> tuple[str, Decimal] | None:
     """«кг.», «Кг», «гр» → (base unit, factor). Unknown → None: never guess (domain invariant 4)."""
     return UNITS.get(text.strip().lower().rstrip("."))
@@ -701,8 +710,9 @@ def validate(template: Template, table: Table, lookups: Lookups, *, today: date)
             seen.add(k)
             errors[i] = Issue(issue.row, issue.column, issue.message, fix)
     if len(errors) > MAX_ISSUES:
-        hidden = len(errors) - MAX_ISSUES
         shown = errors[:MAX_ISSUES]
         first_of_each = [i for i in errors[MAX_ISSUES:] if i.fix is not None and i.fix.get("rows")]
-        result.errors = [*shown, *first_of_each, Issue(None, None, f"и еще {hidden} ошибок того же рода")]
+        hidden = len(errors) - len(shown) - len(first_of_each)  # the rows listed are not «еще» (TC-IMP-39)
+        tail = [Issue(None, None, f"и еще {_errors(hidden)} того же рода")] if hidden else []
+        result.errors = [*shown, *first_of_each, *tail]
     return result
