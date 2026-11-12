@@ -108,11 +108,149 @@ def data_check(f: dict[str, Any]) -> tuple[str, str, list[str]]:
     return title, text, items
 
 
+def _u(f: dict[str, Any]) -> str:
+    unit: str = f["unit"]
+    return UNITS.get(unit, unit)
+
+
+def plain(value: Decimal) -> str:
+    """A quantity without trailing zeros and never in exponent form: 100, 2.5 (not «1E+2»)."""
+    return format(value.normalize(), "f")
+
+
+def num(value: str) -> str:
+    """«2.5» → «2,5»: a quantity as people write it."""
+    return value.replace(".", ",")
+
+
+def _ddmm(iso: str) -> str:
+    return date.fromisoformat(iso).strftime("%d.%m")
+
+
+def supplier_claim(f: dict[str, Any]) -> tuple[str, str, list[str]]:
+    u, contract = _u(f), f["kind"] == "contract"
+    lines = [
+        f"№ {x['doc'] or 'без номера'} от {_d(x['day'])}, {x['restaurant']}: {num(x['qty'])} {u} по "
+        f"{rub(Decimal(x['price']))} — {'переплата' if contract else 'разница'} {rub(Decimal(x['extra']))}"
+        for x in f["invoices"]
+    ]
+    shown = len(f["invoices"])
+    more = f" В списке — первые {shown} из {f['invoices_total']}." if f["invoices_total"] > shown else ""
+    if contract:
+        title = f"Претензия «{f['supplier']}»: {f['product'].lower()} дороже договора"
+        text = (
+            f"«{f['supplier']}», по договору поставки (п. ___) цена товара «{f['product']}» — "
+            f"{rub(Decimal(f['reference']))}/{u}. С {_d(f['since'])} по {_d(f['until'])} в "
+            f"{f['invoices_total']} накладных она выше, в среднем {rub(Decimal(f['price']))}/{u}. "
+            f"Переплата — {rub(Decimal(f['extra']))}. Просим вернуть переплату или выставить "
+            f"корректировочные счета-фактуры.{more}"
+        )
+    else:
+        title = f"Запрос «{f['supplier']}»: рост цены на {f['product'].lower()}"
+        text = (
+            f"«{f['supplier']}», с {_d(f['since'])} цена товара «{f['product']}» выросла с "
+            f"{rub(Decimal(f['reference']))} до {rub(Decimal(f['price']))}/{u} (+{num(f['growth_pct'])}%). "
+            f"Просим обосновать повышение или вернуть прежнюю цену. По {_d(f['until'])} разница — "
+            f"{rub(Decimal(f['extra']))} в {f['invoices_total']} накладных.{more}"
+        )
+    return title, text, lines
+
+
+def transfer(f: dict[str, Any]) -> tuple[str, str, list[str]]:
+    u, qty = _u(f), num(f["qty"])
+    title = f"Перемещение: {f['product'].lower()} из «{f['from']}» в «{f['to']}»"
+    runs_out = (
+        f"по расчету закончится {_ddmm(f['zero_day'])}"
+        if f["zero_day"] >= f["by"]
+        else f"по расчету закончилась {_ddmm(f['zero_day'])}"
+    )
+    text = (
+        f"В «{f['to']}» {f['product'].lower()} {runs_out}, поставка — {_ddmm(f['next_delivery'])}: до нее "
+        f"нужно {qty} {u}. В «{f['from']}» по остаткам на {_ddmm(f['from_stock_day'])} — "
+        f"{num(f['from_stock'])} {u} при закупке ≈ {num(f['from_daily'])} {u} в день: после передачи у них "
+        f"останется больше чем на {f['keep_days']} дня. Передать {qty} {u} до {_ddmm(f['by'])}."
+    )
+    return title, text, []
+
+
+def hq_agenda(f: dict[str, Any]) -> tuple[str, str, list[str]]:
+    items = [
+        f"Находка: {x['title']} — {x['place']}, ≈ {rub(Decimal(x['effect']))} в месяц" for x in f["findings"]
+    ]
+    items += [f"Просрочена: {x['title']} — {x['place']}, на {x['days']} дн." for x in f["late"]]
+    items += [f"Ждет запуска: {x}" for x in f["checks"]]
+    title = f"Повестка планерки: неделя с {_ddmm(f['week'])}"
+    text = (
+        f"На этой неделе: самые дорогие открытые находки, просроченных задач — {f['late_total']}, "
+        f"проверок ждут запуска — {f['checks_total']}, находок ждут решения — {f['awaiting']}."
+    )
+    return title, text, items
+
+
+VERSIONS = {
+    "supplier": (
+        "сменился или добавился поставщик — вес или фасовка могли измениться",
+        "взвесить ближайшую поставку при приемке и сверить с накладной",
+    ),
+    "no_write_offs": (
+        "списаний нет совсем — порча и брак могли уходить без записи",
+        "спросить, куда девают испорченное, и проверить журнал списаний",
+    ),
+    "moved_out": (
+        "товар уходил перемещениями — проверить, что второй ресторан их принял",
+        "сверить перемещения с приходом у получателя",
+    ),
+    "growing": (
+        "перерасход растет от пересчета к пересчету — что-то изменилось",
+        "выяснить, что поменялось: люди на заготовке, поставщик, меню",
+    ),
+    "portions": (
+        "расход выше техкарт каждый раз — порции больше нормы или техкарта устарела",
+        "взвесить 5 порций на раздаче и сверить с техкартой",
+    ),
+}
+
+
+def _bought(p: dict[str, Any], u: str) -> str:
+    if not p["bought"]:
+        return "закупок не было"
+    return "закуплено " + ", ".join(f"{num(q)} {u} у «{name}»" for name, q in p["bought"].items())
+
+
+def shortage_story(f: dict[str, Any]) -> tuple[str, str, list[str]]:
+    u = _u(f)
+    items = []
+    for p in f["periods"]:
+        line = (
+            f"{_ddmm(p['from'])}–{_ddmm(p['to'])}: по пересчетам {num(p['actual'])} {u}, по техкартам "
+            f"{num(p['theory'])} {u} (+{num(p['share'])}%), списано {num(p['written_off'])} {u}; "
+            f"{_bought(p, u)}"
+        )
+        if p["moved_out"] != "0":
+            line += f"; передано в другие рестораны {num(p['moved_out'])} {u}"
+        if p["moved_in"] != "0":
+            line += f"; получено {num(p['moved_in'])} {u}"
+        items.append(line)
+    causes = "; ".join(f"{i}) {VERSIONS[v][0]}" for i, v in enumerate(f["versions"], 1))
+    checks = "; ".join(VERSIONS[v][1] for v in f["versions"])
+    effect = f" ≈ {rub(Decimal(f['effect']))} в месяц" if f["effect"] else ""
+    title = f"Недостача: {f['product'].lower()} в «{f['restaurant']}» — версии"
+    text = (
+        f"Перерасход{effect}, по сети обычно +{num(f['network_share'])}%. Возможные причины: {causes}. "
+        f"Что проверить на месте: {checks}. Вывод — за аналитиком."
+    )
+    return title, text, items
+
+
 RULES = {
     Agent.INVENTORY_PREP: inventory,
     Agent.TASK_DUE: task_due,
     Agent.TASK_STUCK: task_stuck,
     Agent.DATA_CHECK: data_check,
+    Agent.SUPPLIER_CLAIM: supplier_claim,
+    Agent.TRANSFER: transfer,
+    Agent.HQ_AGENDA: hq_agenda,
+    Agent.SHORTAGE_STORY: shortage_story,
 }
 
 

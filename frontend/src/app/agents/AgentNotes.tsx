@@ -1,7 +1,17 @@
 // «Помощник» (stage 9, ADR 0010): the agents' notes on the home screen. What a note says and lists is the
 // server's; the screen only shows it and sends the person's answer — nothing happens without the button.
 import { Link } from "@tanstack/react-router";
-import { CalendarClock, ClipboardList, DatabaseZap, Hourglass, Sparkles } from "lucide-react";
+import {
+  ArrowLeftRight,
+  CalendarClock,
+  ClipboardList,
+  DatabaseZap,
+  FileSearch,
+  Hourglass,
+  ListChecks,
+  Mail,
+  Sparkles,
+} from "lucide-react";
 import { useId, useRef, useState } from "react";
 
 import { ApiError, DEMO } from "../../api/client";
@@ -17,6 +27,21 @@ const ICON = {
   task_due: Hourglass,
   task_stuck: CalendarClock,
   data_check: DatabaseZap,
+  shortage_story: FileSearch,
+  supplier_claim: Mail,
+  transfer: ArrowLeftRight,
+  hq_agenda: ListChecks,
+} as const;
+
+/** What the main button says and what it reports, by what the note proposes. */
+const ACTION = {
+  create_task: { label: () => "Создать задачу", done: () => "Задача создана — она в «Задачах»" },
+  move_due: {
+    label: (n: AgentNote) => `Перенести на ${ddmm(n.action_due_on)}`,
+    done: (n: AgentNote) => `Срок перенесен на ${ddmm(n.action_due_on)}`,
+  },
+  transfer: { label: () => "Поставить задачи", done: () => "Задачи поставлены — они в «Задачах»" },
+  claim: { label: () => "Отправлено", done: () => "Отметили: письмо отправлено" },
 } as const;
 
 const SHOWN = 5; // longer lists open on «Показать все»
@@ -40,23 +65,23 @@ export function NoteCard({ note, hq, onAnswered }: { note: AgentNote; hq: boolea
   const Icon = ICON[note.agent];
   const may = viewer ? mayAnswer(note, viewer.can) : false;
   const items = all ? note.items : note.items.slice(0, SHOWN);
+  const action = note.action ? ACTION[note.action] : null;
   const send = (kind: "accept" | "dismiss") =>
     answer.mutate(
       { id: note.id, answer: kind },
       {
-        onSuccess: (n) => {
+        onSuccess: () => {
           onAnswered?.(); // the card goes away: focus stays in «Помощник», not on the page's body
-          notify(
-            kind === "dismiss"
-              ? "Скрыли сообщение"
-              : n.agent === "task_stuck"
-                ? `Срок перенесен на ${ddmm(note.action_due_on)}`
-                : "Задача создана — она в «Задачах»",
-          );
+          notify(kind === "dismiss" || !action ? "Скрыли сообщение" : action.done(note));
         },
         onError: (e) => notify(errorText(e)),
       },
     );
+  const copy = () =>
+    navigator.clipboard
+      .writeText([note.text, "", ...note.items].join("\n")) // the letter and its invoices
+      .then(() => notify("Текст письма скопирован"))
+      .catch(() => notify("Не получилось скопировать — выделите текст вручную"));
   // Each button names its note for a screen reader: «Скрыть» of which of the three?
   const answerButton = (kind: "accept" | "dismiss", variant: "primary" | "ghost", label: string) => (
     <Button
@@ -75,7 +100,7 @@ export function NoteCard({ note, hq, onAnswered }: { note: AgentNote; hq: boolea
         <div className="flex items-start gap-3">
           <Icon size={18} className="mt-0.5 shrink-0 text-ink-2" aria-hidden />
           <div className="min-w-0 flex-1">
-            {hq && <div className="text-xs text-ink-2">{note.restaurant_name}</div>}
+            {hq && <div className="text-xs text-ink-2">{note.restaurant_name ?? "Вся сеть"}</div>}
             <h3 id={titleId} className="font-medium">
               {note.title}
             </h3>
@@ -92,14 +117,36 @@ export function NoteCard({ note, hq, onAnswered }: { note: AgentNote; hq: boolea
                 {all ? "Свернуть" : `Показать все (${note.items.length})`}
               </button>
             )}
+            {note.action_tasks.length > 0 && (
+              <div className="mt-2 text-sm">
+                <div className="text-ink-2">Будут поставлены задачи:</div>
+                <ul className="mt-0.5 list-disc space-y-0.5 pl-5">
+                  {note.action_tasks.map((t) => (
+                    <li key={t.restaurant_id}>{t.title}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
             <div className="mt-3 flex flex-wrap items-center gap-2">
-              {may && note.action === "create_task" && answerButton("accept", "primary", "Создать задачу")}
-              {may &&
-                note.action === "move_due" &&
-                answerButton("accept", "primary", `Перенести на ${ddmm(note.action_due_on)}`)}
+              {note.action === "claim" && (
+                <Button size="sm" aria-describedby={titleId} onClick={copy}>
+                  Скопировать письмо
+                </Button>
+              )}
+              {may && action && answerButton("accept", "primary", action.label(note))}
               {note.agent === "data_check" && (
                 <Link to="/data" className="text-sm font-medium underline">
                   Загрузить на экране «Данные»
+                </Link>
+              )}
+              {note.agent === "shortage_story" && (
+                <Link to="/findings" className="text-sm font-medium underline">
+                  Открыть находки
+                </Link>
+              )}
+              {note.agent === "hq_agenda" && (
+                <Link to="/decisions" className="text-sm font-medium underline">
+                  Ждут решения
                 </Link>
               )}
               {(note.agent === "task_due" || note.agent === "task_stuck") && (

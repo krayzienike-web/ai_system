@@ -12,7 +12,7 @@ from app.agents.models import Agent, Audience
 class NoteDraft:
     agent: Agent
     audience: Audience
-    restaurant_id: UUID
+    restaurant_id: UUID | None  # None: about the whole network (to the HQ only)
     key: str  # one note per agent and reason: running again finds the same key
     for_date: date
     facts: dict[str, Any]

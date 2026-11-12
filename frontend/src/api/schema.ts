@@ -721,19 +721,20 @@ export interface NormsOut {
 
 export interface NoteOut {
   id: string;
-  agent: "inventory_prep" | "task_due" | "task_stuck" | "data_check";
+  agent: "inventory_prep" | "task_due" | "task_stuck" | "data_check" | "shortage_story" | "supplier_claim" | "transfer" | "hq_agenda";
   audience: "director" | "hq";
-  restaurant_id: string;
-  restaurant_code: string;
-  restaurant_name: string;
+  restaurant_id: string | null;
+  restaurant_code: string | null;
+  restaurant_name: string | null;
   for_date: string;
   task_id: string | null;
   title: string;
   text: string;
   items: string[];
-  action: "create_task" | "move_due" | null;
+  action: "create_task" | "move_due" | "transfer" | "claim" | null;
   action_due_on: string | null;
   action_title: string | null;
+  action_tasks: PlannedTaskOut[];
   source: "rules" | "model";
   status: "new" | "accepted" | "dismissed" | "expired";
   result_task_id: string | null;
@@ -772,6 +773,12 @@ export interface PlaceOut {
   id: string;
   code: string;
   name: string;
+}
+
+export interface PlannedTaskOut {
+  restaurant_id: string;
+  title: string;
+  checklist: string[];
 }
 
 export interface PrecheckDraftOut {

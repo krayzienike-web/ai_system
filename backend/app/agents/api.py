@@ -22,42 +22,60 @@ router = APIRouter(tags=["agents"])
 CanRead = Annotated[AccessContext, Depends(require(Permission.RESTAURANTS_READ))]
 
 
+class PlannedTaskOut(BaseModel):
+    restaurant_id: UUID
+    title: str
+    checklist: list[str]
+
+
 class NoteOut(BaseModel):
     id: UUID
-    agent: Literal["inventory_prep", "task_due", "task_stuck", "data_check"]
+    agent: Literal[
+        "inventory_prep",
+        "task_due",
+        "task_stuck",
+        "data_check",
+        "shortage_story",
+        "supplier_claim",
+        "transfer",
+        "hq_agenda",
+    ]
     audience: Literal["director", "hq"]
-    restaurant_id: UUID
-    restaurant_code: str
-    restaurant_name: str
+    # None: a note about the whole network (the HQ's weekly agenda)
+    restaurant_id: UUID | None
+    restaurant_code: str | None
+    restaurant_name: str | None
     for_date: date
     task_id: UUID | None
     title: str
     text: str
     items: list[str]
-    # What «Создать задачу» does: «create_task» (a task with the list), «move_due» (a new deadline), none.
-    action: Literal["create_task", "move_due"] | None
+    # What the main button does: «create_task» (a task with the list), «move_due» (a new deadline),
+    # «transfer» (two tasks: hand over, take in), «claim» (the text was sent by the HQ), none.
+    action: Literal["create_task", "move_due", "transfer", "claim"] | None
     action_due_on: date | None
     action_title: str | None  # the task «Создать задачу» makes
+    action_tasks: list[PlannedTaskOut]  # a transfer: the two tasks «Поставить задачи» sets
     source: Literal["rules", "model"]
     status: Literal["new", "accepted", "dismissed", "expired"]
     result_task_id: UUID | None
 
 
 def notes_out(session: Session, notes: list[AgentNote]) -> list[NoteOut]:
-    ids = {n.restaurant_id for n in notes}
+    ids = {n.restaurant_id for n in notes if n.restaurant_id}
     places = {r.id: r for r in session.execute(select(Restaurant).where(Restaurant.id.in_(ids))).scalars()}
     out = []
     for n in notes:
         proposal: dict[str, Any] = n.proposal or {}
-        r = places[n.restaurant_id]
+        r = places.get(n.restaurant_id) if n.restaurant_id else None
         out.append(
             NoteOut(
                 id=n.id,
                 agent=n.agent,
                 audience=n.audience,
                 restaurant_id=n.restaurant_id,
-                restaurant_code=r.code,
-                restaurant_name=r.name,
+                restaurant_code=r.code if r else None,
+                restaurant_name=r.name if r else None,
                 for_date=n.for_date,
                 task_id=n.task_id,
                 title=n.title,
@@ -66,6 +84,10 @@ def notes_out(session: Session, notes: list[AgentNote]) -> list[NoteOut]:
                 action=proposal.get("action"),
                 action_due_on=date.fromisoformat(proposal["due_on"]) if "due_on" in proposal else None,
                 action_title=proposal.get("title"),
+                action_tasks=[
+                    PlannedTaskOut(restaurant_id=p.restaurant_id, title=p.title, checklist=list(p.checklist))
+                    for p in service.transfer_plan(n)
+                ],
                 source=n.source,
                 status=n.status,
                 result_task_id=n.result_task_id,

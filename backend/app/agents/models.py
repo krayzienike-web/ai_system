@@ -25,6 +25,10 @@ class Agent(StrEnum):
     TASK_DUE = "task_due"  # № 7: a task's deadline is near (to the director)
     TASK_STUCK = "task_stuck"  # № 7: a task is late and not started (to the HQ: move the deadline?)
     DATA_CHECK = "data_check"  # № 9: which exports are missing this morning
+    SHORTAGE_STORY = "shortage_story"  # № 2: a large shortage's timeline and versions (to the HQ's analyst)
+    SUPPLIER_CLAIM = "supplier_claim"  # № 3: a claim or a request to a supplier about prices (to the HQ)
+    TRANSFER = "transfer"  # № 5: move stock from a restaurant that has it to one that runs out (to the HQ)
+    HQ_AGENDA = "hq_agenda"  # № 8: the agenda of the HQ's weekly meeting (the network, no restaurant)
 
 
 class Audience(StrEnum):
@@ -58,10 +62,14 @@ class AgentNote(IdMixin, TenantMixin, Base):
         CheckConstraint("audience IN ('director', 'hq')", name="audience_valid"),
         CheckConstraint(f"status IN {STATUSES}", name="status_valid"),
         CheckConstraint("source IN ('rules', 'model')", name="source_valid"),
+        # A note about the whole network (the weekly agenda) is the HQ's: no director sees it (0034).
+        CheckConstraint("restaurant_id IS NOT NULL OR audience = 'hq'", name="network_notes_to_hq"),
         UniqueConstraint("tenant_id", "agent", "key"),
     )
 
-    restaurant_id: Mapped[UUID] = mapped_column(ForeignKey("restaurants.id", ondelete="CASCADE"), index=True)
+    restaurant_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("restaurants.id", ondelete="CASCADE"), index=True
+    )
     agent: Mapped[str] = mapped_column(String(30))
     audience: Mapped[str] = mapped_column(String(10))
     key: Mapped[str] = mapped_column(String(200))

@@ -19,7 +19,7 @@ from sqlalchemy import select, text, true, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
-from app.agents import data, deadlines, inventory, texts
+from app.agents import agenda, data, deadlines, inventory, story, suppliers, texts, transfers
 from app.agents.drafts import NoteDraft
 from app.agents.models import Agent, AgentNote, Audience, NoteStatus
 from app.core.db import get_sessionmaker
@@ -120,7 +120,7 @@ def _save(
     return note
 
 
-AUTOMATIC = (Agent.INVENTORY_PREP, Agent.TASK_DUE, Agent.TASK_STUCK, Agent.DATA_CHECK)
+AUTOMATIC = tuple(Agent)  # every agent's notes expire when their reason is gone
 LOCK_TIMEOUT = "10s"  # a person's answer holds a note's row for a moment; the run does not wait longer
 
 
@@ -137,7 +137,7 @@ def _asked_again(session: Session, today: date) -> list[NoteDraft]:
     ).scalars():
         if not note.facts.get("asked"):
             continue
-        restaurant = session.get(Restaurant, note.restaurant_id)
+        restaurant = session.get(Restaurant, note.restaurant_id) if note.restaurant_id else None
         d = inventory.prepare(session, restaurant, note.for_date, today) if restaurant else None
         if d is not None:
             out.append(replace(d, facts={**d.facts, "asked": True}))
@@ -160,6 +160,10 @@ def run_network(session: Session, tenant_id: UUID, today: date, write: Writer | 
         + inventory.drafts(session, restaurants, today)
         + deadlines.drafts(session, restaurants, today)
         + data.drafts(session, restaurants, today)
+        + story.drafts(session, restaurants, today)
+        + suppliers.drafts(session, restaurants, today)
+        + transfers.drafts(session, restaurants, today)
+        + agenda.drafts(session, restaurants, today)
     }
     written: dict[tuple[str, str], Text | None] = {}
     for k, d in drafts.items():
@@ -259,10 +263,14 @@ def accept(session: Session, ctx: AccessContext, note_id: UUID, *, today: date) 
             title=proposal["title"],
             due_on=due,
             today=today,
-            restaurant_ids=[note.restaurant_id],
+            restaurant_ids=[note.restaurant_id] if note.restaurant_id else [],
             checklist=[f"Пересчитать: {line}" for line in note.items],
         )
         note.result_task_id = task.id
+    elif action == "transfer":
+        note.result_task_id = _transfer_tasks(session, ctx, note, today=today)
+    elif action == "claim":
+        pass  # «Отправлено»: the HQ sent the text itself; the decision is what is recorded
     elif action == "move_due":
         if note.task_id is None:
             raise InvalidError("Задачи больше нет")
@@ -273,6 +281,54 @@ def accept(session: Session, ctx: AccessContext, note_id: UUID, *, today: date) 
         raise InvalidError("Здесь нечего брать в работу: сообщение можно только скрыть")
     _decided(session, ctx, note, NoteStatus.ACCEPTED)
     return note
+
+
+@dataclass(frozen=True)
+class Planned:
+    restaurant_id: UUID
+    title: str
+    checklist: tuple[str, ...]
+
+
+def transfer_plan(note: AgentNote) -> list[Planned]:
+    """The two tasks «Поставить задачи» of a transfer sets: the giving restaurant hands it over, the short
+    one takes it in. Shown on the note before the button is pressed, and then exactly these are set."""
+    proposal, f = note.proposal or {}, note.facts
+    if proposal.get("action") != "transfer":
+        return []
+    unit = texts.UNITS.get(f["unit"], f["unit"])
+    what = f"{texts.num(f['qty'])} {unit} {f['product'].lower()}"
+    return [
+        Planned(
+            UUID(proposal["from_id"]),
+            f"Передать {what} в «{f['to']}»",
+            ("Отобрать и взвесить", "Оформить перемещение в учетной системе", "Передать водителю"),
+        ),
+        Planned(
+            UUID(proposal["to_id"]),
+            f"Принять {what} из «{f['from']}»",
+            ("Взвесить при приемке", "Проверить, что перемещение есть в учетной системе"),
+        ),
+    ]
+
+
+def _transfer_tasks(session: Session, ctx: AccessContext, note: AgentNote, *, today: date) -> UUID:
+    """Both tasks of the plan, due on the day the product runs out (or today, when that day has come).
+    Returns the giver's task."""
+    due = max(date.fromisoformat((note.proposal or {})["due_on"]), today)
+    made = [
+        tasks.create_tasks(
+            session,
+            ctx,
+            title=p.title,
+            due_on=due,
+            today=today,
+            restaurant_ids=[p.restaurant_id],
+            checklist=list(p.checklist),
+        )[0]
+        for p in transfer_plan(note)
+    ]
+    return made[0].id
 
 
 def dismiss(session: Session, ctx: AccessContext, note_id: UUID) -> AgentNote:

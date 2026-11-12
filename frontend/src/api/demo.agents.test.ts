@@ -99,4 +99,37 @@ describe("the agents' notes in the prototype", () => {
   it("does not make a list for a chosen day without the server", () => {
     expect(status(() => post("/agents/inventory-prep", DIRECTOR))).toBe(404);
   });
+
+  // Stage 10: the four notes to the HQ (TC-UI-42).
+  it("shows the HQ the story, the letter, the transfer and the agenda; the director none of them", () => {
+    const hq = get<AgentNote[]>("/agents/notes", ADMIN).map((n) => n.agent);
+    for (const agent of ["shortage_story", "supplier_claim", "transfer", "hq_agenda"] as const)
+      expect(hq).toContain(agent);
+    expect(note(ADMIN, "hq_agenda").restaurant_name).toBeNull();
+    expect(get<AgentNote[]>("/agents/notes", DIRECTOR).some((n) => n.audience === "hq")).toBe(false);
+    const story = note(ADMIN, "shortage_story");
+    expect(story.action).toBeNull();
+    expect(status(() => post(`/agents/notes/${story.id}/accept`, ADMIN))).toBe(422);
+  });
+
+  it("sets both tasks of a transfer, as the server plans them; «Отправлено» makes no task", () => {
+    const move = note(ADMIN, "transfer");
+    expect(move.action_tasks.map((t) => t.title)).toHaveLength(2);
+    expect(status(() => post(`/agents/notes/${move.id}/accept`, ANALYST))).toBe(403);
+    const tasksBefore = get<ApiTask[]>("/tasks", ADMIN).length;
+    const answer = post<AgentNote>(`/agents/notes/${move.id}/accept`, ADMIN);
+    const tasks = get<ApiTask[]>("/tasks", ADMIN);
+    expect(tasks.length).toBe(tasksBefore + 2);
+    for (const planned of move.action_tasks) {
+      const made = tasks.find((t) => t.title === planned.title)!;
+      expect(made.restaurant_id).toBe(planned.restaurant_id);
+      expect(made.checklist).toEqual(planned.checklist);
+    }
+    expect(answer.result_task_id).toBe(tasks.find((t) => t.title === move.action_tasks[0]!.title)!.id);
+
+    const claim = note(ADMIN, "supplier_claim");
+    const sent = post<AgentNote>(`/agents/notes/${claim.id}/accept`, ADMIN);
+    expect([sent.status, sent.result_task_id]).toEqual(["accepted", null]);
+    expect(get<ApiTask[]>("/tasks", ADMIN).length).toBe(tasksBefore + 2);
+  });
 });

@@ -194,7 +194,7 @@ def _notes(owner_engine: Engine, agent: str | None = None) -> list[AgentNote]:
 def _by(client: TestClient, headers: dict[str, str]) -> dict[str, dict[str, Any]]:
     response = client.get("/api/agents/notes", headers=headers)
     assert response.status_code == 200, response.text
-    return {n["agent"] + ":" + n["restaurant_code"]: n for n in response.json()}
+    return {n["agent"] + ":" + (n["restaurant_code"] or "net"): n for n in response.json()}
 
 
 # ------------------------------------------------------------------ № 1: before a stock count
@@ -526,7 +526,7 @@ def test_the_models_text_quotes_only_the_facts(world: World, owner_engine: Engin
     fake.replies += [_model("Пересчет 22.10: начните с товара P1 — по нему открыта находка.")] * 20
     service.run_all(TODAY, lambda ctx: agent_writer.writer(Gateway(fake), ctx))
     (note,) = _notes(owner_engine, "inventory_prep")
-    assert note.source == "model" and note.prompt_version == 1
+    assert note.source == "model" and note.prompt_version == 2
     assert note.text.startswith("Пересчет 22.10") and note.items[0].startswith("Товар P1")
     with Session(owner_engine) as s, s.begin():
         s.query(AgentNote).delete()
@@ -795,7 +795,7 @@ def test_the_writer_asks_once_to_correct_a_figure_then_keeps_the_rules(network: 
         fixed.replies += [_model("Недостача 9 999 ₽."), _model("Недостача 200 ₽ — начните с нее.")]
         assert agent_writer.writer(Gateway(fixed), ctx)("inventory_prep", facts, rules) == (
             "Недостача 200 ₽ — начните с нее.",
-            1,
+            2,  # agent.v2 (stage 10)
         )
         # Strict: a small count not in the facts is a figure too («7 позиций» while the list has 1).
         counts = FakeModel()
@@ -822,7 +822,7 @@ def test_the_worker_runs_the_agents_every_morning_at_0547_utc(
     monkeypatch.setattr(worker, "get_today", lambda: TODAY)
     asyncio.run(worker.morning_agents({}))
     notes = _notes(owner_engine)
-    assert {n.agent for n in notes} == {"inventory_prep", "task_due", "task_stuck", "data_check"}
+    assert {n.agent for n in notes} == {"inventory_prep", "task_due", "task_stuck", "data_check", "hq_agenda"}
     assert all(n.source == "model" and n.items == texts.by_rules(n.agent, n.facts)[2] for n in notes)
 
 

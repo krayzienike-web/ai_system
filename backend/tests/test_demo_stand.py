@@ -29,6 +29,9 @@ def settings_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[Env]:
     get_settings.cache_clear()
 
 
+STAGE_10 = {"shortage_story", "supplier_claim", "transfer", "hq_agenda"}
+
+
 def test_the_stand_lives_on_the_demos_today(settings_env: Env) -> None:
     settings_env(FAI_DEMO_TODAY="2026-10-20")
     assert get_today() == date(2026, 10, 20)
@@ -81,14 +84,29 @@ def test_the_rebuild_brings_the_demo_network_back_as_on_the_first_day(owner_engi
         assert not s.execute(select(Finding).where(Finding.title == "изменил посетитель")).first()
         # TC-AG-26: the agents' showcase (`_demo_agents`): the list for R01 asked for the day after tomorrow,
         # the stuck task of R03 to the HQ, R09's missing export — the planted reasons and nothing else.
+        # TC-AG-33 (stage 10): R01's mozzarella story, the request to «Северная рыба» about the salmon,
+        # pasta from R02 to R04 and the week's agenda — all to the HQ.
         notes = s.execute(
-            select(AgentNote, Restaurant.code).join(Restaurant, Restaurant.id == AgentNote.restaurant_id)
+            select(AgentNote, Restaurant.code).outerjoin(Restaurant, Restaurant.id == AgentNote.restaurant_id)
         ).all()
-        assert sorted((n.agent, code, n.for_date, n.status) for n, code in notes) == [
+        assert sorted((n.agent, code or "", n.for_date, n.status) for n, code in notes) == [
             ("data_check", "R09", cli.DEMO_TODAY, "new"),
+            ("hq_agenda", "", date(2026, 10, 19), "new"),
             ("inventory_prep", "R01", cli.DEMO_TODAY + timedelta(days=2), "new"),
+            ("shortage_story", "R01", date(2026, 10, 1), "new"),
+            ("supplier_claim", "", date(2026, 10, 18), "new"),
             ("task_stuck", "R03", date(2026, 10, 17), "new"),
+            ("transfer", "R04", cli.DEMO_TODAY, "new"),
         ]
+        assert {n.audience for n, _ in notes if n.agent in STAGE_10} == {"hq"}
+        (claim,) = [n for n, _ in notes if n.agent == "supplier_claim"]
+        assert claim.facts["supplier"] == "Северная рыба" and claim.facts["kind"] == "growth"
+        (move,) = [n for n, _ in notes if n.agent == "transfer"]
+        assert (move.facts["from"], move.facts["to"], move.facts["qty"]) == (
+            "Ресторан на Арбате",
+            "Ресторан на Покровке",
+            "3",
+        )
         (prep,) = [n for n, _ in notes if n.agent == "inventory_prep"]
         assert prep.facts["asked"] is True and len(prep.items) == 5 and prep.source == "rules"
 

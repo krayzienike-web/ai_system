@@ -4528,7 +4528,9 @@
        {
         "enum": [
          "create_task",
-         "move_due"
+         "move_due",
+         "transfer",
+         "claim"
         ],
         "type": "string"
        },
@@ -4550,6 +4552,13 @@
       ],
       "title": "Action Due On"
      },
+     "action_tasks": {
+      "items": {
+       "$ref": "#/components/schemas/PlannedTaskOut"
+      },
+      "title": "Action Tasks",
+      "type": "array"
+     },
      "action_title": {
       "anyOf": [
        {
@@ -4566,7 +4575,11 @@
        "inventory_prep",
        "task_due",
        "task_stuck",
-       "data_check"
+       "data_check",
+       "shortage_story",
+       "supplier_claim",
+       "transfer",
+       "hq_agenda"
       ],
       "title": "Agent",
       "type": "string"
@@ -4597,17 +4610,38 @@
       "type": "array"
      },
      "restaurant_code": {
-      "title": "Restaurant Code",
-      "type": "string"
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Restaurant Code"
      },
      "restaurant_id": {
-      "format": "uuid",
-      "title": "Restaurant Id",
-      "type": "string"
+      "anyOf": [
+       {
+        "format": "uuid",
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Restaurant Id"
      },
      "restaurant_name": {
-      "title": "Restaurant Name",
-      "type": "string"
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Restaurant Name"
      },
      "result_task_id": {
       "anyOf": [
@@ -4675,6 +4709,7 @@
      "action",
      "action_due_on",
      "action_title",
+     "action_tasks",
      "source",
      "status",
      "result_task_id"
@@ -4885,6 +4920,33 @@
      "name"
     ],
     "title": "PlaceOut",
+    "type": "object"
+   },
+   "PlannedTaskOut": {
+    "properties": {
+     "checklist": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Checklist",
+      "type": "array"
+     },
+     "restaurant_id": {
+      "format": "uuid",
+      "title": "Restaurant Id",
+      "type": "string"
+     },
+     "title": {
+      "title": "Title",
+      "type": "string"
+     }
+    },
+    "required": [
+     "restaurant_id",
+     "title",
+     "checklist"
+    ],
+    "title": "PlannedTaskOut",
     "type": "object"
    },
    "PrecheckDraftOut": {

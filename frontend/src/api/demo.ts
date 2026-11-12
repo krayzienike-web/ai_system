@@ -916,10 +916,18 @@ function answerNote(v: Viewer, id: string, answer: string): AgentNote {
       const [task] = createTasks(v, {
         title: note.action_title,
         due_on: note.action_due_on,
-        restaurant_ids: [note.restaurant_id],
+        restaurant_ids: note.restaurant_id ? [note.restaurant_id] : [],
         checklist: note.items.map((line) => `Пересчитать: ${line}`),
       });
       result = task?.id ?? null;
+    } else if (note.action === "transfer" && note.action_due_on) {
+      const due = note.action_due_on < TODAY ? TODAY : note.action_due_on;
+      const made = note.action_tasks.flatMap((t) =>
+        createTasks(v, { title: t.title, due_on: due, restaurant_ids: [t.restaurant_id], checklist: t.checklist }),
+      );
+      result = made[0]?.id ?? null;
+    } else if (note.action === "claim") {
+      result = null; // «Отправлено»: the HQ sent the letter itself
     } else if (note.action === "move_due" && note.task_id && note.action_due_on) {
       forbid(v.admin, "Срок задачи переносит администратор УК");
       const due = note.action_due_on;
