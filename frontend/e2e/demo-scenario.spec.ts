@@ -9,7 +9,7 @@ test("TC-UI-12: the demo scenario goes through by clicks", async ({ page }) => {
   await expect(page.getByText("Найденный потенциал прибыли").first()).toBeVisible();
   await expect(page.getByText("Переплаты поставщикам")).toBeVisible();
   await expect(page.getByText("Подтвержденный эффект").first()).toBeVisible();
-  await expect(page.getByText("Цена выросла по всей сети: Лосось охлажденный")).toBeVisible();
+  await expect(page.getByText("Цена выросла по всей сети: Лосось охлажденный", { exact: true })).toBeVisible();
 
   // Restaurants × processes → the finding → down to the invoices.
   await page.getByRole("button", { name: /на Тверской, Производство/ }).click();

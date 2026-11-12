@@ -35,3 +35,26 @@ test("TC-UI-38: the HQ analyst reads the notes but has no buttons to answer them
   for (const name of [/Перенести на/, "Создать задачу", "Не нужно", "Скрыть"])
     await expect(assistant.getByRole("button", { name })).toHaveCount(0);
 });
+
+// TC-UI-42 (stage 10): the HQ's own notes — a transfer becomes two tasks (the prototype's tasks are checked in
+// src/api/demo.agents.test.ts: the HQ has no «Задачи» screen), the director sees none of them.
+test("TC-UI-42: the HQ admin sets the tasks of a transfer; the director does not see the HQ's notes", async ({
+  page,
+}) => {
+  await signIn(page, "Управляющая компания");
+  const assistant = page.getByRole("region", { name: "Помощник" });
+  const move = assistant.getByRole("listitem").filter({ hasText: "Перемещение:" }).first();
+  await expect(move.getByText("Будут поставлены задачи:")).toBeVisible();
+  await expect(assistant.getByText("Вся сеть").first()).toBeVisible(); // the agenda and the supplier request
+  await move.getByRole("button", { name: "Поставить задачи" }).click();
+  await expect(page.getByText("директора обоих ресторанов увидят их в «Задачах»")).toBeVisible();
+  await expect(move).toHaveCount(0);
+});
+
+test("TC-UI-42: the director's «Помощник» has none of the HQ's notes", async ({ page }) => {
+  await signIn(page, "Директор ресторана");
+  const assistant = page.getByRole("region", { name: "Помощник" });
+  await expect(assistant).toBeVisible();
+  for (const text of ["Перемещение:", "Повестка планерки", "Недостача:", "Запрос «"])
+    await expect(assistant.getByText(text)).toHaveCount(0);
+});
