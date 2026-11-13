@@ -5,7 +5,7 @@ import { Link } from "@tanstack/react-router";
 import { BellRing, RotateCcw } from "lucide-react";
 import { useState } from "react";
 
-import { useRestaurants, useTaskAction, useTasks } from "../../api/hooks";
+import { useAppContext, useRestaurants, useTaskAction, useTasks } from "../../api/hooks";
 import type { ApiTask } from "../../api/types";
 import { Button, Card, cx, EmptyState, ErrorText, LoadError, PageTitle, Pill, Reveal, Skeleton } from "../../ds/primitives";
 import { ddmm, plural } from "../../lib/format";
@@ -33,7 +33,8 @@ export function dueText(t: ApiTask) {
   return `до ${ddmm(t.due_on)}`;
 }
 
-function TaskRow({ task, mayRemind }: { task: ApiTask; mayRemind: boolean }) {
+function TaskRow({ task, mayRemind, today }: { task: ApiTask; mayRemind: boolean; today: string | undefined }) {
+  const remindedToday = !!today && task.reminded_on === today;
   const action = useTaskAction();
   const { notify } = useUi();
   const steps = task.checklist.length;
@@ -65,12 +66,14 @@ function TaskRow({ task, mayRemind }: { task: ApiTask; mayRemind: boolean }) {
         {task.late && mayRemind && (
           <Button
             size="sm"
-            disabled={action.isPending}
+            // Once a day is enough (tasks/service.py `remind`); the button names its task (review, pp. 6, 7).
+            disabled={action.isPending || remindedToday}
+            aria-label={`${remindedToday ? "Напомнили сегодня" : "Напомнить"}: ${task.title}, ${task.restaurant_name ?? ""}`}
             onClick={() =>
               action.mutate({ id: task.id, action: "remind" }, { onSuccess: () => notify("Директору отправлено напоминание") })
             }
           >
-            <BellRing size={14} /> {task.reminded_on ? "Напомнить еще раз" : "Напомнить"}
+            <BellRing size={14} /> {remindedToday ? "Напомнили сегодня" : task.reminded_on ? "Напомнить еще раз" : "Напомнить"}
           </Button>
         )}
       </div>
@@ -83,6 +86,7 @@ export function NetworkTasks() {
   const viewer = useViewer();
   const query = useTasks();
   const restaurants = useRestaurants();
+  const today = useAppContext().data?.today;
   const [show, setShow] = useState<Show>("open");
   const [where, setWhere] = useState("all");
   if (query.isError && !query.data)
@@ -157,7 +161,7 @@ export function NetworkTasks() {
           <Card className="px-5">
             <ul className="divide-y divide-line">
               {shown.map((t) => (
-                <TaskRow key={t.id} task={t} mayRemind={mayRemind} />
+                <TaskRow key={t.id} task={t} mayRemind={mayRemind} today={today} />
               ))}
             </ul>
           </Card>

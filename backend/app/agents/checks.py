@@ -27,6 +27,7 @@ from app.operations.models import Receipt, Sale
 from app.tenancy.models import Restaurant
 
 DONE_DAYS = 7  # a finished check's result is news for a week
+LAG_DAYS = 2  # exports a day behind the network are usual (restaurants upload at different hours)
 BASELINE_DAYS = 56  # the suppliers «before»: eight weeks before the start
 # Public holidays of Russia (days off by the Labour Code, art. 112): month, day.
 HOLIDAYS = {(1, d) for d in range(1, 9)} | {(2, 23), (3, 8), (5, 1), (5, 9), (6, 12), (11, 4)}
@@ -41,19 +42,22 @@ def _money(v: Decimal | None) -> str | None:
     return str(v.quantize(Decimal(1))) if v is not None else None
 
 
-def _stopped(session: Session, ids: list[UUID], names: dict[UUID, str], latest: date) -> list[dict[str, str]]:
-    """The restaurants of the check whose sales stop before the network's latest day."""
+def _stopped(
+    session: Session, e: Experiment, ids: list[UUID], names: dict[UUID, str], latest: date
+) -> list[dict[str, str]]:
+    """The restaurants of the check whose sales since its start stop `LAG_DAYS` or more before the network's
+    latest day — or never began (backend review of stage 11, p. 5)."""
     last = dict(
         session.execute(
             select(Sale.restaurant_id, func.max(Sale.day))
-            .where(Sale.restaurant_id.in_(ids), Sale.day <= latest)
+            .where(Sale.restaurant_id.in_(ids), Sale.day >= e.starts_on, Sale.day <= latest)
             .group_by(Sale.restaurant_id)
         ).all()
     )
     return [
         {"restaurant": names[r], "last": last[r].isoformat() if r in last else ""}
-        for r in ids
-        if r in names and (r not in last or last[r] < latest)
+        for r in sorted(ids, key=lambda r: names.get(r, ""))
+        if r in names and (r not in last or (latest - last[r]).days >= LAG_DAYS)
     ]
 
 
@@ -79,7 +83,9 @@ def _new_suppliers(
     suppliers = dict(session.execute(select(Supplier.id, Supplier.name)).all())
     return [
         {"restaurant": names[r], "supplier": suppliers.get(s, "") if s else "", "since": first.isoformat()}
-        for r, s, first in sorted(rows, key=lambda x: (names.get(x[0], ""), x[2]))
+        for r, s, first in sorted(
+            rows, key=lambda x: (names.get(x[0], ""), x[2], suppliers.get(x[1], "") if x[1] else "")
+        )
         if (r, s) not in before and r in known and r in names
     ]
 
@@ -106,7 +112,7 @@ def _running(session: Session, e: Experiment, names: dict[UUID, str], today: dat
             "progress": e.progress_text,
             "measured_on": e.measured_on.isoformat() if e.measured_on else None,
             "data_to": latest.isoformat(),
-            "stopped": _stopped(session, ids, names, latest),
+            "stopped": _stopped(session, e, ids, names, latest),
             "new_suppliers": _new_suppliers(session, e, ids, names, latest),
             "holidays": [d.isoformat() for d in holidays(e.starts_on, e.ends_on)],
         },

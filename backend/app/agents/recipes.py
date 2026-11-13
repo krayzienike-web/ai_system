@@ -12,7 +12,7 @@ The new quantity is a proposal: the chef changes the card in the accounting syst
 recipe cards brings it here. The HQ copies the note to the chef; «Отправлено» records that.
 """
 
-from collections import defaultdict
+from dataclasses import dataclass, replace
 from datetime import date, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from uuid import UUID
@@ -24,6 +24,7 @@ from app.agents.drafts import NoteDraft
 from app.agents.models import Agent, Audience
 from app.agents.texts import plain
 from app.catalog.models import MenuItem, Product, RecipeLine
+from app.catalog.recipes import Line, explode, lines_on
 from app.insights.models import Finding, FindingStatus
 from app.operations.models import Receipt, Sale
 from app.tenancy.models import Restaurant
@@ -38,22 +39,50 @@ def _rub(v: Decimal) -> str:
     return str(v.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
 
 
-def _current_lines(session: Session, product_id: UUID, today: date) -> list[RecipeLine]:
-    """The lines of the product in force today: for each dish or semi-product, the latest version."""
-    latest: dict[UUID, RecipeLine] = {}
-    rows = session.execute(
-        select(RecipeLine).where(RecipeLine.product_id == product_id, RecipeLine.valid_from <= today)
-    ).scalars()
-    for line in rows:
-        parent = line.menu_item_id or line.semi_product_id
-        if parent is None:
-            continue
-        if parent not in latest or line.valid_from > latest[parent].valid_from:
-            latest[parent] = line
-    return list(latest.values())
+@dataclass(frozen=True)
+class Network:
+    """What every recipe note of one run reads: loaded once (backend review of stage 11, p. 9)."""
+
+    recipes: dict[UUID, list[Line]]  # the version of each dish and semi-product in force today
+    versions: dict[UUID, date]  # since when that version is in force
+    items: dict[UUID, MenuItem]
+    semis: dict[UUID, Product]
+    sold: dict[UUID, Decimal]  # portions of each dish over the window
+    since: date
+    last: date
 
 
-def _draft(session: Session, f: Finding, today: date) -> NoteDraft | None:
+def _network(session: Session, today: date) -> Network:
+    rows = session.execute(select(RecipeLine).where(RecipeLine.valid_from <= today)).scalars()
+    lines = [
+        Line(parent, r.product_id, r.gross_qty, r.valid_from)
+        for r in rows
+        if (parent := r.menu_item_id or r.semi_product_id) is not None
+    ]
+    # A version is the whole card of a dish with one start day: a product left out of the newer card is not
+    # in the dish any more (backend review of stage 11, p. 2).
+    recipes = lines_on(lines, today)
+    last = session.execute(select(func.max(Sale.day)).where(Sale.day <= today)).scalar_one() or today
+    since = last - timedelta(days=WINDOW_DAYS - 1)
+    sold = dict(
+        session.execute(
+            select(Sale.menu_item_id, func.sum(Sale.qty))
+            .where(Sale.day >= since, Sale.day <= last)
+            .group_by(Sale.menu_item_id)
+        ).all()
+    )
+    return Network(
+        recipes=recipes,
+        versions={parent: ls[0].valid_from for parent, ls in recipes.items()},
+        items={m.id: m for m in session.execute(select(MenuItem)).scalars()},
+        semis={p.id: p for p in session.execute(select(Product).where(Product.is_semi.is_(True))).scalars()},
+        sold=sold,
+        since=since,
+        last=last,
+    )
+
+
+def _draft(session: Session, net: Network, f: Finding) -> NoteDraft | None:
     ev = f.evidence or {}
     product = session.execute(select(Product).where(Product.code == ev.get("product"))).scalar_one_or_none()
     if product is None or "median_share" not in ev:
@@ -62,68 +91,77 @@ def _draft(session: Session, f: Finding, today: date) -> NoteDraft | None:
     raise_by = share - allowance
     if raise_by <= 0:
         return None
-    lines = _current_lines(session, product.id, today)
-    if not lines:
-        return None
-    # The price and the sales: the last eight weeks up to the latest data (the network's, not today).
-    last = session.execute(select(func.max(Sale.day)).where(Sale.day <= today)).scalar_one() or today
-    since = last - timedelta(days=WINDOW_DAYS - 1)
     qty, amount = session.execute(
         select(func.sum(Receipt.qty), func.sum(Receipt.amount)).where(
             Receipt.product_id == product.id,
-            Receipt.day >= since,
-            Receipt.day <= last,
+            Receipt.day >= net.since,
+            Receipt.day <= net.last,
             Receipt.qty > 0,
             Receipt.amount > 0,
         )
     ).one()
     price = amount / qty if qty else None
-    sold: dict[UUID, Decimal] = defaultdict(Decimal)
-    for item_id, n in session.execute(
-        select(Sale.menu_item_id, func.sum(Sale.qty))
-        .where(Sale.day >= since, Sale.day <= last)
-        .group_by(Sale.menu_item_id)
-    ).all():
-        sold[item_id] = n
-    items = {m.id: m for m in session.execute(select(MenuItem)).scalars()}
-    semis = {p.id: p for p in session.execute(select(Product).where(Product.is_semi.is_(True))).scalars()}
-    per_month = MONTH_DAYS / WINDOW_DAYS
+    raised: dict[UUID, list[Line]] = dict(net.recipes)
     dishes = []
-    month_total = Decimal(0)
-    for line in lines:
-        new = (line.gross_qty * (1 + raise_by)).quantize(QTY_PLACES, rounding=ROUND_HALF_UP)
-        if new == line.gross_qty:
+    changed = []
+    for parent, card in sorted(net.recipes.items(), key=lambda x: str(x[0])):
+        old = sum((ln.gross_qty for ln in card if ln.product_id == product.id), Decimal(0))
+        if not old:
             continue
-        cost = (new - line.gross_qty) * price if price is not None else None
-        if line.menu_item_id is not None and line.menu_item_id in items:
-            name, semi = items[line.menu_item_id].name, False
-            month = cost * sold[line.menu_item_id] * per_month if cost is not None else None
-        elif line.semi_product_id is not None and line.semi_product_id in semis:
-            name, semi, month = semis[line.semi_product_id].name, True, None  # its dishes carry it
+        if parent in net.items:
+            name, code, semi = net.items[parent].name, net.items[parent].code, False
+        elif parent in net.semis:
+            name, code, semi = net.semis[parent].name, net.semis[parent].code, True
         else:
             continue
-        if month is not None:
-            month_total += month
+        if f.period_to is not None and net.versions[parent] > f.period_to:
+            changed.append(name)  # the card changed after the finding's period: not raised twice (p. 3)
+            continue
+        new = (old * (1 + raise_by)).quantize(QTY_PLACES, rounding=ROUND_HALF_UP)
+        if new == old:
+            continue
+        factor = new / old
+        raised[parent] = [
+            replace(ln, gross_qty=ln.gross_qty * factor) if ln.product_id == product.id else ln for ln in card
+        ]
+        cost = (new - old) * price if price is not None else None
         dishes.append(
             {
                 "name": name,
+                "code": code,
                 "semi": semi,
-                "old": plain(line.gross_qty),
+                "old": plain(old),
                 "new": plain(new),
                 "cost": _rub(cost) if cost is not None else None,
-                "month": _rub(month) if month is not None else None,
             }
         )
     if not dishes:
         return None
-    dishes.sort(key=lambda d: (d["semi"], d["name"]))
+    # The month: every dish sold, through its semi-products too (p. 4) — the product per portion with the new
+    # cards less with the old ones, at the network's price.
+    month = None
+    if price is not None:
+        per_month = MONTH_DAYS / WINDOW_DAYS
+        extra = sum(
+            (
+                (
+                    explode(i, n, raised).get(product.id, Decimal(0))
+                    - explode(i, n, net.recipes).get(product.id, Decimal(0))
+                )
+                for i, n in net.sold.items()
+                if i in net.recipes
+            ),
+            Decimal(0),
+        )
+        month = _rub(extra * price * per_month)
+    dishes.sort(key=lambda d: (d["semi"], d["name"], d["code"]))
     restaurants = ev.get("restaurants") or {}
     return NoteDraft(
         agent=Agent.RECIPE_UPDATE,
         audience=Audience.HQ,
         restaurant_id=None,
         key=f"recipe_update:{f.key}",
-        for_date=f.period_to or today,
+        for_date=f.period_to or net.last,
         facts={
             "finding": f.title,
             "product": product.name,
@@ -137,7 +175,8 @@ def _draft(session: Session, f: Finding, today: date) -> NoteDraft | None:
             "until": f.period_to.isoformat() if f.period_to else None,
             "price": _rub(price) if price is not None else None,
             "dishes": dishes,
-            "month_cost": _rub(month_total),
+            "changed": sorted(changed),
+            "month_cost": month,
         },
         proposal={"action": "claim"},
     )
@@ -154,4 +193,8 @@ def drafts(session: Session, restaurants: list[Restaurant], today: date) -> list
         )
         .order_by(Finding.key)
     ).scalars()
-    return [d for f in found if f.checked and (d := _draft(session, f, today)) is not None]
+    checked = [f for f in found if f.checked]
+    if not checked:
+        return []
+    net = _network(session, today)
+    return [d for f in checked if (d := _draft(session, net, f)) is not None]

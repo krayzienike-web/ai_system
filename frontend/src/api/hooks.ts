@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
 
 import { api, DEMO, stream } from "./client";
@@ -486,6 +486,7 @@ export const useMenuMatrix = (restaurantId: string | null) =>
   useQuery({
     queryKey: ["menu-matrix", restaurantId ?? "net"],
     queryFn: () => api<MenuMatrix>(restaurantId ? `/reports/menu?restaurant_id=${restaurantId}` : "/reports/menu"),
+    placeholderData: keepPreviousData, // another restaurant: the matrix stays until the new one comes
   });
 
 export const useChatSuggestions = () =>

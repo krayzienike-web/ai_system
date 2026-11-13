@@ -692,6 +692,8 @@ export interface MenuMatrixOut {
   since: string | null;
   until: string | null;
   restaurant_id: string | null;
+  popularity: string;
+  window_days: number;
   categories: MenuCategoryOut[];
   not_counted: string[];
 }

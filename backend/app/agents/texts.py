@@ -275,6 +275,13 @@ def big(value: str) -> str:
     return sign + grouped + ("," + part if part else "")
 
 
+BUYERS = (
+    "ресторан нашей сети закупает",
+    "ресторана нашей сети закупают",
+    "ресторанов нашей сети закупают",
+)
+
+
 def supplier_deal(f: dict[str, Any]) -> tuple[str, str, list[str]]:
     items = []
     for p in f["products"]:
@@ -296,8 +303,9 @@ def supplier_deal(f: dict[str, Any]) -> tuple[str, str, list[str]]:
     u = UNITS.get(first["unit"], first["unit"])
     title = f"Переговоры с «{f['supplier']}»: единая цена для сети"
     text = (
-        f"«{f['supplier']}», {_count(f['restaurants'], ('ресторан', 'ресторана', 'ресторанов'))} нашей сети "
-        "закупают у вас в среднем на "
+        f"«{f['supplier']}», "
+        f"{_count(f['restaurants'], BUYERS)} "
+        "у вас в среднем на "
         f"{rub(Decimal(f['spend_month']))} в месяц. С {_d(f['since'])} по {_d(f['until'])} рестораны "
         f"платили за одни и те же товары разную цену: например, «{first['product']}» — от "
         f"{_kop(first['low'])} до {_kop(first['high'])}/{u}. Просим установить для всех "
@@ -316,6 +324,8 @@ def recipe_update(f: dict[str, Any]) -> tuple[str, str, list[str]]:
         if d["cost"] is not None:
             line += f", себестоимость {'порции' if not d['semi'] else 'выхода'} +{_kop(d['cost'])}"
         items.append(line)
+    if f.get("changed"):
+        items.append(f"Уже изменены после этого периода, их не трогаем: {', '.join(f['changed'])}")
     period = f" ({_ddmm(f['since'])}–{_ddmm(f['until'])})" if f["since"] and f["until"] else ""
     title = f"Техкарта: новая норма «{f['product']}»"
     text = (
@@ -323,8 +333,14 @@ def recipe_update(f: dict[str, Any]) -> tuple[str, str, list[str]]:
         f"«{f['product']}» больше техкарт, в среднем на {num(f['median_pct'])}% при допуске "
         f"{num(f['allowance_pct'])}%{period}. Предлагаем увеличить норму во всех техкартах на "
         f"{num(f['raise_pct'])}%: кухня, которая работает как "
-        f"обычно, останется в допуске. Себестоимость продаж на бумаге вырастет на ≈ "
-        f"{rub(Decimal(f['month_cost']))} в месяц — это расход, который уже есть. Норму меняет "
+        "обычно, останется в допуске."
+        + (
+            f" Себестоимость продаж на бумаге вырастет на ≈ {rub(Decimal(f['month_cost']))} в месяц — это "
+            "расход, который уже есть."
+            if f["month_cost"] is not None
+            else ""
+        )
+        + " Норму меняет "
         "шеф-технолог в "
         "учетной системе; после выгрузки техкарт находка пересчитается."
     )

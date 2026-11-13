@@ -71,7 +71,8 @@ class World:
             dish = MenuItem(tenant_id=a.id, code="M1", name="Картофель фри порция")
             s.add_all([cream, eggs, fries, blank, dairy, farm, dish])
             s.flush()
-            self.cream = cream.id
+            self.cream, self.fries, self.blank, self.dairy = cream.id, fries.id, blank.id, dairy.id
+            self.dish = dish.id
             batches = {r: _batch(s, a.id, r, "receipts") for r in (self.a1, self.a2, self.a3)}
             sales = {r: _batch(s, a.id, r, "sales") for r in (self.a1, self.a2, self.a3)}
 
@@ -309,18 +310,18 @@ def test_a_card_the_network_overspends_gets_new_quantities(world: World, owner_e
     assert (f["median_pct"], f["allowance_pct"], f["raise_pct"]) == ("7.7", "2", "5.7")
     assert (f["restaurants_over"], f["restaurants"], f["price"]) == (2, 3, "160.00")
     assert f["dishes"] == [
-        # 0,150 × 1,0568 = 0,15852 → 0,159; (0,159 − 0,150) × 160 = 1,44 ₽; × 300 portions a month
+        # 0,150 × 1,0568 = 0,15852 → 0,159; (0,159 − 0,150) × 160 = 1,44 ₽
         {
             "name": "Картофель фри порция",
+            "code": "M1",
             "semi": False,
             "old": "0.15",
             "new": "0.159",
             "cost": "1.44",
-            "month": "432.00",
         },
-        {"name": "Заготовка фри", "semi": True, "old": "0.2", "new": "0.211", "cost": "1.76", "month": None},
+        {"name": "Заготовка фри", "code": "S01", "semi": True, "old": "0.2", "new": "0.211", "cost": "1.76"},
     ]
-    assert f["month_cost"] == "432.00"
+    assert f["month_cost"] == "432.00"  # 0,009 kg × 160 ₽ × 300 portions a month
     assert note.items == [
         "Картофель фри порция (блюдо): 0,15 → 0,159 кг, себестоимость порции +1,44 ₽",
         "Заготовка фри (полуфабрикат): 0,2 → 0,211 кг, себестоимость выхода +1,76 ₽",
@@ -447,3 +448,114 @@ def test_a_check_ends_and_its_weekly_note_expires(world: World, owner_engine: En
     assert by_key[f"check_watch:{world.run}:2026-10-19"] == "expired"
     assert by_key[f"check_watch:{world.run}:2026-10-26"] == "new"
     assert by_key[f"check_watch:{world.done}:done"] == "expired"  # 16.10 + 7 days has passed
+
+
+def test_a_card_through_a_semi_product_a_changed_card_and_a_removed_product(
+    world: World, owner_engine: Engine
+) -> None:
+    """TC-AG-39 (backend review of stage 11, pp. 2–4): a dish with the product only in its semi-product
+    counts in the month through it; a card changed after the finding's period is not raised twice; a dish
+    whose newer card has no fries any more is not listed."""
+    with Session(owner_engine) as s, s.begin():
+        t = world.tenant
+        via = MenuItem(tenant_id=t, code="M2", name="Фри из заготовки")
+        burger = MenuItem(tenant_id=t, code="M3", name="Бургер")
+        salad = MenuItem(tenant_id=t, code="M4", name="Салат")
+        s.add_all([via, burger, salad])
+        s.flush()
+        lines = [
+            (via.id, world.blank, "0.5", date(2026, 1, 1)),  # 0,1 kg of fries a portion, through the blank
+            (burger.id, world.fries, "0.2", date(2026, 10, 10)),  # changed after the period (01.10)
+            (salad.id, world.fries, "0.05", date(2026, 1, 1)),
+            (salad.id, world.cream, "0.05", date(2026, 2, 1)),  # the newer card has no fries
+        ]
+        for parent, product, qty, since in lines:
+            s.add(
+                RecipeLine(
+                    tenant_id=t,
+                    menu_item_id=parent,
+                    product_id=product,
+                    gross_qty=Decimal(qty),
+                    valid_from=since,
+                )
+            )
+        batch = (
+            s.execute(select(Sale.import_batch_id).where(Sale.restaurant_id == world.a1)).scalars().first()
+        )
+        s.add(
+            Sale(
+                tenant_id=t,
+                restaurant_id=world.a1,
+                import_batch_id=batch,
+                day=date(2026, 10, 2),
+                menu_item_id=via.id,
+                qty=Decimal(56),
+                revenue=Decimal(0),
+            )
+        )
+    service.run_all(TODAY)
+    (note,) = _notes(owner_engine, "recipe_update")
+    assert [d["name"] for d in note.facts["dishes"]] == ["Картофель фри порция", "Заготовка фри"]
+    assert note.facts["changed"] == ["Бургер"]
+    # + 0,5 × 0,011 kg × 160 ₽ × 30 portions a month = 26,40 ₽
+    assert note.facts["month_cost"] == "458.40"
+    assert note.items[-1] == "Уже изменены после этого периода, их не трогаем: Бургер"
+
+
+def test_a_card_without_a_price_says_no_sum(world: World, owner_engine: Engine) -> None:
+    """TC-AG-39 (review, p. 4): no invoices of the product in the window — the quantities, no money."""
+    with Session(owner_engine) as s, s.begin():
+        for r in s.execute(select(Receipt).where(Receipt.product_id == world.fries)).scalars():
+            s.delete(r)
+    service.run_all(TODAY)
+    (note,) = _notes(owner_engine, "recipe_update")
+    assert note.facts["month_cost"] is None and note.facts["price"] is None
+    assert [d["cost"] for d in note.facts["dishes"]] == [None, None]
+    assert "Себестоимость продаж" not in note.text
+    assert note.items[0] == "Картофель фри порция (блюдо): 0,15 → 0,159 кг"
+
+
+def test_many_small_savings_give_no_letter_and_break_nothing(world: World, owner_engine: Engine) -> None:
+    """TC-AG-38 (review, p. 1): seven products of a supplier each saving 460 ₽ a month — 3 225 ₽ together,
+    but none to name: no letter, and the morning run of the network goes on (the other agents' notes)."""
+    with Session(owner_engine) as s, s.begin():
+        t = world.tenant
+        small = Supplier(tenant_id=t, code="S7", name="Мелочи")
+        s.add(small)
+        s.flush()
+        batch = {
+            r: s.execute(select(Receipt.import_batch_id).where(Receipt.restaurant_id == r)).scalars().first()
+            for r in (world.a1, world.a2, world.a3)
+        }
+        for n in range(7):
+            p = Product(tenant_id=t, code=f"X{n}", name=f"Мелочь {n}", base_unit="pcs")
+            s.add(p)
+            s.flush()
+            for r, amount in ((world.a1, "1860"), (world.a2, "1000"), (world.a3, "1000")):
+                s.add(
+                    Receipt(
+                        tenant_id=t,
+                        restaurant_id=r,
+                        import_batch_id=batch[r],
+                        day=date(2026, 9, 10),
+                        doc_no="",
+                        supplier_id=small.id,
+                        product_id=p.id,
+                        qty=Decimal(100),
+                        amount=Decimal(amount),
+                    )
+                )
+    service.run_all(TODAY)
+    assert [n.facts["supplier"] for n in _notes(owner_engine, "supplier_deal")] == ["Молочный двор"]
+    assert len(_notes(owner_engine, "recipe_update")) == 1
+
+
+def test_a_day_behind_is_not_a_stopped_export(world: World, owner_engine: Engine) -> None:
+    """TC-AG-40 (review, p. 5): A2's sales a day behind the network are usual; A3, three days behind, is
+    listed."""
+    with Session(owner_engine) as s, s.begin():
+        for sale in s.execute(select(Sale).where(Sale.restaurant_id == world.a2, Sale.day == LAST)).scalars():
+            sale.day = LAST - timedelta(days=1)
+    service.run_all(TODAY)
+    run = next(n for n in _notes(owner_engine, "check_watch") if n.facts["state"] == "running")
+    assert [x["restaurant"] for x in run.facts["stopped"]] == ["Сеть А A3"]

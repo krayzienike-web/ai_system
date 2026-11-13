@@ -87,6 +87,7 @@ def test_the_menu_report_is_the_hqs(client: TestClient, network: Network) -> Non
     r = client.get("/api/reports/menu", headers=hq)
     assert r.status_code == 200, r.text
     assert r.json()["categories"] == [] and r.json()["restaurant_id"] is None
+    assert (r.json()["popularity"], r.json()["window_days"]) == ("0.7", 28)  # the engine's, not the screen's
     mine = network.a.restaurants["A1"]
     assert client.get(f"/api/reports/menu?restaurant_id={mine}", headers=hq).status_code == 200
     other = network.b.restaurants["B1"]

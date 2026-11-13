@@ -4326,6 +4326,10 @@
       "title": "Not Counted",
       "type": "array"
      },
+     "popularity": {
+      "title": "Popularity",
+      "type": "string"
+     },
      "restaurant_id": {
       "anyOf": [
        {
@@ -4361,12 +4365,18 @@
        }
       ],
       "title": "Until"
+     },
+     "window_days": {
+      "title": "Window Days",
+      "type": "integer"
      }
     },
     "required": [
      "since",
      "until",
      "restaurant_id",
+     "popularity",
+     "window_days",
      "categories",
      "not_counted"
     ],

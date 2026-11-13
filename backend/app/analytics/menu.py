@@ -18,10 +18,15 @@ from decimal import ROUND_HALF_UP, Decimal
 from typing import Literal
 from uuid import UUID
 
-from app.analytics.facts import Facts
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
+
+from app.analytics.facts import Facts, MenuInfo, ProductInfo, ReceiptRow, SaleRow
 from app.analytics.m2 import portion_cost, unit_prices
 from app.analytics.params import DEFAULT, EngineParams
-from app.catalog.recipes import explode, lines_on
+from app.catalog.models import MenuItem, Product, RecipeLine
+from app.catalog.recipes import Line, explode, lines_on
+from app.operations.models import Receipt, Sale
 
 Quadrant = Literal["star", "plowhorse", "puzzle", "dog"]
 MONTH_DAYS = Decimal(30)
@@ -126,3 +131,47 @@ def matrix(facts: Facts, cfg: EngineParams = DEFAULT, restaurant: UUID | None = 
             )
         )
     return Matrix(start, end, categories, missing)
+
+
+def load(session: Session, cfg: EngineParams = DEFAULT) -> Facts:
+    """Only what the matrix reads: the menu, the cards, the products and the window's invoices and sales —
+    not the network's whole history (backend review of stage 11, p. 8)."""
+    end = session.execute(select(func.max(Receipt.day))).scalar_one()
+    if end is None:
+        return Facts()
+    start = end - timedelta(days=cfg.M2_WINDOW_DAYS - 1)
+    products = {
+        p.id: ProductInfo(p.code, p.name, p.category, p.base_unit, p.shelf_life_days, p.is_semi)
+        for p in session.execute(select(Product)).scalars()
+    }
+    items = {
+        m.id: MenuInfo(m.code, m.name, m.category, m.price)
+        for m in session.execute(select(MenuItem)).scalars()
+    }
+    lines = [
+        Line(parent, r.product_id, r.gross_qty, r.valid_from)
+        for r in session.execute(select(RecipeLine).where(RecipeLine.valid_from <= end)).scalars()
+        if (parent := r.menu_item_id or r.semi_product_id) is not None
+    ]
+    receipts = [
+        ReceiptRow(*row)
+        for row in session.execute(
+            select(
+                Receipt.restaurant_id,
+                Receipt.day,
+                Receipt.product_id,
+                Receipt.supplier_id,
+                Receipt.qty,
+                Receipt.amount,
+            ).where(Receipt.day >= start, Receipt.day <= end)
+        ).all()
+    ]
+    sales = [
+        SaleRow(r, d, i, q, rev)
+        for r, d, i, q, rev in session.execute(
+            select(Sale.restaurant_id, Sale.day, Sale.menu_item_id, Sale.qty, Sale.revenue).where(
+                Sale.day >= start, Sale.day <= end
+            )
+        ).all()
+    ]
+    return Facts(products=products, menu=items, recipe_lines=lines, sales=sales, receipts=receipts)

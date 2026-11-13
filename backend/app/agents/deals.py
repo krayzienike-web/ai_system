@@ -114,7 +114,9 @@ def drafts(session: Session, restaurants: list[Restaurant], today: date) -> list
         ]
         lines.sort(key=lambda x: (-Decimal(str(x["saving_month"])), str(x["product"])))
         saving = sum((Decimal(str(x["saving_month"])) for x in lines), Decimal(0))
-        if saving < MIN_SAVING or supplier_id not in suppliers:
+        listed = [x for x in lines if Decimal(str(x["saving_month"])) >= MIN_LINE]
+        # Many small savings add up to a letter, but the letter needs a product to name (review, p. 1).
+        if saving < MIN_SAVING or supplier_id not in suppliers or not listed:
             continue
         spend = (
             sum((ln.amount for ls in by_product.values() for ln in ls), Decimal(0)) * per_month

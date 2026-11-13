@@ -5,7 +5,10 @@ import { useState } from "react";
 import { useMenuMatrix, useRestaurants } from "../../api/hooks";
 import type { MenuDish } from "../../api/types";
 import { Card, cx, EmptyState, LoadError, PageTitle, Reveal, Skeleton } from "../../ds/primitives";
-import { ddmm, num, pct } from "../../lib/format";
+import { ddmm, kopecks, num, pct } from "../../lib/format";
+
+/** A share of the category's portions: a rare dish is «0,4%», not «0%» (review of stage 11, p. 9). */
+const share = (value: string) => pct(Number(value) * 100, Number(value) < 0.01 ? 1 : 0);
 
 /** A menu price as it is printed in the menu: whole rubles, never «1,5 тыс». */
 const money = (value: string) => `${Math.round(Number(value)).toLocaleString("ru-RU")} ₽`;
@@ -71,13 +74,13 @@ export function MenuPage() {
       ) : !query.data ? (
         <Skeleton className="h-96" />
       ) : !query.data.categories.length ? (
-        <EmptyState title="Пока не из чего считать">Нужны продажи, техкарты и закупки за последние 4 недели.</EmptyState>
+        <EmptyState title="Пока не из чего считать">Нужны продажи, техкарты и закупки.</EmptyState>
       ) : (
         <>
           <p className="mb-4 text-sm text-ink-2">
             {query.data.since && query.data.until && `${ddmm(query.data.since)}–${ddmm(query.data.until)}. `}
-            Популярное блюдо — то, что берут не реже 70% от равной доли категории; выгодное — с маржой с порции не ниже
-            средней по категории.
+            Популярное блюдо — то, что берут не реже {pct(Number(query.data.popularity) * 100, 0)} от равной доли
+            категории; выгодное — с маржой с порции не ниже средней по категории.
           </p>
           <div className="space-y-4">
             {query.data.categories.map((c, i) => (
@@ -114,11 +117,11 @@ export function MenuPage() {
                               {d.name} <span className="text-ink-3">· {QUADRANTS[d.quadrant].title.toLowerCase()}</span>
                             </td>
                             <td className="num py-1.5 pr-3 text-right">{money(d.price)}</td>
-                            <td className="num py-1.5 pr-3 text-right">{money(d.cost)}</td>
-                            <td className="num py-1.5 pr-3 text-right">{money(d.margin)}</td>
+                            <td className="num py-1.5 pr-3 text-right">{kopecks(Number(d.cost))}</td>
+                            <td className="num py-1.5 pr-3 text-right">{kopecks(Number(d.margin))}</td>
                             <td className="num py-1.5 pr-3 text-right">{pct(Number(d.food_cost) * 100)}</td>
                             <td className="num py-1.5 text-right">
-                              {num(Number(d.portions_month))} · {pct(Number(d.share) * 100, 0)}
+                              {num(Number(d.portions_month))} · {share(d.share)}
                             </td>
                           </tr>
                         ))}
@@ -131,7 +134,7 @@ export function MenuPage() {
           </div>
           {query.data.not_counted.length > 0 && (
             <p className="mt-4 text-sm text-ink-3">
-              Не посчитаны — нет цены, техкарты, цены ингредиента или продаж за 4 недели:{" "}
+              Не посчитаны — нет цены, техкарты, цены ингредиента или продаж за {query.data.window_days} дней:{" "}
               {query.data.not_counted.join(", ")}.
             </p>
           )}

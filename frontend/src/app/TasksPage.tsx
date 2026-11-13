@@ -41,6 +41,10 @@ function TaskCard({ task }: { task: ApiTask }) {
               {dueWords(task)}
             </div>
             <div className="mt-1 text-[17px] font-semibold leading-snug text-ink">{task.title}</div>
+            {/* The HQ's reminder (review of stage 11, p. 8): until now the director never saw it. */}
+            {task.reminded_on && !done && (
+              <div className="mt-0.5 text-sm text-loss">УК напомнила {ddmm(task.reminded_on)}</div>
+            )}
           </div>
           {done ? (
             <OutcomePill outcome={task.outcome} />

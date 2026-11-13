@@ -560,6 +560,7 @@ function History({ onOpen }: { onOpen: (batch: ImportBatch) => void }) {
   const names = useNames();
   const { data: batches = [] } = useImports();
   const rollback = useBatchAction("rollback");
+  const canUnits = useViewer()?.can("norms.manage") ?? false;
   const [shown, setShown] = useState(10);
   const [confirming, setConfirming] = useState<string | null>(null);
   if (!batches.length) return null;
@@ -577,10 +578,11 @@ function History({ onOpen }: { onOpen: (batch: ImportBatch) => void }) {
             </span>
             <Pill tone={STATUS[b.status].tone}>{STATUS[b.status].label}</Pill>
             {/* Checked but not loaded (left, or the answer was lost on the way): finish it here, p. 2. */}
-            {/* A file stopped only by units (Q35): set the factors on its report and check it again. */}
+            {/* A file stopped by units (and maybe more): its report, where the HQ admin sets the factors (Q35);
+                the others see what to pass on (frontend review of stage 11, p. 4). */}
             {b.status === "failed" && (b.unit_fixes ?? []).length > 0 && (
               <Button size="sm" variant="ghost" onClick={() => onOpen(b)}>
-                Задать единицы
+                {canUnits ? "Задать единицы" : "Открыть отчет"}
               </Button>
             )}
             {(b.status === "validated" || b.status === "needs_matching") && (

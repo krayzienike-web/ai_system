@@ -92,5 +92,19 @@ describe("«Проверить снова» in the prototype (Q35)", () => {
     // The file is this session's now: «Загрузить» works on it
     const loaded = call(`/imports/${file.id}/publish`, { method: "POST" }, ADMIN) as ImportBatch;
     expect(loaded.status).toBe("published");
+    // Every demo login sees the file once, as it is now (frontend review of stage 11, p. 1).
+    const theirs = call("/imports", {}, "analyst@demo.local") as ImportBatch[];
+    expect(theirs.filter((b) => b.id === file.id).map((b) => b.status)).toEqual(["published"]);
+    expect(new Set(theirs.map((b) => b.id)).size).toBe(theirs.length);
+  });
+});
+
+describe("«Проверить снова» of another restaurant's file (frontend review of stage 11, p. 2)", () => {
+  it("is not found for a director, as on the server", () => {
+    const file = (call("/imports", {}, "director3@demo.local") as ImportBatch[]).find((b) =>
+      b.filename.startsWith("Приходы 1С R03"),
+    );
+    expect(file).toBeDefined(); // R03's own director sees it
+    expect(fails(() => call(`/imports/${file!.id}/recheck`, { method: "POST" }, DIRECTOR))?.[0]).toBe(404);
   });
 });

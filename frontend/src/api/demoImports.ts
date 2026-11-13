@@ -385,17 +385,19 @@ export function demoBatchAction(
 
 /** «Проверить снова» (Q35) on a file recorded from the server: the units that now have a factor stop being
  * errors; once none is left the file waits for «Загрузить», as on the server (imports/service.py `recheck`).
- * A file that passes moves into this session's files, so «Загрузить» works on it. */
+ * The checked file becomes this session's for every demo login, so no one sees the recorded copy again
+ * (frontend review of stage 11, p. 1). Unlike the server, the file is not read again: new unknown names
+ * cannot appear — the recorded file has none. */
 export function demoRecheck(recorded: ImportBatch[], id: string): ImportBatch {
-  const batch = recorded.find((b) => b.id === id) ?? batches.find((b) => b.id === id);
+  const batch = batches.find((b) => b.id === id) ?? recorded.find((b) => b.id === id);
   if (!batch) throw new ApiError(404, "Загрузка не найдена");
   if (batch.status !== "failed") throw new ApiError(422, "Проверить заново можно только файл с ошибками");
   const fixes = batch.unit_fixes ?? [];
   const fixed = fixes.filter((f) => hasFactor(f.product_id, f.unit));
   const left = fixes.filter((f) => !fixed.includes(f));
+  // By the error's own fix, not by its words (review, p. 5).
   const errors = batch.errors.filter(
-    (e) =>
-      !fixed.some((f) => e.message.includes(`«${f.unit_text}»`) && e.message.includes(`«${f.product_name}»`)),
+    (e) => !fixed.some((f) => e.fix?.product_id === f.product_id && e.fix?.unit === f.unit),
   );
   const rows = fixed.reduce((n, f) => n + f.rows, 0);
   const checked: ImportBatch = {
@@ -407,13 +409,15 @@ export function demoRecheck(recorded: ImportBatch[], id: string): ImportBatch {
   };
   const own = batches.indexOf(batch);
   if (own >= 0) batches.splice(own, 1);
-  const at = recorded.indexOf(batch);
-  if (at >= 0) recorded.splice(at, 1);
-  // A file that passed is this session's to load; one with errors left stays where it was listed.
-  if (checked.status === "validated" || own >= 0) batches.unshift(checked);
-  else recorded.splice(at, 0, checked);
+  batches.unshift(checked);
   return { ...checked };
 }
+
+/** The recorded files as this session has them: a file checked again here is listed once, as it is now. */
+export const demoRecorded = (recorded: ImportBatch[]) => {
+  const mine = new Set(batches.map((b) => b.id));
+  return recorded.filter((b) => !mine.has(b.id));
+};
 
 export const demoBatches = (restaurantId: string | null) =>
   batches

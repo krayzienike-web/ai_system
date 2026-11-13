@@ -21,6 +21,7 @@ import {
   demoBatchRestaurant,
   demoBatches,
   demoRecheck,
+  demoRecorded,
   demoFreshness,
   demoMatch,
   demoUpload,
@@ -998,7 +999,7 @@ export function demoRequest(
   if (path === "/imports")
     return [
       ...demoBatches(v.restaurantId),
-      ...((answers["/imports"] as ImportBatch[]) ?? []),
+      ...demoRecorded((answers["/imports"] as ImportBatch[]) ?? []),
     ];
   if (path === "/aliases" && method === "GET")
     return demoAliases(v.restaurantId);
@@ -1018,7 +1019,13 @@ export function demoRequest(
   if (path.startsWith("/settings/units"))
     return demoUnits(path, init, v.admin, (answers["/catalog/product"] as CatalogOption[]) ?? []);
   const rechecking = /^\/imports\/([^/]+)\/recheck$/.exec(path)?.[1];
-  if (rechecking) return demoRecheck((answers["/imports"] as ImportBatch[]) ?? [], rechecking);
+  if (rechecking) {
+    const recorded = (answers["/imports"] as ImportBatch[]) ?? [];
+    // Another restaurant's file is «not found» for a director, as on the server (review, p. 2).
+    const place = demoBatchRestaurant(rechecking) ?? recorded.find((b) => b.id === rechecking)?.restaurant_id;
+    if (!v.hq && place !== v.restaurantId) throw new ApiError(404, "Загрузка не найдена");
+    return demoRecheck(recorded, rechecking);
+  }
 
   // Weekly digests (stage 6).
   const disagreeing = /^\/findings\/([^/]+)\/disagree$/.exec(path);

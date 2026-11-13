@@ -8,7 +8,6 @@ from pydantic import BaseModel
 from sqlalchemy import select
 
 from app.analytics import menu, params
-from app.analytics.facts import load_facts
 from app.core import words
 from app.core.deps import SessionDep, require
 from app.core.errors import NotFoundError
@@ -147,6 +146,8 @@ class MenuMatrixOut(BaseModel):
     since: date | None
     until: date | None
     restaurant_id: UUID | None  # popularity of one restaurant; prices and cards are the network's
+    popularity: Decimal  # popular from this share of an equal share (the engine's M2_ME_POPULARITY)
+    window_days: int  # the window of prices and sales (M2_WINDOW_DAYS)
     categories: list[MenuCategoryOut]
     not_counted: list[str]
 
@@ -156,11 +157,14 @@ def get_menu_matrix(ctx: CanCompare, session: SessionDep, restaurant_id: UUID | 
     """Popularity × margin of every dish by category (the HQ: menu prices are the network's)."""
     if restaurant_id is not None and session.get(Restaurant, restaurant_id) is None:
         raise NotFoundError("Ресторан не найден")
-    m = menu.matrix(load_facts(session), params.load(session), restaurant_id)
+    cfg = params.load(session)
+    m = menu.matrix(menu.load(session, cfg), cfg, restaurant_id)
     return MenuMatrixOut(
         since=m.since,
         until=m.until,
         restaurant_id=restaurant_id,
+        popularity=cfg.M2_ME_POPULARITY,
+        window_days=cfg.M2_WINDOW_DAYS,
         categories=[
             MenuCategoryOut(
                 name=c.name,

@@ -43,7 +43,7 @@ export interface ImportIssue {
   column: string | null;
   message: string;
   /** What a person can do on the spot: a unit factor to set (Q35). */
-  fix?: { kind: "unit_factor" };
+  fix?: { kind: "unit_factor"; product_id?: string; unit?: string };
 }
 
 export interface ImportBatch {
