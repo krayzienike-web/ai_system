@@ -5,7 +5,7 @@ import { showFactor } from "../app/UnitFactors";
 import { ApiError } from "./client";
 import { demoRequest } from "./demo";
 import { factorProblem, unitKey } from "./demoUnits";
-import type { CatalogOption, UnitFactor, UnitFactorSaved } from "./types";
+import type { CatalogOption, ImportBatch, UnitFactor, UnitFactorSaved } from "./types";
 
 const ADMIN = "admin@demo.local";
 const DIRECTOR = "director1@demo.local";
@@ -64,5 +64,33 @@ describe("units of the exports in the prototype", () => {
       422,
       "Единица — не длиннее 40 символов",
     ]);
+  });
+});
+
+describe("«Проверить снова» in the prototype (Q35)", () => {
+  it("loads the recorded 1С file once both of its units have a factor", () => {
+    const files = call("/imports", {}, ADMIN) as ImportBatch[];
+    const file = files.find((b) => b.filename === "Приходы 1С R03 19.10.csv")!;
+    expect(file.status).toBe("failed");
+    expect(file.unit_fixes?.map((f) => f.unit_text)).toEqual(["упак", "бут"]);
+    const [cream, oil] = file.unit_fixes!;
+    const recheck = () => call(`/imports/${file.id}/recheck`, { method: "POST" }, ADMIN) as ImportBatch;
+
+    expect(recheck().status).toBe("failed"); // nothing set yet: the same two errors
+    put(ADMIN, { product_id: cream!.product_id, unit_text: "упак", factor: "1" });
+    const half = recheck();
+    expect(half.status).toBe("failed");
+    expect(half.unit_fixes?.map((f) => f.unit_text)).toEqual(["бут"]);
+    expect(half.errors).toHaveLength(1);
+
+    put(ADMIN, { product_id: oil!.product_id, unit_text: "бут", factor: "0,5" });
+    const passed = recheck();
+    expect(passed.status).toBe("validated");
+    expect(passed.errors).toEqual([]);
+    expect(passed.rows_valid).toBe(passed.rows_total);
+    expect(fails(recheck)).toEqual([422, "Проверить заново можно только файл с ошибками"]);
+    // The file is this session's now: «Загрузить» works on it
+    const loaded = call(`/imports/${file.id}/publish`, { method: "POST" }, ADMIN) as ImportBatch;
+    expect(loaded.status).toBe("published");
   });
 });

@@ -109,6 +109,13 @@ def test_the_rebuild_brings_the_demo_network_back_as_on_the_first_day(owner_engi
         )
         (prep,) = [n for n, _ in notes if n.agent == "inventory_prep"]
         assert prep.facts["asked"] is True and len(prep.items) == 5 and prep.source == "rules"
+        # TC-IMP-44: one 1С file of R03 stopped by its packs and bottles (Q35), the latest upload of the list.
+        from app.imports.models import ImportBatch
+
+        latest = s.execute(select(ImportBatch).order_by(ImportBatch.created_at.desc()).limit(1)).scalar_one()
+        assert (latest.filename, latest.status) == ("Приходы 1С R03 19.10.csv", "failed")
+        fixes = [(e["fix"]["product_name"], e["fix"]["unit_text"]) for e in latest.errors]
+        assert fixes == [("Сливки 33%", "упак"), ("Масло оливковое", "бут")]
 
 
 DEPLOY = Path(__file__).resolve().parents[2] / "deploy"

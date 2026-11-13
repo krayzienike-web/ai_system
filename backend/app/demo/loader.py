@@ -1,6 +1,6 @@
 """Loading the demo network through the same pipeline a user goes through: upload → validate → publish."""
 
-from datetime import date
+from datetime import UTC, date, datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -39,4 +39,34 @@ def load(session: Session, ctx: AccessContext, net: DemoNetwork, *, today: date)
             raise InvalidError(f"{name}: {batch.errors[:3]} {batch.unmatched[:3]}")
         service.publish(session, ctx, batch.id, today=today)
         published[template] = published.get(template, 0) + batch.rows_valid
+    _unit_example(session, ctx, today)
     return published
+
+
+# 1С's purchases of R03 for the day after the demo's data, in packs and bottles (Q35). The file stays
+# unloaded, so «Данные» shows how a unit is fixed: set the factor on the report, then «Проверить заново».
+UNIT_EXAMPLE_NAME = "Приходы 1С R03 19.10.csv"
+UNIT_EXAMPLE = (
+    "Дата;№ накладной;Код поставщика;Поставщик;Код товара;Товар;Количество;Ед. изм.;Цена;Сумма;НДС\n"
+    "19.10.2026;ПМ-1901;S3;Молочный двор;P04;Сливки 33%;12;упак;360,00;4320,00;20\n"
+    "19.10.2026;ПМ-1902;S7;Бакалея Опт;P14;Масло оливковое;6;бут;1100,00;6600,00;20\n"
+    "19.10.2026;ПМ-1902;S7;Бакалея Опт;P15;Паста спагетти;10;кг;190,00;1900,00;20\n"
+)
+
+
+def _unit_example(session: Session, ctx: AccessContext, today: date) -> None:
+    r03 = session.execute(select(Restaurant.id).where(Restaurant.code == "R03")).scalar_one()
+    batch = service.upload(
+        session,
+        ctx,
+        template_name="receipts",
+        restaurant_id=r03,
+        filename=UNIT_EXAMPLE_NAME,
+        raw=UNIT_EXAMPLE.encode(),
+        today=today,
+    )
+    if batch.status != BatchStatus.FAILED:
+        raise InvalidError(f"{UNIT_EXAMPLE_NAME}: expected the unknown units, got {batch.status}")
+    # The network loads in one transaction, so every file has its start time: this one is the latest upload
+    # and heads «Что загружали?».
+    batch.created_at = datetime.now(UTC)

@@ -17,6 +17,10 @@ let factors: UnitFactor[] = [];
 export const unitKey = (text: string) =>
   text.toLowerCase().replace(/ё/g, "е").replace(/[^\p{L}\p{N}_%]+/gu, " ").trim();
 
+/** Whether the network has a factor for this product and unit, as the server's import looks it up. */
+export const hasFactor = (productId: string, unit: string) =>
+  factors.some((f) => f.product_id === productId && f.unit === unitKey(unit));
+
 /** The server's checks of a factor (TC-IMP-41), in its words. */
 export function factorProblem(text: string): string | null {
   const cleaned = text.replace(",", ".").trim();

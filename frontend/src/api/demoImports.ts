@@ -1,4 +1,5 @@
 import { ApiError } from "./client";
+import { hasFactor } from "./demoUnits";
 import snapshot from "./demo/snapshot.json";
 // Data import in the standalone demo (no backend). A small copy of the server's rules
 // (backend/app/imports): the header is found by column names, totals are skipped, the file type is
@@ -380,6 +381,38 @@ export function demoBatchAction(
   batch.status = action === "publish" ? "published" : "rolled_back";
   if (action === "publish") batch.published_at = new Date().toISOString();
   return { ...batch };
+}
+
+/** «Проверить снова» (Q35) on a file recorded from the server: the units that now have a factor stop being
+ * errors; once none is left the file waits for «Загрузить», as on the server (imports/service.py `recheck`).
+ * A file that passes moves into this session's files, so «Загрузить» works on it. */
+export function demoRecheck(recorded: ImportBatch[], id: string): ImportBatch {
+  const batch = recorded.find((b) => b.id === id) ?? batches.find((b) => b.id === id);
+  if (!batch) throw new ApiError(404, "Загрузка не найдена");
+  if (batch.status !== "failed") throw new ApiError(422, "Проверить заново можно только файл с ошибками");
+  const fixes = batch.unit_fixes ?? [];
+  const fixed = fixes.filter((f) => hasFactor(f.product_id, f.unit));
+  const left = fixes.filter((f) => !fixed.includes(f));
+  const errors = batch.errors.filter(
+    (e) =>
+      !fixed.some((f) => e.message.includes(`«${f.unit_text}»`) && e.message.includes(`«${f.product_name}»`)),
+  );
+  const rows = fixed.reduce((n, f) => n + f.rows, 0);
+  const checked: ImportBatch = {
+    ...batch,
+    errors,
+    unit_fixes: left,
+    rows_valid: batch.rows_valid + rows,
+    status: errors.length ? "failed" : "validated",
+  };
+  const own = batches.indexOf(batch);
+  if (own >= 0) batches.splice(own, 1);
+  const at = recorded.indexOf(batch);
+  if (at >= 0) recorded.splice(at, 1);
+  // A file that passed is this session's to load; one with errors left stays where it was listed.
+  if (checked.status === "validated" || own >= 0) batches.unshift(checked);
+  else recorded.splice(at, 0, checked);
+  return { ...checked };
 }
 
 export const demoBatches = (restaurantId: string | null) =>

@@ -577,6 +577,12 @@ function History({ onOpen }: { onOpen: (batch: ImportBatch) => void }) {
             </span>
             <Pill tone={STATUS[b.status].tone}>{STATUS[b.status].label}</Pill>
             {/* Checked but not loaded (left, or the answer was lost on the way): finish it here, p. 2. */}
+            {/* A file stopped only by units (Q35): set the factors on its report and check it again. */}
+            {b.status === "failed" && (b.unit_fixes ?? []).length > 0 && (
+              <Button size="sm" variant="ghost" onClick={() => onOpen(b)}>
+                Задать единицы
+              </Button>
+            )}
             {(b.status === "validated" || b.status === "needs_matching") && (
               <Button size="sm" variant="ghost" onClick={() => onOpen(b)}>
                 {b.status === "validated" ? "Открыть и загрузить" : "Сопоставить названия"}
