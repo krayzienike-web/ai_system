@@ -36,8 +36,8 @@ test("TC-UI-38: the HQ analyst reads the notes but has no buttons to answer them
     await expect(assistant.getByRole("button", { name })).toHaveCount(0);
 });
 
-// TC-UI-42 (stage 10): the HQ's own notes — a transfer becomes two tasks (the prototype's tasks are checked in
-// src/api/demo.agents.test.ts: the HQ has no «Задачи» screen), the director sees none of them.
+// TC-UI-42 (stage 10): the HQ's own notes — a transfer becomes two tasks, the director sees none of the notes.
+// TC-UI-44 (Q39): both tasks are in the HQ's «Задачи сети», under «Без находки».
 test("TC-UI-42: the HQ admin sets the tasks of a transfer; the director does not see the HQ's notes", async ({
   page,
 }) => {
@@ -49,6 +49,15 @@ test("TC-UI-42: the HQ admin sets the tasks of a transfer; the director does not
   await move.getByRole("button", { name: "Поставить задачи" }).click();
   await expect(page.getByText("директора обоих ресторанов увидят их в «Задачах»")).toBeVisible();
   await expect(move).toHaveCount(0);
+
+  await page.getByRole("link", { name: "Задачи сети" }).first().click();
+  await expect(page.getByRole("heading", { name: "Задачи сети" })).toBeVisible();
+  await page.getByRole("group", { name: "Какие задачи" }).getByRole("button", { name: /Без находки/ }).click();
+  const rows = page.getByRole("listitem");
+  await expect(rows.filter({ hasText: "Передать в «Ресторан на Покровке»" })).toHaveCount(1);
+  await expect(rows.filter({ hasText: "Принять из «Ресторан на Арбате»" })).toHaveCount(1);
+  await page.getByLabel("Ресторан").selectOption({ label: "Ресторан на Арбате" });
+  await expect(rows.filter({ hasText: "Принять из" })).toHaveCount(0); // that one is R04's
 });
 
 test("TC-UI-42: the director's «Помощник» has none of the HQ's notes", async ({ page }) => {

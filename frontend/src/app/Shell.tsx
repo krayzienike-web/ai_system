@@ -110,6 +110,7 @@ const HQ_NAV: NavItem[] = [
     short: "Рестораны",
     Icon: Building2,
   },
+  { to: "/tasks", title: "Задачи сети", short: "Задачи", Icon: ListChecks },
   { to: "/digest", title: "Сводки", short: "Сводки", Icon: Newspaper },
   {
     to: "/report",

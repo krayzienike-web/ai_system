@@ -1,4 +1,4 @@
-import { Link, Navigate } from "@tanstack/react-router";
+import { Link } from "@tanstack/react-router";
 import { Check } from "lucide-react";
 import { motion } from "motion/react";
 import { useState } from "react";
@@ -9,6 +9,7 @@ import { Button, Card, cx, EmptyState, ErrorText, LoadError, PageTitle, Reveal, 
 import { ddmm, money, plural, rub } from "../lib/format";
 import { useViewer } from "../lib/useViewer";
 import { useUi } from "../state/ui";
+import { NetworkTasks } from "./hq/NetworkTasks";
 import { OutcomePill, QuickTaskForm, TaskTrace } from "./tasks/trace";
 
 /** "просрочено на 3 дня" / "сегодня" / "через 8 дней" — when, in words. */
@@ -138,8 +139,8 @@ export function TasksPage() {
   const viewer = useViewer();
   const query = useTasks();
   if (!viewer) return null;
-  // The management company follows work inside each finding; the restaurant lives in its task list.
-  if (viewer.isHq) return <Navigate to="/findings" />;
+  // The management company follows the network's tasks (Q39); the restaurant lives in its own list.
+  if (viewer.isHq) return <NetworkTasks />;
   if (query.isError && !query.data)
     return (
       <div className="mx-auto max-w-[960px]">
