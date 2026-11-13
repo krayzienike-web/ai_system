@@ -19,7 +19,19 @@ from sqlalchemy import select, text, true, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
-from app.agents import agenda, data, deadlines, inventory, story, suppliers, texts, transfers
+from app.agents import (
+    agenda,
+    checks,
+    data,
+    deadlines,
+    deals,
+    inventory,
+    recipes,
+    story,
+    suppliers,
+    texts,
+    transfers,
+)
 from app.agents.drafts import NoteDraft
 from app.agents.models import Agent, AgentNote, Audience, NoteStatus
 from app.core.db import get_sessionmaker
@@ -164,6 +176,9 @@ def run_network(session: Session, tenant_id: UUID, today: date, write: Writer | 
         + suppliers.drafts(session, restaurants, today)
         + transfers.drafts(session, restaurants, today)
         + agenda.drafts(session, restaurants, today)
+        + deals.drafts(session, restaurants, today)
+        + recipes.drafts(session, restaurants, today)
+        + checks.drafts(session, restaurants, today)
     }
     written: dict[tuple[str, str], Text | None] = {}
     for k, d in drafts.items():

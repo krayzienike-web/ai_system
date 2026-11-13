@@ -526,7 +526,7 @@ def test_the_models_text_quotes_only_the_facts(world: World, owner_engine: Engin
     fake.replies += [_model("Пересчет 22.10: начните с товара P1 — по нему открыта находка.")] * 20
     service.run_all(TODAY, lambda ctx: agent_writer.writer(Gateway(fake), ctx))
     (note,) = _notes(owner_engine, "inventory_prep")
-    assert note.source == "model" and note.prompt_version == 2
+    assert note.source == "model" and note.prompt_version == 3
     assert note.text.startswith("Пересчет 22.10") and note.items[0].startswith("Товар P1")
     with Session(owner_engine) as s, s.begin():
         s.query(AgentNote).delete()
@@ -795,7 +795,7 @@ def test_the_writer_asks_once_to_correct_a_figure_then_keeps_the_rules(network: 
         fixed.replies += [_model("Недостача 9 999 ₽."), _model("Недостача 200 ₽ — начните с нее.")]
         assert agent_writer.writer(Gateway(fixed), ctx)("inventory_prep", facts, rules) == (
             "Недостача 200 ₽ — начните с нее.",
-            2,  # agent.v2 (stage 10)
+            3,  # agent.v3 (stage 11)
         )
         # Strict: a small count not in the facts is a figure too («7 позиций» while the list has 1).
         counts = FakeModel()

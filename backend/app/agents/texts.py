@@ -262,6 +262,120 @@ def shortage_story(f: dict[str, Any]) -> tuple[str, str, list[str]]:
     return title, text, items
 
 
+def _kop(value: str) -> str:
+    """«1.30» → «1,30 ₽», «1555.05» → «1 555,05 ₽»: a price, to the kopeck."""
+    return f"{big(value)} ₽"
+
+
+def big(value: str) -> str:
+    """«19459.3» → «19 459,3»: thousands apart, as in the money."""
+    whole, _, part = value.partition(".")
+    sign = "-" if whole.startswith("-") else ""
+    grouped = f"{int(whole.lstrip('-') or 0):,}".replace(",", " ")
+    return sign + grouped + ("," + part if part else "")
+
+
+def supplier_deal(f: dict[str, Any]) -> tuple[str, str, list[str]]:
+    items = []
+    for p in f["products"]:
+        u = UNITS.get(p["unit"], p["unit"])
+        items.append(
+            f"{p['product']}: {big(p['qty_month'])} {u} в месяц, "
+            f"{_count(p['restaurants'], ('ресторан платит', 'ресторана платят', 'ресторанов платят'))} "
+            f"от {_kop(p['low'])} до {_kop(p['high'])}/{u}, медиана {_kop(p['median'])} — цена по "
+            "медиане сэкономит ≈ "
+            f"{rub(Decimal(p['saving_month']))} в месяц"
+        )
+    if f["products_total"] > len(f["products"]):
+        items.append(f"Еще товаров с разной ценой: {f['products_total'] - len(f['products'])}")
+    items.append(
+        f"Для переговоров: единая цена по медиане — ≈ {rub(Decimal(f['saving_month']))} в месяц, каждый "
+        f"процент скидки на весь объем — ≈ {rub(Decimal(f['one_pct_month']))} в месяц"
+    )
+    first = f["products"][0]
+    u = UNITS.get(first["unit"], first["unit"])
+    title = f"Переговоры с «{f['supplier']}»: единая цена для сети"
+    text = (
+        f"«{f['supplier']}», {_count(f['restaurants'], ('ресторан', 'ресторана', 'ресторанов'))} нашей сети "
+        "закупают у вас в среднем на "
+        f"{rub(Decimal(f['spend_month']))} в месяц. С {_d(f['since'])} по {_d(f['until'])} рестораны "
+        f"платили за одни и те же товары разную цену: например, «{first['product']}» — от "
+        f"{_kop(first['low'])} до {_kop(first['high'])}/{u}. Просим установить для всех "
+        "ресторанов сети единую цену не выше "
+        f"{_kop(first['median'])}/{u} и обсудить скидку за объем закупок по договору (п. ___)."
+    )
+    return title, text, items
+
+
+def recipe_update(f: dict[str, Any]) -> tuple[str, str, list[str]]:
+    u = _u(f)
+    items = []
+    for d in f["dishes"]:
+        kind = "полуфабрикат" if d["semi"] else "блюдо"
+        line = f"{d['name']} ({kind}): {num(d['old'])} → {num(d['new'])} {u}"
+        if d["cost"] is not None:
+            line += f", себестоимость {'порции' if not d['semi'] else 'выхода'} +{_kop(d['cost'])}"
+        items.append(line)
+    period = f" ({_ddmm(f['since'])}–{_ddmm(f['until'])})" if f["since"] and f["until"] else ""
+    title = f"Техкарта: новая норма «{f['product']}»"
+    text = (
+        f"Шеф-технологу: {f['restaurants_over']} из {f['restaurants']} ресторанов расходуют "
+        f"«{f['product']}» больше техкарт, в среднем на {num(f['median_pct'])}% при допуске "
+        f"{num(f['allowance_pct'])}%{period}. Предлагаем увеличить норму во всех техкартах на "
+        f"{num(f['raise_pct'])}%: кухня, которая работает как "
+        f"обычно, останется в допуске. Себестоимость продаж на бумаге вырастет на ≈ "
+        f"{rub(Decimal(f['month_cost']))} в месяц — это расход, который уже есть. Норму меняет "
+        "шеф-технолог в "
+        "учетной системе; после выгрузки техкарт находка пересчитается."
+    )
+    return title, text, items
+
+
+VERDICTS = {
+    "confirmed": "эффект подтвержден",
+    "inconclusive": "эффект не доказан — разница могла быть случайной",
+    "rejected": "изменение не сработало",
+}
+
+
+def check_watch(f: dict[str, Any]) -> tuple[str, str, list[str]]:
+    if f["state"] == "done":
+        title = f"Итог проверки «{f['title']}»"
+        effect = ""
+        if f["effect"] is not None:
+            effect = f" Эффект ≈ {rub(Decimal(f['effect']))} в месяц"
+            if f["ci_low"] is not None and f["ci_high"] is not None:
+                effect += f" (от {rub(Decimal(f['ci_low']))} до {rub(Decimal(f['ci_high']))})"
+            effect += "."
+        text = (
+            f"Проверка «{f['title']}» ({_ddmm(f['starts_on'])}–{_ddmm(f['ends_on'])}) закончилась: "
+            f"{VERDICTS.get(f['verdict'], f['verdict'])}.{effect} Что делать дальше, решает УК на экране "
+            "проверки."
+        )
+        return title, text, []
+    items = [
+        f"{x['restaurant']}: продажи выгружены только по {_ddmm(x['last'])}, данные сети — по "
+        f"{_ddmm(f['data_to'])}"
+        if x["last"]
+        else f"{x['restaurant']}: продаж за время проверки нет"
+        for x in f["stopped"]
+    ]
+    items += [
+        f"{x['restaurant']}: с {_ddmm(x['since'])} товар берут у нового поставщика «{x['supplier']}» — цена "
+        "или фасовка могли измениться"
+        for x in f["new_suppliers"]
+    ]
+    items += [f"{_ddmm(d)} — праздник: гости и кухня в этот день работают иначе" for d in f["holidays"]]
+    title = f"Проверка «{f['title']}»: день {f['day']} из {f['days']}"
+    who = f"в проверке — {', '.join(f['test'])}"
+    if f["control"]:
+        who += f", для сравнения — {', '.join(f['control'])}"
+    progress = f["progress"] or "Промежуточного замера еще нет."
+    risks = "Что может помешать — в списке ниже." if items else "Помех в данных не видно."
+    text = f"Проверка идет с {_ddmm(f['starts_on'])} по {_ddmm(f['ends_on'])}, {who}. {progress} {risks}"
+    return title, text, items
+
+
 RULES = {
     Agent.INVENTORY_PREP: inventory,
     Agent.TASK_DUE: task_due,
@@ -271,6 +385,9 @@ RULES = {
     Agent.TRANSFER: transfer,
     Agent.HQ_AGENDA: hq_agenda,
     Agent.SHORTAGE_STORY: shortage_story,
+    Agent.SUPPLIER_DEAL: supplier_deal,
+    Agent.RECIPE_UPDATE: recipe_update,
+    Agent.CHECK_WATCH: check_watch,
 }
 
 

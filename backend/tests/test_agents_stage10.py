@@ -908,7 +908,7 @@ def test_the_model_writes_the_hqs_notes_only_with_the_facts_numbers(
         good = "«Сырный дом», по договору (п. ___) цена от 500 ₽ до 540 ₽ за кг; просим вернуть 540 ₽."
         ok = FakeModel()
         ok.replies += [_model(good)]
-        assert write(ok)("supplier_claim", claim.facts, claim.text) == (good, 2)
+        assert write(ok)("supplier_claim", claim.facts, claim.text) == (good, 3)
         more = FakeModel()
         more.replies += [_model("Передайте 6 кг пасты из «Сеть А A2» до 20.10.")] * 2
         assert write(more)("transfer", move.facts, move.text) is None

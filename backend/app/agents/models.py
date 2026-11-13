@@ -29,6 +29,9 @@ class Agent(StrEnum):
     SUPPLIER_CLAIM = "supplier_claim"  # № 3: a claim or a request to a supplier about prices (to the HQ)
     TRANSFER = "transfer"  # № 5: move stock from a restaurant that has it to one that runs out (to the HQ)
     HQ_AGENDA = "hq_agenda"  # № 8: the agenda of the HQ's weekly meeting (the network, no restaurant)
+    SUPPLIER_DEAL = "supplier_deal"  # № 4: one price and a discount on volume from a supplier (to the HQ)
+    RECIPE_UPDATE = "recipe_update"  # № 6: a recipe card the whole network overspends (to the HQ, the chef)
+    CHECK_WATCH = "check_watch"  # № 10: how a running check goes and what may spoil it; its result (HQ)
 
 
 class Audience(StrEnum):
