@@ -172,6 +172,8 @@ export type RestaurantRow = S.RestaurantRowOut;
 export type Badges = S.BadgesOut;
 export type ChatAnswer = S.AnswerOut;
 export type HeadReport = S.HeadReportOut;
+export type MenuMatrix = S.MenuMatrixOut;
+export type MenuDish = S.MenuDishOut;
 export type FindingBoard = S.BoardOut;
 
 export interface VerificationStep {

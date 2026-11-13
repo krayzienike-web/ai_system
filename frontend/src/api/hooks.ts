@@ -35,6 +35,7 @@ import type {
   FindingSources,
   FindingBoard,
   HeadReport,
+  MenuMatrix,
   NetworkOverview,
   RestaurantRow,
   RestaurantWeek,
@@ -479,6 +480,12 @@ export const useHeadReport = (period: PeriodChoice) =>
   useQuery({
     queryKey: ["report", period],
     queryFn: () => api<HeadReport>(`/reports/head?${periodQuery(period)}`),
+  });
+
+export const useMenuMatrix = (restaurantId: string | null) =>
+  useQuery({
+    queryKey: ["menu-matrix", restaurantId ?? "net"],
+    queryFn: () => api<MenuMatrix>(restaurantId ? `/reports/menu?restaurant_id=${restaurantId}` : "/reports/menu"),
   });
 
 export const useChatSuggestions = () =>

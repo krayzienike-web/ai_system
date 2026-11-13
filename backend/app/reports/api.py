@@ -1,14 +1,17 @@
 from datetime import date
 from decimal import Decimal
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy import select
 
+from app.analytics import menu, params
+from app.analytics.facts import load_facts
 from app.core import words
 from app.core.deps import SessionDep, require
+from app.core.errors import NotFoundError
 from app.core.period import TodayDep
 from app.experiments.api import CheckOut, checks_out
 from app.experiments.models import Experiment
@@ -114,4 +117,59 @@ def _trend_answer(trend: overview.Trend, now: int, before: int) -> str:
     return (
         f"За {trend.span} найденный потенциал {moved} {figures} в месяц, открытых находок — {now} "
         f"(было {before})."
+    )
+
+
+# ------------------------------------------------------------------ menu engineering (docs/12)
+
+
+class MenuDishOut(BaseModel):
+    code: str
+    name: str
+    price: Decimal
+    cost: Decimal
+    margin: Decimal
+    food_cost: Decimal  # cost / price, 0.3150 = 31,5 %
+    portions_month: Decimal
+    share: Decimal  # of the category's portions
+    quadrant: Literal["star", "plowhorse", "puzzle", "dog"]
+
+
+class MenuCategoryOut(BaseModel):
+    name: str
+    margin: Decimal
+    fair_share: Decimal
+    popular_from: Decimal
+    dishes: list[MenuDishOut]
+
+
+class MenuMatrixOut(BaseModel):
+    since: date | None
+    until: date | None
+    restaurant_id: UUID | None  # popularity of one restaurant; prices and cards are the network's
+    categories: list[MenuCategoryOut]
+    not_counted: list[str]
+
+
+@router.get("/reports/menu")
+def get_menu_matrix(ctx: CanCompare, session: SessionDep, restaurant_id: UUID | None = None) -> MenuMatrixOut:
+    """Popularity × margin of every dish by category (the HQ: menu prices are the network's)."""
+    if restaurant_id is not None and session.get(Restaurant, restaurant_id) is None:
+        raise NotFoundError("Ресторан не найден")
+    m = menu.matrix(load_facts(session), params.load(session), restaurant_id)
+    return MenuMatrixOut(
+        since=m.since,
+        until=m.until,
+        restaurant_id=restaurant_id,
+        categories=[
+            MenuCategoryOut(
+                name=c.name,
+                margin=c.margin,
+                fair_share=c.fair_share,
+                popular_from=c.popular_from,
+                dishes=[MenuDishOut(**vars(d)) for d in c.dishes],
+            )
+            for c in m.categories
+        ],
+        not_counted=m.not_counted,
     )

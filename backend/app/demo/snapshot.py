@@ -96,6 +96,10 @@ def record(client: TestClient, email: str) -> dict[str, Any]:
             findings += get(f"/findings?review={status}") or []
         for c in answers.get("/checks", []):
             get(f"/checks/{c['id']}")
+        # Menu engineering (stage 11): the network's and each restaurant's popularity.
+        get("/reports/menu")
+        for r in answers["/restaurants"]:
+            get(f"/reports/menu?restaurant_id={r['id']}")
     seen = set()
     for f in findings:
         if f["id"] in seen:

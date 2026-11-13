@@ -668,6 +668,34 @@ export interface Me {
   must_change_password: boolean;
 }
 
+export interface MenuCategoryOut {
+  name: string;
+  margin: string;
+  fair_share: string;
+  popular_from: string;
+  dishes: MenuDishOut[];
+}
+
+export interface MenuDishOut {
+  code: string;
+  name: string;
+  price: string;
+  cost: string;
+  margin: string;
+  food_cost: string;
+  portions_month: string;
+  share: string;
+  quadrant: "star" | "plowhorse" | "puzzle" | "dog";
+}
+
+export interface MenuMatrixOut {
+  since: string | null;
+  until: string | null;
+  restaurant_id: string | null;
+  categories: MenuCategoryOut[];
+  not_counted: string[];
+}
+
 export interface MetricView {
   label: string;
   value: string;

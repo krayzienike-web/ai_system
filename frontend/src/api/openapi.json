@@ -4215,6 +4215,164 @@
     "title": "Me",
     "type": "object"
    },
+   "MenuCategoryOut": {
+    "properties": {
+     "dishes": {
+      "items": {
+       "$ref": "#/components/schemas/MenuDishOut"
+      },
+      "title": "Dishes",
+      "type": "array"
+     },
+     "fair_share": {
+      "title": "Fair Share",
+      "type": "string"
+     },
+     "margin": {
+      "title": "Margin",
+      "type": "string"
+     },
+     "name": {
+      "title": "Name",
+      "type": "string"
+     },
+     "popular_from": {
+      "title": "Popular From",
+      "type": "string"
+     }
+    },
+    "required": [
+     "name",
+     "margin",
+     "fair_share",
+     "popular_from",
+     "dishes"
+    ],
+    "title": "MenuCategoryOut",
+    "type": "object"
+   },
+   "MenuDishOut": {
+    "properties": {
+     "code": {
+      "title": "Code",
+      "type": "string"
+     },
+     "cost": {
+      "title": "Cost",
+      "type": "string"
+     },
+     "food_cost": {
+      "title": "Food Cost",
+      "type": "string"
+     },
+     "margin": {
+      "title": "Margin",
+      "type": "string"
+     },
+     "name": {
+      "title": "Name",
+      "type": "string"
+     },
+     "portions_month": {
+      "title": "Portions Month",
+      "type": "string"
+     },
+     "price": {
+      "title": "Price",
+      "type": "string"
+     },
+     "quadrant": {
+      "enum": [
+       "star",
+       "plowhorse",
+       "puzzle",
+       "dog"
+      ],
+      "title": "Quadrant",
+      "type": "string"
+     },
+     "share": {
+      "title": "Share",
+      "type": "string"
+     }
+    },
+    "required": [
+     "code",
+     "name",
+     "price",
+     "cost",
+     "margin",
+     "food_cost",
+     "portions_month",
+     "share",
+     "quadrant"
+    ],
+    "title": "MenuDishOut",
+    "type": "object"
+   },
+   "MenuMatrixOut": {
+    "properties": {
+     "categories": {
+      "items": {
+       "$ref": "#/components/schemas/MenuCategoryOut"
+      },
+      "title": "Categories",
+      "type": "array"
+     },
+     "not_counted": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Not Counted",
+      "type": "array"
+     },
+     "restaurant_id": {
+      "anyOf": [
+       {
+        "format": "uuid",
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Restaurant Id"
+     },
+     "since": {
+      "anyOf": [
+       {
+        "format": "date",
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Since"
+     },
+     "until": {
+      "anyOf": [
+       {
+        "format": "date",
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Until"
+     }
+    },
+    "required": [
+     "since",
+     "until",
+     "restaurant_id",
+     "categories",
+     "not_counted"
+    ],
+    "title": "MenuMatrixOut",
+    "type": "object"
+   },
    "MetricView": {
     "properties": {
      "benchmark": {
@@ -10394,6 +10552,62 @@
      }
     ],
     "summary": "Get Head Report",
+    "tags": [
+     "reports"
+    ]
+   }
+  },
+  "/api/reports/menu": {
+   "get": {
+    "description": "Popularity × margin of every dish by category (the HQ: menu prices are the network's).",
+    "operationId": "get_menu_matrix_api_reports_menu_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "restaurant_id",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "format": "uuid",
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Restaurant Id"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/MenuMatrixOut"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Menu Matrix",
     "tags": [
      "reports"
     ]

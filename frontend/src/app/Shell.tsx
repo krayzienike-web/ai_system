@@ -20,6 +20,7 @@ import {
   MoreHorizontal,
   type LucideIcon,
   Newspaper,
+  UtensilsCrossed,
   Settings,
   ShieldCheck,
   Sparkles,
@@ -111,6 +112,7 @@ const HQ_NAV: NavItem[] = [
     Icon: Building2,
   },
   { to: "/tasks", title: "Задачи сети", short: "Задачи", Icon: ListChecks },
+  { to: "/menu", title: "Меню", short: "Меню", Icon: UtensilsCrossed },
   { to: "/digest", title: "Сводки", short: "Сводки", Icon: Newspaper },
   {
     to: "/report",

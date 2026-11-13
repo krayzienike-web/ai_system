@@ -40,6 +40,7 @@ const NewCheckPage = screen(() => import("./app/hq/Checks"), "NewCheckPage");
 const DecisionsPage = screen(() => import("./app/hq/Decisions"), "DecisionsPage");
 const NetworkPage = screen(() => import("./app/hq/Network"), "NetworkPage");
 const ReportPage = screen(() => import("./app/hq/Report"), "ReportPage");
+const MenuPage = screen(() => import("./app/hq/Menu"), "MenuPage");
 const ReviewPage = screen(() => import("./app/hq/Review"), "ReviewPage");
 const ReviewFindingPage = screen(() => import("./app/hq/Review"), "ReviewFindingPage");
 const RestaurantsPage = screen(() => import("./app/hq/Restaurants"), "RestaurantsPage");
@@ -180,6 +181,11 @@ const reportRoute = createRoute({
   path: "/report",
   component: hqOnly(ReportPage),
 });
+const menuRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/menu",
+  component: hqOnly(MenuPage),
+});
 const reviewRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/review",
@@ -219,6 +225,7 @@ const routeTree = rootRoute.addChildren([
     restaurantsRoute,
     restaurantRoute,
     reportRoute,
+    menuRoute,
     reviewRoute,
     reviewFindingRoute,
     settingsRoute,
