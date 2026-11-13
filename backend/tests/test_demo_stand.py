@@ -30,6 +30,7 @@ def settings_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[Env]:
 
 
 STAGE_10 = {"shortage_story", "supplier_claim", "transfer", "hq_agenda"}
+STAGE_11 = {"supplier_deal", "recipe_update", "check_watch"}
 
 
 def test_the_stand_lives_on_the_demos_today(settings_env: Env) -> None:
@@ -89,16 +90,25 @@ def test_the_rebuild_brings_the_demo_network_back_as_on_the_first_day(owner_engi
         notes = s.execute(
             select(AgentNote, Restaurant.code).outerjoin(Restaurant, Restaurant.id == AgentNote.restaurant_id)
         ).all()
+        # TC-AG-44 (stage 11): the running check of cheese, the fries card, two suppliers' letters.
         assert sorted((n.agent, code or "", n.for_date, n.status) for n, code in notes) == [
+            ("check_watch", "", date(2026, 10, 19), "new"),
             ("data_check", "R09", cli.DEMO_TODAY, "new"),
             ("hq_agenda", "", date(2026, 10, 19), "new"),
             ("inventory_prep", "R01", cli.DEMO_TODAY + timedelta(days=2), "new"),
+            ("recipe_update", "", date(2026, 10, 1), "new"),
             ("shortage_story", "R01", date(2026, 10, 1), "new"),
             ("supplier_claim", "", date(2026, 10, 18), "new"),
+            ("supplier_deal", "", date(2026, 10, 18), "new"),
+            ("supplier_deal", "", date(2026, 10, 18), "new"),
             ("task_stuck", "R03", date(2026, 10, 17), "new"),
             ("transfer", "R04", cli.DEMO_TODAY, "new"),
         ]
-        assert {n.audience for n, _ in notes if n.agent in STAGE_10} == {"hq"}
+        assert {n.audience for n, _ in notes if n.agent in STAGE_10 | STAGE_11} == {"hq"}
+        assert sorted(n.facts["supplier"] for n, _ in notes if n.agent == "supplier_deal") == [
+            "Молочный двор",
+            "Сырный дом",
+        ]
         (claim,) = [n for n, _ in notes if n.agent == "supplier_claim"]
         assert claim.facts["supplier"] == "Северная рыба" and claim.facts["kind"] == "growth"
         (move,) = [n for n, _ in notes if n.agent == "transfer"]

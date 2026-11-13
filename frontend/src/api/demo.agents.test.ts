@@ -146,4 +146,25 @@ describe("the agents' notes in the prototype", () => {
     expect([sent.status, sent.result_task_id]).toEqual(["accepted", null]);
     expect(get<ApiTask[]>("/tasks", ADMIN).length).toBe(tasksBefore + 2);
   });
+
+  // Stage 11 (TC-UI-45): the letter to a supplier, the note to the chef and the check's progress — the HQ's.
+  it("shows the HQ the stage 11 notes: letters to send, a check to open; the director none of them", () => {
+    const notes = get<AgentNote[]>("/agents/notes", ADMIN);
+    const deals = notes.filter((n) => n.agent === "supplier_deal");
+    expect(deals.map((n) => n.title).sort()).toEqual([
+      "Переговоры с «Молочный двор»: единая цена для сети",
+      "Переговоры с «Сырный дом»: единая цена для сети",
+    ]);
+    const recipe = note(ADMIN, "recipe_update");
+    const watch = note(ADMIN, "check_watch");
+    expect([recipe.action, deals[0]!.action, watch.action]).toEqual(["claim", "claim", null]);
+    expect(watch.check_id).toBeTruthy();
+    expect(get<unknown>(`/checks/${watch.check_id}`, ADMIN)).toBeTruthy();
+    for (const n of [recipe, watch, ...deals]) expect(n.restaurant_id).toBeNull();
+    const director = get<AgentNote[]>("/agents/notes", DIRECTOR).map((n) => n.agent);
+    expect(director).not.toContain("supplier_deal");
+    expect(status(() => post(`/agents/notes/${recipe.id}/accept`, DIRECTOR))).toBe(404);
+    expect(status(() => post(`/agents/notes/${watch.id}/accept`, ADMIN))).toBe(422);
+    expect(post<AgentNote>(`/agents/notes/${recipe.id}/accept`, ADMIN).status).toBe("accepted");
+  });
 });

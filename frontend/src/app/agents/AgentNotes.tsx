@@ -9,8 +9,11 @@ import {
   FileSearch,
   Hourglass,
   ListChecks,
+  Handshake,
   Mail,
+  NotebookPen,
   Sparkles,
+  Timer,
 } from "lucide-react";
 import { useId, useRef, useState } from "react";
 
@@ -31,6 +34,9 @@ const ICON = {
   supplier_claim: Mail,
   transfer: ArrowLeftRight,
   hq_agenda: ListChecks,
+  supplier_deal: Handshake,
+  recipe_update: NotebookPen,
+  check_watch: Timer,
 } as const;
 
 /** What the main button says and what it reports, by what the note proposes. */
@@ -44,7 +50,12 @@ const ACTION = {
     label: () => "Поставить задачи",
     done: () => "Задачи поставлены: директора обоих ресторанов увидят их в «Задачах», а вы — в «Задачах сети»",
   },
-  claim: { label: () => "Отметить: отправлено", done: () => "Отметили: письмо отправлено" },
+  claim: {
+    label: () => "Отметить: отправлено",
+    // A note to the chef (stage 11) is handed over, not mailed to a supplier.
+    done: (n: AgentNote) =>
+      n.agent === "recipe_update" ? "Отметили: записка передана шеф-технологу" : "Отметили: письмо отправлено",
+  },
 } as const;
 
 const SHOWN = 5; // longer lists open on «Показать все»
@@ -84,7 +95,7 @@ export function NoteCard({ note, hq, onAnswered }: { note: AgentNote; hq: boolea
     // No clipboard outside a secure page or in some web views: say so instead of failing silently (review, p. 4)
     const writing = navigator.clipboard?.writeText([note.text, "", ...note.items].join("\n")); // with the invoices
     (writing ?? Promise.reject(new Error("no clipboard")))
-      .then(() => notify("Текст письма скопирован"))
+      .then(() => notify(note.agent === "recipe_update" ? "Текст записки скопирован" : "Текст письма скопирован"))
       .catch(() => notify("Не получилось скопировать — выделите текст вручную"));
   };
   // Each button names its note for a screen reader: «Скрыть» of which of the three?
@@ -135,7 +146,7 @@ export function NoteCard({ note, hq, onAnswered }: { note: AgentNote; hq: boolea
             <div className="mt-3 flex flex-wrap items-center gap-2">
               {note.action === "claim" && (
                 <Button size="sm" aria-describedby={titleId} onClick={copy}>
-                  Скопировать письмо
+                  {note.agent === "recipe_update" ? "Скопировать записку" : "Скопировать письмо"}
                 </Button>
               )}
               {may && action && answerButton("accept", "primary", action.label(note))}
@@ -145,6 +156,16 @@ export function NoteCard({ note, hq, onAnswered }: { note: AgentNote; hq: boolea
                 </Link>
               )}
               {note.agent === "shortage_story" && (
+                <Link to="/findings" className="text-sm font-medium underline">
+                  Открыть находки
+                </Link>
+              )}
+              {note.agent === "check_watch" && note.check_id && (
+                <Link to="/checks/$checkId" params={{ checkId: note.check_id }} className="text-sm font-medium underline">
+                  Открыть проверку
+                </Link>
+              )}
+              {note.agent === "recipe_update" && (
                 <Link to="/findings" className="text-sm font-medium underline">
                   Открыть находки
                 </Link>

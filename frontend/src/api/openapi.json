@@ -4579,7 +4579,10 @@
        "shortage_story",
        "supplier_claim",
        "transfer",
-       "hq_agenda"
+       "hq_agenda",
+       "supplier_deal",
+       "recipe_update",
+       "check_watch"
       ],
       "title": "Agent",
       "type": "string"
@@ -4591,6 +4594,18 @@
       ],
       "title": "Audience",
       "type": "string"
+     },
+     "check_id": {
+      "anyOf": [
+       {
+        "format": "uuid",
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Check Id"
      },
      "for_date": {
       "format": "date",
@@ -4710,6 +4725,7 @@
      "action_due_on",
      "action_title",
      "action_tasks",
+     "check_id",
      "source",
      "status",
      "result_task_id"
