@@ -5,7 +5,17 @@ import { describe, expect, it } from "vitest";
 import { ApiError } from "./client";
 import { board, demoRequest } from "./demo";
 import snapshot from "./demo/snapshot.json";
-import type { ApiFinding, ApiTask, Check, Digest, Disagreement, EngineParam, ImportBatch, Restaurant } from "./types";
+import type {
+  ApiFinding,
+  ApiTask,
+  Check,
+  Digest,
+  Disagreement,
+  EngineParam,
+  ImportBatch,
+  MenuMatrix,
+  Restaurant,
+} from "./types";
 
 const ADMIN = "admin@demo.local";
 const ANALYST = "analyst@demo.local";
@@ -141,6 +151,21 @@ describe("demo isolation", () => {
     const batch = await upload(other, ADMIN);
     expect(status(() => send(`/imports/${batch.id}/publish`, DIRECTOR, "POST"))).toBe(404);
     expect(get<ImportBatch[]>("/imports", DIRECTOR).map((b) => b.id)).not.toContain(batch.id);
+  });
+});
+
+describe("«Меню» in the prototype keeps the server's rules (TC-AN-61, test engineer, end of stage 11)", () => {
+  it("gives the matrix to the HQ, 403 to a director, and an unknown restaurant is not found", () => {
+    const hq = get<MenuMatrix>("/reports/menu", ADMIN);
+    expect(hq.categories.length).toBeGreaterThan(0);
+    expect(hq.restaurant_id).toBeNull();
+    const one = get<Restaurant[]>("/restaurants", ADMIN)[0]!;
+    expect(get<MenuMatrix>(`/reports/menu?restaurant_id=${one.id}`, ANALYST).restaurant_id).toBe(one.id);
+    for (const who of ["director1@demo.local", "director3@demo.local"]) {
+      expect(status(() => get("/reports/menu", who)), who).toBe(403);
+      expect(status(() => get(`/reports/menu?restaurant_id=${r01().id}`, who)), who).toBe(403);
+    }
+    expect(status(() => get("/reports/menu?restaurant_id=00000000-0000-0000-0000-000000000000", ADMIN))).toBe(404);
   });
 });
 

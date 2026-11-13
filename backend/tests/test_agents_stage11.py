@@ -27,6 +27,7 @@ from app.imports.models import ImportBatch
 from app.insights.models import Finding
 from app.main import app
 from app.operations.models import Receipt, Sale
+from app.tenancy.models import Restaurant
 from tests.conftest import Network, login
 
 TODAY = date(2026, 10, 20)
@@ -287,8 +288,8 @@ def test_a_supplier_with_different_prices_gets_a_letter_for_the_network(
 
 
 def test_no_letter_under_the_threshold_and_a_new_one_next_month(world: World, owner_engine: Engine) -> None:
-    """TC-AG-38: the prices equal — nothing; dismissed this month, the note comes back with the next month's
-    invoices (a new key)."""
+    """TC-AG-38: the prices equal — nothing. (Dismissed this month, back next month —
+    `test_a_dismissed_letter_waits_for_next_month`.)"""
     with Session(owner_engine) as s, s.begin():
         for r in s.execute(select(Receipt).where(Receipt.product_id == world.cream)).scalars():
             r.amount = r.qty * 360
@@ -559,3 +560,313 @@ def test_a_day_behind_is_not_a_stopped_export(world: World, owner_engine: Engine
     service.run_all(TODAY)
     run = next(n for n in _notes(owner_engine, "check_watch") if n.facts["state"] == "running")
     assert [x["restaurant"] for x in run.facts["stopped"]] == ["Сеть А A3"]
+
+
+# ------------------------------------------------------------------ test engineer, end of stage 11
+
+
+def _supplier(
+    s: Session, world: World, code: str, name: str, products: list[tuple[str, str, str, str]]
+) -> None:
+    """A supplier selling each product to A1, A2 and A3: (product code, A1's, A2's and A3's sum for 100 pcs)
+    on 10.09, inside the window."""
+    t = world.tenant
+    sup = Supplier(tenant_id=t, code=code, name=name)
+    s.add(sup)
+    s.flush()
+    batch = {
+        r: s.execute(select(Receipt.import_batch_id).where(Receipt.restaurant_id == r)).scalars().first()
+        for r in (world.a1, world.a2, world.a3)
+    }
+    for pcode, *sums in products:
+        p = Product(tenant_id=t, code=pcode, name=f"Товар {pcode}", base_unit="pcs")
+        s.add(p)
+        s.flush()
+        for r, amount in zip((world.a1, world.a2, world.a3), sums, strict=True):
+            s.add(
+                Receipt(
+                    tenant_id=t,
+                    restaurant_id=r,
+                    import_batch_id=batch[r],
+                    day=date(2026, 9, 10),
+                    doc_no="",
+                    supplier_id=sup.id,
+                    product_id=p.id,
+                    qty=Decimal(100),
+                    amount=Decimal(amount),
+                )
+            )
+
+
+def test_a_letter_lists_six_products_and_the_three_best_suppliers(world: World, owner_engine: Engine) -> None:
+    """TC-AG-45: «Бакалея» sells eight products, each saving 500 ₽ a month or more — six are listed (the
+    largest first), «Еще товаров с разной ценой: 2», the total counts all eight. Of four suppliers worth a
+    letter only the three with the largest saving get one."""
+    with Session(owner_engine) as s, s.begin():
+        # G0…G7: A1 pays 20 + n ₽ a piece, A2 and A3 10 ₽ (the median): A1 saves (10 + n) × 100 × 30 / 56.
+        _supplier(
+            s, world, "S5", "Бакалея", [(f"G{n}", str(2000 + 100 * n), "1000", "1000") for n in range(8)]
+        )
+        # One product, 100 pcs: A1 pays 110 ₽ against the median 10 — (110 − 10) × 100 × 30 / 56 = 5 357,14.
+        _supplier(s, world, "S6", "Овощи", [("V1", "11000", "1000", "1000")])
+        # (90 − 10) × 100 × 30 / 56 = 4 285,71: the fourth supplier, no letter.
+        _supplier(s, world, "S8", "Специи", [("Z1", "9000", "1000", "1000")])
+    service.run_all(TODAY)
+    notes = _notes(owner_engine, "supplier_deal")
+    by_saving = sorted(notes, key=lambda n: -Decimal(n.facts["saving_month"]))
+    # «Молочный двор» 21 482,14; «Бакалея» Σ (1000 + 100 n) × 30 / 56 = 10 800 × 30 / 56 = 5 785,71; «Овощи».
+    assert [(n.facts["supplier"], n.facts["saving_month"]) for n in by_saving] == [
+        ("Молочный двор", "21482.14"),
+        ("Бакалея", "5785.71"),
+        ("Овощи", "5357.14"),
+    ]
+    f = next(n for n in notes if n.facts["supplier"] == "Бакалея")
+    # G7: 17 ₽ × 100 × 30 / 56 = 910,71 … G2: 12 ₽ × 100 × 30 / 56 = 642,86; G1 (589,29) and G0 (535,71),
+    # also from 500 ₽, are beyond the six.
+    assert [(p["product"], p["saving_month"]) for p in f.facts["products"]] == [
+        ("Товар G7", "910.71"),
+        ("Товар G6", "857.14"),
+        ("Товар G5", "803.57"),
+        ("Товар G4", "750.00"),
+        ("Товар G3", "696.43"),
+        ("Товар G2", "642.86"),
+    ]
+    assert f.facts["products_total"] == 8
+    # A1 Σ (2000 + 100 n) = 18 800, A2 and A3 8 000 each: 34 800 × 30 / 56 = 18 642,857… → 18 642,86;
+    # 1 % — 186,43.
+    assert (f.facts["spend_month"], f.facts["one_pct_month"]) == ("18642.86", "186.43")
+    assert f.items[-2] == "Еще товаров с разной ценой: 2"
+    assert _plain(f.items[-1]) == (
+        "Для переговоров: единая цена по медиане — ≈ 5 786 ₽ в месяц, каждый процент скидки на весь объем — "
+        "≈ 186 ₽ в месяц"
+    )
+    assert "«Товар G7» — от 10,00 ₽ до 27,00 ₽/шт" in f.text and "не выше 10,00 ₽/шт" in f.text
+
+
+def test_a_product_of_two_restaurants_with_a_sum_has_no_median(world: World, owner_engine: Engine) -> None:
+    """TC-AG-46: A3's cream left only as a line without a sum — cream is bought (with a sum) by two
+    restaurants, no median of the network; the eggs' 53,57 ₽ alone is no letter. Invoices dated after today
+    do not move the window."""
+    with Session(owner_engine) as s, s.begin():
+        for r in s.execute(
+            select(Receipt).where(
+                Receipt.product_id == world.cream, Receipt.restaurant_id == world.a3, Receipt.amount > 0
+            )
+        ).scalars():
+            s.delete(r)
+    service.run_all(TODAY)
+    assert _notes(owner_engine, "supplier_deal") == []
+
+
+def test_a_dismissed_letter_waits_for_next_month(
+    client: TestClient, world: World, owner_engine: Engine
+) -> None:
+    """TC-AG-38: «Скрыть» puts the letter away for the month — the next run of the month does not bring it
+    back; with November's invoices it comes back under a new key. An invoice dated after today is not read."""
+    with Session(owner_engine) as s, s.begin():
+        batch = s.execute(select(Receipt.import_batch_id).where(Receipt.restaurant_id == world.a1)).scalar()
+        s.add(  # 25.10, after «today» 20.10: neither the window's end nor a price
+            Receipt(
+                tenant_id=world.tenant,
+                restaurant_id=world.a1,
+                import_batch_id=batch,
+                day=date(2026, 10, 25),
+                doc_no="",
+                supplier_id=world.dairy,
+                product_id=world.cream,
+                qty=Decimal(1),
+                amount=Decimal(100000),
+            )
+        )
+    service.run_all(TODAY)
+    (note,) = _notes(owner_engine, "supplier_deal")
+    assert (note.facts["until"], note.facts["saving_month"]) == ("2026-10-18", "21482.14")
+    hq = login(client, "admin@a.ru")
+    assert client.post(f"/api/agents/notes/{note.id}/dismiss", headers=hq).status_code == 200
+    service.run_all(TODAY + timedelta(days=1))
+    assert [(n.key, n.status) for n in _notes(owner_engine, "supplier_deal")] == [
+        ("supplier_deal:S3:2026-10", "dismissed")
+    ]
+    with Session(owner_engine) as s, s.begin():
+        batches = {
+            r: s.execute(select(Receipt.import_batch_id).where(Receipt.restaurant_id == r)).scalar()
+            for r in (world.a1, world.a2, world.a3)
+        }
+        for r, amount in ((world.a1, "400000"), (world.a2, "360000"), (world.a3, "350000")):
+            s.add(
+                Receipt(
+                    tenant_id=world.tenant,
+                    restaurant_id=r,
+                    import_batch_id=batches[r],
+                    day=date(2026, 11, 10),
+                    doc_no="",
+                    supplier_id=world.dairy,
+                    product_id=world.cream,
+                    qty=Decimal(1000),
+                    amount=Decimal(amount),
+                )
+            )
+    service.run_all(date(2026, 11, 12))
+    by_key = {n.key: n for n in _notes(owner_engine, "supplier_deal")}
+    assert by_key["supplier_deal:S3:2026-10"].status == "dismissed"
+    fresh = by_key["supplier_deal:S3:2026-11"]
+    # The window 16.09–10.11: November's cream (the 1000 l of 01.09 are out) and the 25.10 invoice of A1
+    # (1 l for 100 000 ₽: 101 000 ₽ for 1 001 l, ≈ 100,9 ₽ above the median), the fries of 01.10.
+    assert (fresh.status, fresh.facts["since"], fresh.facts["until"]) == ("new", "2026-09-16", "2026-11-10")
+    (cream,) = fresh.facts["products"]
+    # A1: 500 000 / 1 001 = 499,500… ₽/l, the median 360:
+    # (500 000 − 360 × 1 001) × 30 / 56 = 139 640 × 30 / 56 = 74 807,14.
+    assert cream["high"] == "499.50" and cream["saving_month"] == "74807.14"
+
+
+def _fries_finding(s: Session) -> Finding:
+    return s.execute(select(Finding).where(Finding.key == "M1:net:P11")).scalar_one()
+
+
+def _set(**fields: Any) -> Any:
+    def change(f: Finding) -> None:
+        for k, v in fields.items():
+            setattr(f, k, v)
+
+    return change
+
+
+def _evidence(**ev: Any) -> Any:
+    def change(f: Finding) -> None:
+        f.evidence = {k: v for k, v in {**(f.evidence or {}), **ev}.items() if v is not None}
+
+    return change
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        pytest.param(_evidence(median_share="0.02"), id="median at the allowance: raise 0"),
+        pytest.param(_evidence(median_share="0.01"), id="median below the allowance"),
+        pytest.param(_evidence(median_share=None), id="no median in the evidence"),
+        pytest.param(_evidence(product="P99"), id="a product the network does not have"),
+        pytest.param(_set(status="dismissed"), id="dismissed"),
+        pytest.param(_set(status="resolved"), id="resolved"),
+        pytest.param(_set(review_status="rejected"), id="sent back by the review"),
+    ],
+)
+def test_no_new_norm_without_an_overspend_or_an_open_checked_finding(
+    world: World, owner_engine: Engine, change: Any
+) -> None:
+    """TC-AG-47: the agent proposes a norm only for an open checked M1:net finding whose median is above the
+    allowance (raise_by > 0) and whose product is known."""
+    with Session(owner_engine) as s, s.begin():
+        change(_fries_finding(s))
+    service.run_all(TODAY)
+    assert _notes(owner_engine, "recipe_update") == []
+
+
+def test_a_finding_in_work_still_gets_its_note(world: World, owner_engine: Engine) -> None:
+    """TC-AG-47: «в работе» and «на проверке» are open: the note is there."""
+    with Session(owner_engine) as s, s.begin():
+        _fries_finding(s).status = "in_work"
+    service.run_all(TODAY)
+    assert [n.key for n in _notes(owner_engine, "recipe_update")] == ["recipe_update:M1:net:P11"]
+
+
+def test_a_norm_too_small_to_change_and_a_card_of_the_future(world: World, owner_engine: Engine) -> None:
+    """TC-AG-48: 0,001 kg × 1,0568 = 0,0010568 → 0,001 — the same norm, the dish is not listed and nothing is
+    added to the month; a card that starts after today is not the one in force. Both cards too small — no
+    note."""
+    with Session(owner_engine) as s, s.begin():
+        line = s.execute(
+            select(RecipeLine).where(
+                RecipeLine.menu_item_id == world.dish, RecipeLine.valid_from == date(2026, 1, 1)
+            )
+        ).scalar_one()
+        line.gross_qty = Decimal("0.001")
+        s.add(
+            RecipeLine(
+                tenant_id=world.tenant,
+                menu_item_id=world.dish,
+                product_id=world.fries,
+                gross_qty=Decimal("0.5"),
+                valid_from=date(2026, 12, 1),  # after «today» 20.10
+            )
+        )
+    service.run_all(TODAY)
+    (note,) = _notes(owner_engine, "recipe_update")
+    # only the blank: 0,2 × 1,0568 = 0,21136 → 0,211; (0,211 − 0,2) × 160 = 1,76 ₽
+    assert [(d["name"], d["old"], d["new"], d["cost"]) for d in note.facts["dishes"]] == [
+        ("Заготовка фри", "0.2", "0.211", "1.76")
+    ]
+    assert note.facts["month_cost"] is None  # the blank goes into no dish sold: no sum in the text
+    assert "Себестоимость продаж" not in note.text
+    with Session(owner_engine) as s, s.begin():
+        blank = s.execute(select(RecipeLine).where(RecipeLine.semi_product_id == world.blank)).scalar_one()
+        blank.gross_qty = Decimal("0.001")
+    service.run_all(TODAY)
+    assert [n.status for n in _notes(owner_engine, "recipe_update")] == ["expired"]
+
+
+def _drafts(owner_engine: Engine, world: World, today: date) -> list[Any]:
+    with Session(owner_engine) as s:
+        ids = (world.a1, world.a2, world.a3)
+        rs = sorted((r for r in s.execute(select(Restaurant)).scalars() if r.id in ids), key=lambda r: r.code)
+        return checks.drafts(s, rs, today)
+
+
+def test_a_check_not_started_or_finished_long_ago_says_nothing(world: World, owner_engine: Engine) -> None:
+    """TC-AG-49: a running check that starts after today — no note yet, on its first day «день 1 из 19»; a
+    finished check completed exactly 7 days ago is still news, 8 days ago it is not; completed after today
+    — no result."""
+    with Session(owner_engine) as s, s.begin():
+        run, done = s.get(Experiment, world.run), s.get(Experiment, world.done)
+        assert run is not None and done is not None
+        run.starts_on = TODAY + timedelta(days=1)  # 21.10–08.11: 11 + 8 = 19 days
+        done.completed_on = TODAY - timedelta(days=checks.DONE_DAYS)  # 13.10
+    assert [(d.key, d.facts["state"]) for d in _drafts(owner_engine, world, TODAY)] == [
+        (f"check_watch:{world.done}:done", "done")
+    ]
+    tomorrow = _drafts(owner_engine, world, TODAY + timedelta(days=1))
+    assert [(d.facts["state"], d.facts["day"], d.facts["days"]) for d in tomorrow] == [("running", 1, 19)]
+    with Session(owner_engine) as s, s.begin():
+        done = s.get(Experiment, world.done)
+        assert done is not None
+        done.completed_on = TODAY + timedelta(days=1)
+    assert _drafts(owner_engine, world, TODAY) == []  # a completed check always has a verdict (a constraint)
+
+
+def test_a_check_past_its_end_without_a_product_and_without_sales(world: World, owner_engine: Engine) -> None:
+    """TC-AG-50: a check still running after its last day — «день 4 из 4», not 9; without a measured product
+    no supplier is a risk (A2's «Ферма» is not listed); A3 with no sales since the start —
+    «продаж за время проверки нет»."""
+    with Session(owner_engine) as s, s.begin():
+        run = s.get(Experiment, world.run)
+        assert run is not None
+        run.ends_on, run.metric_product_id = date(2026, 10, 15), None  # 12.10–15.10
+        for sale in s.execute(select(Sale).where(Sale.restaurant_id == world.a3)).scalars():
+            sale.day = date(2026, 10, 11)  # the day before the start
+    service.run_all(TODAY)
+    run_note = next(n for n in _notes(owner_engine, "check_watch") if n.facts["state"] == "running")
+    assert (run_note.facts["day"], run_note.facts["days"]) == (4, 4)
+    assert run_note.facts["new_suppliers"] == [] and run_note.facts["holidays"] == []
+    assert run_note.facts["stopped"] == [{"restaurant": "Сеть А A3", "last": ""}]
+    assert run_note.items == ["Сеть А A3: продаж за время проверки нет"]
+    assert run_note.title == "Проверка «Контрольное взвешивание сливок»: день 4 из 4"
+
+
+def test_the_result_of_a_check_without_an_effect_or_an_interval() -> None:
+    """TC-AG-50: the result in words — no effect measured: the verdict alone; an effect without the interval:
+    no «от … до»."""
+    base = {"state": "done", "title": "Т", "starts_on": "2026-09-07", "ends_on": "2026-10-04", "result": None}
+    _, text, items = texts.by_rules(
+        "check_watch", {**base, "verdict": "inconclusive", "effect": None, "ci_low": None, "ci_high": None}
+    )
+    assert items == []
+    assert text == (
+        "Проверка «Т» (07.09–04.10) закончилась: эффект не доказан — разница могла быть случайной. Что "
+        "делать дальше, решает УК на экране проверки."
+    )
+    _, text, _ = texts.by_rules(
+        "check_watch", {**base, "verdict": "rejected", "effect": "-1500", "ci_low": None, "ci_high": "200"}
+    )
+    assert _plain(text) == (
+        "Проверка «Т» (07.09–04.10) закончилась: изменение не сработало. Эффект ≈ -1 500 ₽ в месяц. Что "
+        "делать дальше, решает УК на экране проверки."
+    )

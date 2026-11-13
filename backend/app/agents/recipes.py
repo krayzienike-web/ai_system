@@ -153,7 +153,8 @@ def _draft(session: Session, net: Network, f: Finding) -> NoteDraft | None:
             ),
             Decimal(0),
         )
-        month = _rub(extra * price * per_month)
+        # No dish sold carries the change (a semi-product no dish uses): no sum, not «≈ 0 ₽» (tester, 13.11).
+        month = _rub(extra * price * per_month) if extra else None
     dishes.sort(key=lambda d: (d["semi"], d["name"], d["code"]))
     restaurants = ev.get("restaurants") or {}
     return NoteDraft(

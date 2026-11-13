@@ -162,8 +162,11 @@ describe("the agents' notes in the prototype", () => {
     expect(get<unknown>(`/checks/${watch.check_id}`, ADMIN)).toBeTruthy();
     for (const n of [recipe, watch, ...deals]) expect(n.restaurant_id).toBeNull();
     const director = get<AgentNote[]>("/agents/notes", DIRECTOR).map((n) => n.agent);
-    expect(director).not.toContain("supplier_deal");
-    expect(status(() => post(`/agents/notes/${recipe.id}/accept`, DIRECTOR))).toBe(404);
+    for (const agent of ["supplier_deal", "recipe_update", "check_watch"]) expect(director).not.toContain(agent);
+    for (const id of [recipe.id, watch.id, deals[0]!.id]) {
+      expect(status(() => post(`/agents/notes/${id}/accept`, DIRECTOR))).toBe(404);
+      expect(status(() => post(`/agents/notes/${id}/dismiss`, DIRECTOR))).toBe(404);
+    }
     expect(status(() => post(`/agents/notes/${watch.id}/accept`, ADMIN))).toBe(422);
     expect(post<AgentNote>(`/agents/notes/${recipe.id}/accept`, ADMIN).status).toBe("accepted");
   });
