@@ -36,6 +36,10 @@ export const kopecks = (value: number) =>
 export const pct = (value: number, digits = 1) =>
   `${value.toLocaleString("ru-RU", { minimumFractionDigits: digits, maximumFractionDigits: digits })}%`;
 
+/** Percentage points, the difference of two shares: 0.5 → "0,5 п.п." */
+export const pp = (value: number) =>
+  `${value.toLocaleString("ru-RU", { minimumFractionDigits: 1, maximumFractionDigits: 1 })} п.п.`;
+
 /** Money in words for people, not accountants: "теряем 38 тыс ₽ в месяц". */
 export const perMonth = (value: number) => `${rub(value)} в месяц`;
 export const lossWords = (value: number) => `теряем ${perMonth(value)}`;

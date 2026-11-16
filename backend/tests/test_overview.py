@@ -747,6 +747,52 @@ def test_restaurants_by_processes_and_the_networks_figures(
     assert Decimal(net["overpay"]) == overpay > 0
 
 
+def test_the_networks_food_cost_against_the_recipes_and_the_target(
+    client: TestClient, network: Network, demo: dict[str, UUID], owner_engine: Engine
+) -> None:
+    """«Фудкост сети» on the HQ's overview (comment of 16.11.2026, TC-UI-47): the actual share, the recipes'
+    share and the network's target on one scale; the gap in points and in rubles a month is the server's —
+    each restaurant's own gap × its revenue over its own count-to-count period, scaled to 30 days."""
+    hq = login(client, "admin@a.ru")
+    fc = client.get("/api/overview/network", headers=hq).json()["food_cost"]
+    with owner_engine.begin() as c:
+        rows = c.execute(
+            text(
+                "SELECT restaurant_id, food_cost_actual, food_cost_theory, revenue,"
+                " food_cost_from, food_cost_to FROM kpi_snapshots WHERE tenant_id = :t"
+            ),
+            {"t": network.a.id},
+        ).all()
+        target = c.execute(
+            text("SELECT food_cost_target_pct FROM norm_settings WHERE tenant_id = :t"), {"t": network.a.id}
+        ).scalar_one_or_none()
+    net = next(r for r in rows if r.restaurant_id is None)
+    assert D(fc["actual"]) == net.food_cost_actual and D(fc["theory"]) == net.food_cost_theory
+    assert D(fc["target"]) == (target if target is not None else D(30)) / 100
+    gap = ((net.food_cost_actual - net.food_cost_theory) * 100).quantize(D("0.1"))
+    assert D(fc["gap_pp"]) == gap
+    # By hand: Σ (actual − theory) × revenue × 30 / days, over the restaurants with a period.
+    month = sum(
+        (
+            (r.food_cost_actual - r.food_cost_theory)
+            * r.revenue
+            * 30
+            / (r.food_cost_to - r.food_cost_from).days
+            for r in rows
+            if r.restaurant_id is not None and r.food_cost_actual is not None and r.food_cost_from
+        ),
+        D(0),
+    )
+    assert D(fc["gap_month"]) == month.quantize(D("1"))
+    side = "выше" if gap > 0 else "ниже" if gap < 0 else "как по"
+    assert fc["verdict"].startswith(side)
+    assert fc["verdict"].endswith(
+        "в пределах цели" if net.food_cost_actual <= D(fc["target"]) else "выше цели"
+    )
+    # A director has no network overview at all (the gap names every restaurant's money).
+    assert client.get("/api/overview/network", headers=login(client, "r01@a.ru")).status_code == 403
+
+
 def test_documents_after_the_stage_4_review(
     client: TestClient, network: Network, demo: dict[str, UUID], owner_engine: Engine
 ) -> None:

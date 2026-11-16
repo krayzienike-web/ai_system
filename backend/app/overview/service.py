@@ -35,6 +35,7 @@ from app.insights.models import Finding, FindingStatus
 from app.insights.money import counted
 from app.insights.service import FindingWork, list_findings
 from app.insights.work import WorkStage
+from app.norms.service import load_norms
 from app.operations.models import InventoryCount, Sale
 from app.overview.models import KpiSnapshot, TrendPoint
 from app.tasks.models import OutcomeVerdict, Task, TaskStatus
@@ -282,6 +283,60 @@ class Network:
     matrix_answer: str
     kpi: "Kpis | None"  # the network's food cost and write-offs (the engine's last snapshot)
     overpay: Decimal  # open purchasing problems: paying suppliers more than needed, ₽ a month
+    food_cost: "FoodCost | None" = None  # the food cost against the recipes and the network's target
+
+
+@dataclass
+class FoodCost:
+    """The network's food cost read three ways (the HQ's overview): what it is, what the recipes say it should
+    be, and the network's target (`Нормы и настройки`, Q4). The gap to the recipes in points and in rubles a
+    month: what the kitchens spend above the cards — the sum of each restaurant's own gap over its own
+    count-to-count period, because the restaurants' periods differ."""
+
+    actual: Decimal
+    theory: Decimal
+    target: Decimal  # a share, 0.30
+    gap_pp: Decimal  # actual − theory, percentage points, one decimal
+    gap_month: Decimal | None  # ₽ a month above the recipes; None when no restaurant's period is known
+    verdict: str  # «выше техкарт, в пределах цели» — the words under the scale
+
+
+def food_cost(session: Session, net: KpiSnapshot | None) -> FoodCost | None:
+    if net is None or net.food_cost_actual is None or net.food_cost_theory is None:
+        return None
+    target = load_norms(session).food_cost_target_pct / 100
+    gap_month: Decimal | None = None
+    rows = session.execute(select(KpiSnapshot).where(KpiSnapshot.restaurant_id.is_not(None))).scalars()
+    for r in rows:
+        if (
+            r.food_cost_actual is None
+            or r.food_cost_theory is None
+            or not r.food_cost_from
+            or not r.food_cost_to
+        ):
+            continue
+        days = (r.food_cost_to - r.food_cost_from).days  # sales of (from, to]: the revenue's days
+        if days <= 0:
+            continue
+        gap_month = (gap_month or ZERO) + (r.food_cost_actual - r.food_cost_theory) * r.revenue * 30 / days
+    gap_pp = ((net.food_cost_actual - net.food_cost_theory) * 100).quantize(
+        Decimal("0.1"), rounding=ROUND_HALF_UP
+    )
+    if gap_pp > 0:
+        verdict = "выше техкарт"
+    elif gap_pp < 0:
+        verdict = "ниже техкарт"
+    else:
+        verdict = "как по техкартам"
+    verdict += ", в пределах цели" if net.food_cost_actual <= target else ", выше цели"
+    return FoodCost(
+        net.food_cost_actual,
+        net.food_cost_theory,
+        target,
+        gap_pp,
+        gap_month.quantize(Decimal("1"), rounding=ROUND_HALF_UP) if gap_month is not None else None,
+        verdict,
+    )
 
 
 def _process_losses(items: list[FindingWork]) -> dict[str, Decimal]:
@@ -415,6 +470,7 @@ def network(session: Session, period: Period, today: date) -> Network:
         matrix_answer=matrix_answer,
         kpi=_kpis(network_kpi),
         overpay=_sum(items, "problem", "purchasing"),
+        food_cost=food_cost(session, network_kpi),
     )
 
 

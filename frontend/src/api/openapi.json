@@ -3281,6 +3281,51 @@
     "title": "FlagOut",
     "type": "object"
    },
+   "FoodCostOut": {
+    "properties": {
+     "actual": {
+      "title": "Actual",
+      "type": "string"
+     },
+     "gap_month": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Gap Month"
+     },
+     "gap_pp": {
+      "title": "Gap Pp",
+      "type": "string"
+     },
+     "target": {
+      "title": "Target",
+      "type": "string"
+     },
+     "theory": {
+      "title": "Theory",
+      "type": "string"
+     },
+     "verdict": {
+      "title": "Verdict",
+      "type": "string"
+     }
+    },
+    "required": [
+     "actual",
+     "theory",
+     "target",
+     "gap_pp",
+     "gap_month",
+     "verdict"
+    ],
+    "title": "FoodCostOut",
+    "type": "object"
+   },
    "FreshnessOut": {
     "properties": {
      "last_date": {
@@ -4441,6 +4486,16 @@
      "findings_awaiting": {
       "title": "Findings Awaiting",
       "type": "integer"
+     },
+     "food_cost": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/FoodCostOut"
+       },
+       {
+        "type": "null"
+       }
+      ]
      },
      "found_count": {
       "title": "Found Count",

@@ -491,6 +491,15 @@ export interface FlagOut {
   note: string;
 }
 
+export interface FoodCostOut {
+  actual: string;
+  theory: string;
+  target: string;
+  gap_pp: string;
+  gap_month: string | null;
+  verdict: string;
+}
+
 export interface FreshnessOut {
   restaurant_id: string;
   template: string;
@@ -725,6 +734,7 @@ export interface NetworkOut {
   matrix_answer: string;
   kpi: KpiOut | null;
   overpay: string;
+  food_cost?: FoodCostOut | null;
 }
 
 export interface NormsIn {

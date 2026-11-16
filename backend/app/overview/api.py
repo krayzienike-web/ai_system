@@ -135,6 +135,15 @@ class MatrixRowOut(BaseModel):
     cells: list[MatrixCellOut]  # in the order of `processes`
 
 
+class FoodCostOut(BaseModel):
+    actual: Decimal
+    theory: Decimal
+    target: Decimal
+    gap_pp: Decimal
+    gap_month: Decimal | None
+    verdict: str
+
+
 class NetworkOut(BaseModel):
     restaurants: int
     losses: Decimal
@@ -155,6 +164,7 @@ class NetworkOut(BaseModel):
     matrix_answer: str
     kpi: KpiOut | None  # the network's food cost and write-offs, as of the engine's last run
     overpay: Decimal  # open purchasing problems, ₽ a month
+    food_cost: FoodCostOut | None = None  # actual against the recipes and the target, the gap in ₽ a month
 
 
 class ProcessOut(BaseModel):
@@ -280,6 +290,7 @@ def get_network(ctx: CanCompare, session: SessionDep, period: PeriodDep, today: 
         matrix_answer=n.matrix_answer,
         kpi=KpiOut(**n.kpi.__dict__) if n.kpi else None,
         overpay=n.overpay,
+        food_cost=FoodCostOut(**n.food_cost.__dict__) if n.food_cost else None,
     )
 
 
