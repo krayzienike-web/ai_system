@@ -184,14 +184,14 @@ describe("the agents' notes in the prototype", () => {
       "Объяснить расхождения инвентаризации 01.10",
     ]);
     expect(mine.items[0]).toMatch(/^Сыр Моцарелла: /);
-    expect(mine.action_checklist).toEqual([expect.stringMatching(/^Объяснить: Сыр Моцарелла — \d+ ₽ сверх допуска$/)]);
+    expect(mine.action_checklist).toEqual([expect.stringMatching(/^Объяснить: Сыр Моцарелла — \d{1,3}(?:\D\d{3})+\s₽ сверх допуска$/)]);
     const hq = get<AgentNote[]>("/agents/notes", ADMIN).filter((n) => n.agent === "count_result");
     expect(hq.map((n) => [n.audience, n.restaurant_id, n.action])).toEqual([["hq", null, null]]);
     const menu = note(ADMIN, "menu_price");
     expect([menu.action, menu.restaurant_id, menu.title]).toEqual([
       "claim",
       null,
-      "Цены меню: Лосось охлажденный подорожал на 39,7%",
+      "Цены меню: «Лосось охлажденный» +39,7% к цене закупки",
     ]);
     expect(get<AgentNote[]>("/agents/notes", DIRECTOR).some((n) => n.agent === "menu_price")).toBe(false);
     expect(status(() => post(`/agents/notes/${menu.id}/accept`, DIRECTOR))).toBe(404);

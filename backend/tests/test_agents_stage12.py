@@ -238,12 +238,14 @@ def test_a_count_gives_the_director_what_to_explain(counts: Counts, owner_engine
         {"kind": "transfers_out", "qty": "5"},
     ]
     assert mine.facts["card_products"] == ["Картофель фри"]
-    assert mine.proposal == {
-        "action": "create_task",
-        "due_on": "2026-10-22",
-        "title": "Объяснить расхождения инвентаризации 01.10",
-        "checklist": ["Объяснить: Сыр — 16000 ₽ сверх допуска"],
-    }
+    proposal = mine.proposal or {}
+    assert (proposal["action"], proposal["due_on"], proposal["title"]) == (
+        "create_task",
+        "2026-10-22",
+        "Объяснить расхождения инвентаризации 01.10",
+    )
+    # The sum as on the card, thousands apart (frontend review of stage 12, p. 2)
+    assert [_plain(x) for x in proposal["checklist"]] == ["Объяснить: Сыр — 16 000 ₽ сверх допуска"]
     assert _plain(mine.items[0]) == (
         "Сыр: 32 кг сверх допуска ≈ 16 000 ₽. С чего начать: по нему уже открыта находка «Перерасход по "
         "техкарте: Сыр»; оформлены ли списания: за период их нет; дошли ли до получателя перемещения: "
@@ -268,7 +270,7 @@ def test_the_hq_gets_where_differences_grew(counts: Counts, owner_engine: Engine
         "Сыр",
         "16000",
     )
-    assert net.title == "Итоги инвентаризаций: расхождения выросли в 1 из 1"
+    assert net.title == "Итоги инвентаризаций: расхождения заметно выросли в 1 из 1"
 
 
 def test_a_finding_without_a_task_is_no_hint(counts: Counts, owner_engine: Engine) -> None:
@@ -324,10 +326,10 @@ def test_the_count_result_through_the_api(client: TestClient, counts: Counts, ow
     with Session(owner_engine) as s:
         task = s.get(Task, UUID(done.json()["result_task_id"]))
         assert task is not None
-        assert (task.title, task.due_on, task.checklist, task.restaurant_id) == (
+        assert (task.title, task.due_on, [_plain(x) for x in task.checklist], task.restaurant_id) == (
             "Объяснить расхождения инвентаризации 01.10",
             date(2026, 10, 22),
-            ["Объяснить: Сыр — 16000 ₽ сверх допуска"],
+            ["Объяснить: Сыр — 16 000 ₽ сверх допуска"],
             counts.a1,
         )
 
@@ -338,6 +340,128 @@ def test_the_count_result_is_the_same_twice(counts: Counts, owner_engine: Engine
     first = {(n.key, n.text, tuple(n.items)) for n in _notes(owner_engine, "count_result")}
     service.run_all(TODAY)
     assert {(n.key, n.text, tuple(n.items)) for n in _notes(owner_engine, "count_result")} == first
+
+
+def _count(
+    owner_engine: Engine, c: Counts, day: date, product: UUID, actual: str, r: UUID | None = None
+) -> None:
+    with Session(owner_engine) as s, s.begin():
+        where = r or c.a1
+        s.add(
+            InventoryCount(
+                tenant_id=c.tenant,
+                restaurant_id=where,
+                import_batch_id=c.batch[where],
+                day=day,
+                product_id=product,
+                book_qty=None,
+                actual_qty=Decimal(actual),
+            )
+        )
+
+
+def test_a_short_recount_neither_hides_the_result_nor_counts_as_within(
+    counts: Counts, owner_engine: Engine
+) -> None:
+    """TC-AG-61 (backend review of stage 12, p. 1): a recount three days after the count is too short to judge
+    — the director keeps the result of 01.10, the HQ's summary still has A1 with its numbers."""
+    for p, actual in ((counts.cheese, "20"), (counts.fries, "0")):
+        _count(owner_engine, counts, date(2026, 10, 4), p, actual)
+    service.run_all(TODAY)
+    notes = [n for n in _notes(owner_engine, "count_result") if n.status == "new"]
+    assert sorted(n.key for n in notes) == ["count_result:A1:2026-10-01", "count_result:net:2026-10-01"]
+    (net,) = [n for n in notes if n.audience == "hq"]
+    assert [(x["code"], x["month"], x["before"]) for x in net.facts["restaurants"]] == [
+        ("A1", "7869", "1721")
+    ]
+
+
+def test_the_summary_says_what_the_director_got(counts: Counts, owner_engine: Engine) -> None:
+    """TC-AG-61 (review, p. 2): the HQ's line says how many products the director has to explain."""
+    service.run_all(TODAY)
+    (net,) = [n for n in _notes(owner_engine, "count_result") if n.audience == "hq"]
+    assert net.facts["restaurants"][0]["director"] == 1 and net.facts["least"] == "3000"
+    assert _plain(net.items[0]).endswith("директору — 1 товар к объяснению")
+    _title, _text, items = texts.by_rules(
+        "count_result",
+        {**net.facts, "restaurants": [{**net.facts["restaurants"][0], "director": 0}]},
+    )
+    assert _plain(items[0]).endswith("директору объяснять нечего: каждый товар меньше 3 000 ₽ в месяц")
+
+
+def test_a_product_received_only_by_transfer_is_priced_by_the_network(
+    counts: Counts, owner_engine: Engine
+) -> None:
+    """TC-AG-62 (review, p. 5): A1 bought no sauce, only got 50 kg from A2 (300 ₽/kg there): 20 kg by the
+    cards, nothing left — 29,6 kg beyond the allowance at the network's price, marked as such."""
+    with Session(owner_engine) as s, s.begin():
+        sauce = Product(tenant_id=counts.tenant, code="P20", name="Соус", base_unit="kg")
+        pasta = MenuItem(tenant_id=counts.tenant, code="M20", name="Паста")
+        s.add_all([sauce, pasta])
+        s.flush()
+        s.add(
+            RecipeLine(
+                tenant_id=counts.tenant,
+                menu_item_id=pasta.id,
+                product_id=sauce.id,
+                gross_qty=Decimal("0.1"),
+                valid_from=date(2025, 1, 1),
+            )
+        )
+        s.add(
+            Receipt(
+                tenant_id=counts.tenant,
+                restaurant_id=counts.a2,
+                import_batch_id=counts.batch[counts.a2],
+                day=date(2026, 9, 1),
+                doc_no="",
+                product_id=sauce.id,
+                qty=Decimal(100),
+                amount=Decimal(30000),
+            )
+        )
+        s.add(
+            Transfer(
+                tenant_id=counts.tenant,
+                restaurant_id=counts.a2,
+                to_restaurant_id=counts.a1,
+                import_batch_id=counts.batch[counts.a2],
+                day=date(2026, 9, 2),
+                product_id=sauce.id,
+                qty=Decimal(50),
+            )
+        )
+        s.add(
+            Sale(
+                tenant_id=counts.tenant,
+                restaurant_id=counts.a1,
+                import_batch_id=counts.batch[counts.a1],
+                day=date(2026, 9, 10),
+                menu_item_id=pasta.id,
+                qty=Decimal(200),
+                revenue=Decimal(1),
+            )
+        )
+        sauce_id = sauce.id
+    for day in (date(2026, 8, 1), date(2026, 10, 1)):
+        _count(owner_engine, counts, day, sauce_id, "0")
+    service.run_all(TODAY)
+    (mine,) = [n for n in _notes(owner_engine, "count_result") if n.audience == "director"]
+    sauce_line = next(p for p in mine.facts["products"] if p["name"] == "Соус")
+    assert (sauce_line["qty"], sauce_line["rub"], sauce_line["network_price"]) == ("29.6", "8880", True)
+    assert "по средней цене сети" in next(i for i in mine.items if i.startswith("Соус"))
+
+
+def test_a_late_answer_names_the_explanation(
+    client: TestClient, counts: Counts, owner_engine: Engine
+) -> None:
+    """TC-AG-54 (review, p. 9): «Создать задачу» after the note's last day says the explanation's deadline
+    passed, not the count's day."""
+    service.run_all(TODAY)
+    (mine,) = [n for n in _notes(owner_engine, "count_result") if n.audience == "director"]
+    app.dependency_overrides[get_today] = lambda: date(2026, 10, 23)
+    r = client.post(f"/api/agents/notes/{mine.id}/accept", headers=login(client, "director1@a.ru"))
+    assert r.status_code == 422 and "Срок объяснения уже прошел" in r.text
 
 
 # ------------------------------------------------------------------ № 14: menu prices
@@ -420,6 +544,71 @@ class Menu:
                 evidence={"product": "P09", "kind": "growth"},
             )
             s.add(growth)
+            # Review of stage 12, p. 6: a dish without a menu price — priced by the till, as M2 does.
+            chef = MenuItem(tenant_id=a.id, code="C", name="Лосось шеф", category="Горячее")
+            # P. 8: a soup whose sauce (a semi-product) got a new card on 12.10: cream 0.1 → 1 l per kg.
+            cream = Product(tenant_id=a.id, code="P04", name="Сливки", base_unit="l")
+            sauce = Product(tenant_id=a.id, code="S1", name="Соус", base_unit="kg", is_semi=True)
+            soup = MenuItem(tenant_id=a.id, code="S", name="Суп", category="Супы", price=Decimal(50))
+            s.add_all([chef, cream, sauce, soup])
+            s.flush()
+            s.add_all(
+                [
+                    RecipeLine(
+                        tenant_id=a.id,
+                        menu_item_id=chef.id,
+                        product_id=salmon.id,
+                        gross_qty=Decimal("0.2"),
+                        valid_from=date(2025, 1, 1),
+                    ),
+                    RecipeLine(
+                        tenant_id=a.id,
+                        menu_item_id=soup.id,
+                        product_id=sauce.id,
+                        gross_qty=Decimal("0.2"),
+                        valid_from=date(2025, 1, 1),
+                    ),
+                    RecipeLine(
+                        tenant_id=a.id,
+                        semi_product_id=sauce.id,
+                        product_id=cream.id,
+                        gross_qty=Decimal("0.1"),
+                        valid_from=date(2025, 1, 1),
+                    ),
+                    RecipeLine(
+                        tenant_id=a.id,
+                        semi_product_id=sauce.id,
+                        product_id=cream.id,
+                        gross_qty=Decimal("1"),
+                        valid_from=date(2026, 10, 12),
+                    ),
+                ]
+            )
+            for day in (date(2026, 6, 30), date(2026, 10, 18)):
+                s.add(
+                    Receipt(
+                        tenant_id=a.id,
+                        restaurant_id=a1,
+                        import_batch_id=batch,
+                        day=day,
+                        doc_no="",
+                        product_id=cream.id,
+                        qty=Decimal(10),
+                        amount=Decimal(1000),
+                    )
+                )
+            for item, sold, revenue in ((chef.id, 28, 28000), (soup.id, 28, 1400)):
+                s.add(
+                    Sale(
+                        tenant_id=a.id,
+                        restaurant_id=a1,
+                        import_batch_id=batch,
+                        day=date(2026, 10, 5),
+                        menu_item_id=item,
+                        qty=Decimal(sold),
+                        revenue=Decimal(revenue),
+                    )
+                )
             s.flush()
             self.growth = growth.id
 
@@ -439,7 +628,8 @@ def test_a_price_rise_lists_the_dishes_pushed_above_the_target(menu: Menu, owner
     assert (price.audience, price.restaurant_id, price.proposal) == ("hq", None, {"action": "claim"})
     f = price.facts
     assert (f["price"], f["price_before"], f["growth_pct"], f["already"]) == ("1600.00", "1000.00", "60.0", 1)
-    assert [d["name"] for d in f["dishes"]] == ["Боул", "Лосось гриль"]
+    assert [d["name"] for d in f["dishes"]] == ["Боул", "Лосось гриль", "Лосось шеф"]
+    assert f["dishes"][2]["price"] == "1000.00"  # 28 000 ₽ for 28 portions (review of stage 12, p. 6)
     grill = f["dishes"][1]
     assert grill == {
         "name": "Лосось гриль",
@@ -459,17 +649,29 @@ def test_a_price_rise_lists_the_dishes_pushed_above_the_target(menu: Menu, owner
         "Лосось гриль: себестоимость 200,00 ₽ → 320,00 ₽, фудкост 20,0% → 32,0% при цели 30,0%. Цена 1 070 ₽ "
         "вместо 1 000 ₽ или лосось в порции 0,200 → 0,187 кг; маржа сейчас теряет ≈ 36 000 ₽ в месяц"
     )
-    assert price.title == "Цены меню: Лосось подорожал на 60,0%"
+    assert price.title == "Цены меню: «Лосось» +60,0% к цене закупки"  # no gender to agree (review, p. 9)
 
 
 def test_a_new_card_is_a_reason_too(menu: Menu, owner_engine: Engine) -> None:
-    """TC-AG-57: a card that started within 28 days of the window's end; no portion to cut is proposed."""
+    """TC-AG-57: a card that started within 28 days of the window's end — the dish's own or its
+    semi-product's (review of stage 12, p. 8); no portion to cut is proposed; a dish already in the note about
+    a price is not repeated in the note about cards (p. 10)."""
     service.run_all(TODAY)
     notes = {n.key: n for n in _notes(owner_engine, "menu_price")}
-    card = notes["menu_price:card:2026-10-10"]
-    assert card.facts["reason"] == "card" and card.for_date == date(2026, 10, 10)
-    assert [(d["name"], d["cut"]) for d in card.facts["dishes"]] == [("Боул", None)]
-    assert card.title == "Цены меню: новые техкарты с 10.10"
+    assert "menu_price:card:2026-10-10" not in notes  # «Боул» is in the salmon's note
+    card = notes["menu_price:card:2026-10-12"]
+    assert card.facts["reason"] == "card" and card.for_date == date(2026, 10, 12)
+    assert [(d["name"], d["cut"], d["cost_before"], d["cost"]) for d in card.facts["dishes"]] == [
+        ("Суп", None, "2.00", "20.00")
+    ]
+    assert card.title == "Цены меню: новые техкарты с 12.10"
+    with Session(owner_engine) as s, s.begin():
+        f = s.get(Finding, menu.growth)
+        assert f is not None
+        f.review_status = "pending"
+    service.run_all(TODAY)
+    alone = {n.key: n for n in _notes(owner_engine, "menu_price") if n.status == "new"}
+    assert [d["name"] for d in alone["menu_price:card:2026-10-10"].facts["dishes"]] == ["Боул"]
 
 
 def test_no_note_without_a_checked_open_rise(menu: Menu, owner_engine: Engine) -> None:
@@ -481,7 +683,8 @@ def test_no_note_without_a_checked_open_rise(menu: Menu, owner_engine: Engine) -
             f.review_status, f.status = review, status
         service.run_all(TODAY)
         assert [n.key for n in _notes(owner_engine, "menu_price") if n.status == "new"] == [
-            "menu_price:card:2026-10-10"
+            "menu_price:card:2026-10-10",
+            "menu_price:card:2026-10-12",
         ]
 
 
@@ -493,7 +696,7 @@ def test_menu_prices_are_the_hqs_only(client: TestClient, menu: Menu, owner_engi
         assert [n for n in seen if n["agent"] == "menu_price"] == []
     admin = login(client, "admin@a.ru")
     hq = [n for n in client.get("/api/agents/notes", headers=admin).json() if n["agent"] == "menu_price"]
-    assert len(hq) == 2
+    assert len(hq) == 2  # the salmon and the soup's sauce
     assert (
         client.post(
             f"/api/agents/notes/{hq[0]['id']}/accept", headers=login(client, "director1@a.ru")
@@ -531,7 +734,8 @@ def test_the_rules_texts_of_menu_prices() -> None:
     assert title == "Цены меню: новые техкарты с 10.10"
     assert _plain(text).startswith("С 10.10 действуют новые техкарты, и фудкост 1 блюда ушел выше цели")
     assert " или " not in items[0]
-    assert items[1] == "Еще блюд выше цели и до этого: 2 — они в находках «Фудкост выше целевого»"
+    # Not every such dish has a finding (M2's threshold): the line promises none (review of stage 12, p. 7)
+    assert items[1] == "Еще блюд выше цели и до этого: 2"
 
 
 def test_a_menu_without_purchases_says_nothing(network: Network, owner_engine: Engine) -> None:

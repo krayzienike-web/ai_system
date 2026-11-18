@@ -564,6 +564,8 @@
 | TC-AG-58 | Этап 12, № 14: рост цены не проверен или находка закрыта — записки нет; нет закупок — нет окна | `tests/test_agents_stage12.py::test_no_note_without_a_checked_open_rise`, `…::test_a_menu_without_purchases_says_nothing` | ✅ |
 | TC-AG-59 | Этап 12, изоляция: цены меню видит только УК своей сети; «Отправлено» — решение без задачи | `tests/test_agents_stage12.py::test_menu_prices_are_the_hqs_only` | ✅ |
 | TC-AG-60 | Этап 12, демо-сеть: итоги 01.10 — R01 моцарелла, R03 лосось, сводка УК; «Лосось на гриле» выше цели после роста лосося; ничего лишнего | `tests/test_demo_stand.py::test_the_rebuild_brings_the_demo_network_back_as_on_the_first_day` | ✅ |
+| TC-AG-61 | Ревью этапа 12: короткий пересчет (3 дня) не стирает итоги и не делает ресторан «в допуске»; в сводке УК — сколько товаров у директора к объяснению; порог — `M1_MATERIALITY_RUB_MONTH` | `tests/test_agents_stage12.py::test_a_short_recount_neither_hides_the_result_nor_counts_as_within`, `…::test_the_summary_says_what_the_director_got` | ✅ |
+| TC-AG-62 | Ревью этапа 12: товар, полученный только перемещением, — по средней цене сети с пометкой; поздний ответ — «Срок объяснения уже прошел» | `tests/test_agents_stage12.py::test_a_product_received_only_by_transfer_is_priced_by_the_network`, `…::test_a_late_answer_names_the_explanation` | ✅ |
 
 ### Эксплуатация пилота (OPS, этап 8, шаг 7)
 

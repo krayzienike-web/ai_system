@@ -279,7 +279,11 @@ def accept(session: Session, ctx: AccessContext, note_id: UUID, *, today: date) 
         proposal = note.proposal or {}
         due = date.fromisoformat(proposal["due_on"])
         if due < today:
-            raise InvalidError("День пересчета уже прошел")
+            raise InvalidError(
+                "Срок объяснения уже прошел"
+                if note.agent == Agent.COUNT_RESULT
+                else "День пересчета уже прошел"
+            )
         (task,) = tasks.create_tasks(
             session,
             ctx,

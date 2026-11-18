@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session
 
 from app.agents.drafts import NoteDraft
 from app.agents.models import Agent, Audience
-from app.analytics import menu
+from app.analytics import menu, params
 from app.analytics.facts import Facts, ReceiptRow
 from app.analytics.m2 import portion_cost, suggested_price, unit_prices
 from app.analytics.params import DEFAULT, EngineParams
@@ -57,6 +57,7 @@ class Window:
     cards: dict[UUID, list[Line]]  # in force at the end of the last window
     cards_before: dict[UUID, list[Line]]
     portions_month: dict[UUID, Decimal]  # each dish's portions a month over the last window
+    price: dict[UUID, Decimal]  # the menu price, or the till's when the menu has none — as M2 (review, p. 6)
 
 
 def window(facts: Facts, cfg: EngineParams = DEFAULT) -> Window | None:
@@ -67,9 +68,11 @@ def window(facts: Facts, cfg: EngineParams = DEFAULT) -> Window | None:
     before_end = end - timedelta(days=cfg.M2_COMPARE_DAYS)
     before_start = before_end - timedelta(days=cfg.M2_WINDOW_DAYS - 1)
     portions: dict[UUID, Decimal] = defaultdict(Decimal)
+    revenue: dict[UUID, Decimal] = defaultdict(Decimal)
     for s in facts.sales:
         if start <= s.day <= end:
             portions[s.menu_item] += s.qty
+            revenue[s.menu_item] += s.revenue
     per_month = MONTH_DAYS / cfg.M2_WINDOW_DAYS
     return Window(
         end=end,
@@ -78,6 +81,11 @@ def window(facts: Facts, cfg: EngineParams = DEFAULT) -> Window | None:
         cards=lines_on(facts.recipe_lines, end),
         cards_before=lines_on(facts.recipe_lines, before_end),
         portions_month={i: q * per_month for i, q in portions.items()},
+        price={
+            i: p
+            for i, info in facts.menu.items()
+            if (p := info.price or (revenue[i] / portions[i] if portions[i] else Decimal(0))) > 0
+        },
     )
 
 
@@ -90,7 +98,8 @@ def dishes(
     already = 0
     for item in sorted(items, key=lambda i: (facts.menu[i].name, facts.menu[i].code)):
         info = facts.menu[item]
-        if item not in w.cards or not info.price or info.price <= 0 or not w.portions_month.get(item):
+        price = w.price.get(item)
+        if item not in w.cards or price is None or not w.portions_month.get(item):
             continue
         need = explode(item, Decimal(1), w.cards)
         cost = portion_cost(need, w.now)
@@ -99,12 +108,12 @@ def dishes(
         if cost is None or cost_before is None:
             continue
         target = norms.food_cost_target(info.category) / 100
-        if cost / info.price <= target:
+        if cost / price <= target:
             continue
-        if cost_before / info.price > target:
+        if cost_before / price > target:
             already += 1
             continue
-        over = cost - target * info.price
+        over = cost - target * price
         cut = None
         if product is not None and need.get(product):
             q = need[product]
@@ -115,11 +124,11 @@ def dishes(
             {
                 "name": info.name,
                 "code": info.code,
-                "price": _rub(info.price),
+                "price": _rub(price),
                 "cost": _rub(cost),
                 "cost_before": _rub(cost_before),
-                "food_cost_pct": _pct(cost / info.price),
-                "food_cost_before_pct": _pct(cost_before / info.price),
+                "food_cost_pct": _pct(cost / price),
+                "food_cost_before_pct": _pct(cost_before / price),
                 "target_pct": _pct(target),
                 "new_price": _rub(suggested_price(cost, target, cfg)),
                 "cut": cut,
@@ -157,6 +166,19 @@ def _using(w: Window, facts: Facts, product: UUID) -> set[UUID]:
     return {i for i in facts.menu if i in w.cards and product in explode(i, Decimal(1), w.cards)}
 
 
+def changed_on(item: UUID, cards: dict[UUID, list[Line]]) -> date:
+    """The latest start of a card in the dish's tree: its own and its semi-products' (review, p. 8)."""
+    latest, seen, todo = date.min, set(), [item]
+    while todo:
+        node = todo.pop()
+        if node in seen or node not in cards:
+            continue
+        seen.add(node)
+        latest = max(latest, cards[node][0].valid_from)
+        todo += [ln.product_id for ln in cards[node]]
+    return latest
+
+
 def _growth(session: Session) -> list[Finding]:
     rows = session.execute(
         select(Finding)
@@ -173,11 +195,13 @@ def _growth(session: Session) -> list[Finding]:
 
 def drafts(session: Session, restaurants: list[Restaurant], today: date) -> list[NoteDraft]:
     growth = _growth(session)
-    facts = load(session)
-    w = window(facts)
+    cfg = params.load(session)
+    facts = load(session, cfg)
+    w = window(facts, cfg)
     if w is None:
         return []
     norms = load_norms(session)
+    priced: set[str] = set()  # dishes of the price notes: not repeated in a card's note (review, p. 10)
     by_code = {info.code: pid for pid, info in facts.products.items()}
     out = []
     for f in growth:
@@ -185,9 +209,10 @@ def drafts(session: Session, restaurants: list[Restaurant], today: date) -> list
         pid = by_code.get(ev.get("product", ""))
         if pid is None or pid not in w.now or pid not in w.before:
             continue
-        listed, already = dishes(facts, w, norms, _using(w, facts, pid), pid)
+        listed, already = dishes(facts, w, norms, _using(w, facts, pid), pid, cfg)
         if not listed:
             continue
+        priced |= {str(d["code"]) for d in listed}
         info = facts.products[pid]
         out.append(
             NoteDraft(
@@ -211,12 +236,12 @@ def drafts(session: Session, restaurants: list[Restaurant], today: date) -> list
         )
     # New cards: the dishes whose card started within `CARD_DAYS` up to the end of the window, by the day.
     changed: dict[date, set[UUID]] = defaultdict(set)
-    for item in facts.menu:
-        card = w.cards.get(item)
-        if card and w.end - timedelta(days=CARD_DAYS) < card[0].valid_from <= w.end:
-            changed[card[0].valid_from].add(item)
+    for item, dish in facts.menu.items():
+        day = changed_on(item, w.cards) if item in w.cards else date.min
+        if w.end - timedelta(days=CARD_DAYS) < day <= w.end and dish.code not in priced:
+            changed[day].add(item)
     for day, items in sorted(changed.items()):
-        listed, already = dishes(facts, w, norms, items, None)
+        listed, already = dishes(facts, w, norms, items, None, cfg)
         if not listed:
             continue
         out.append(

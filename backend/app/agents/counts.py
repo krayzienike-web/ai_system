@@ -29,8 +29,9 @@ from sqlalchemy.orm import Session
 from app.agents.drafts import NoteDraft
 from app.agents.models import Agent, Audience
 from app.agents.texts import plain
-from app.analytics import m1
+from app.analytics import m1, params
 from app.analytics.costs import LOOKBACK_DAYS, CostBook
+from app.analytics.drafts import rub
 from app.analytics.facts import (
     CountRow,
     Facts,
@@ -40,6 +41,7 @@ from app.analytics.facts import (
     TransferRow,
     WriteOffRow,
 )
+from app.analytics.params import EngineParams
 from app.analytics.usage import Usage
 from app.catalog.models import Product, RecipeLine
 from app.catalog.recipes import Line
@@ -51,7 +53,7 @@ from app.tenancy.models import Restaurant
 
 RESULT_DAYS = 21  # a count's result is news this long: counts are weeks apart
 MAX_ITEMS = 5
-ITEM_MIN_RUB_MONTH = Decimal(3000)  # as M1's materiality: a smaller difference is not worth explaining
+HISTORY_COUNTS = 6  # the counts read back: enough to find two judged periods past a short recount
 MONTH_DAYS = Decimal(30)
 OPEN = (FindingStatus.NEW, FindingStatus.IN_WORK, FindingStatus.IN_EXPERIMENT)
 
@@ -71,9 +73,10 @@ class Excess:
 
     product: UUID
     qty: Decimal  # base units beyond the allowance
-    rub: Decimal  # at the restaurant's purchase price
+    rub: Decimal  # at the restaurant's purchase price, or the network's when it bought none
     write_off: Decimal
     transferred_out: Decimal
+    network_price: bool = False
 
 
 @dataclass(frozen=True)
@@ -81,6 +84,7 @@ class Period:
     start: date
     end: date
     items: list[Excess]  # beyond the allowance, the largest first
+    judged: bool  # long enough for the engine (`M1_MIN_THEORY_DAYS`): a short one says nothing
 
     @property
     def days(self) -> int:
@@ -93,18 +97,48 @@ class Period:
         return self.per_month(sum((x.rub for x in self.items if x.product not in skip), Decimal(0)))
 
 
-def _facts(session: Session, restaurant: UUID, since: date, until: date, days: list[date]) -> Facts:
-    """The restaurant's own facts from `since` to `until` (its counts on `days`): the purchases a bit earlier
-    for the price (`costs.LOOKBACK_DAYS`), the other restaurants' never (their price is not the
-    director's)."""
-    f = Facts()
-    for p in session.execute(select(Product)).scalars():
-        f.products[p.id] = ProductInfo(p.code, p.name, p.category, p.base_unit, p.shelf_life_days, p.is_semi)
-    f.recipe_lines = [
+@dataclass(frozen=True)
+class Shared:
+    """What every restaurant of one run reads: loaded once (backend review of stage 12, p. 4)."""
+
+    products: dict[UUID, ProductInfo]
+    lines: list[Line]
+    costs: CostBook  # the network's purchases: own price first, the network's when the restaurant bought none
+    norms: Norms
+    cfg: EngineParams
+
+
+def shared(session: Session, since: date, until: date) -> Shared:
+    products = {
+        p.id: ProductInfo(p.code, p.name, p.category, p.base_unit, p.shelf_life_days, p.is_semi)
+        for p in session.execute(select(Product)).scalars()
+    }
+    lines = [
         Line(parent, r.product_id, r.gross_qty, r.valid_from)
         for r in session.execute(select(RecipeLine).where(RecipeLine.valid_from <= until)).scalars()
         if (parent := r.menu_item_id or r.semi_product_id) is not None
     ]
+    receipts = [
+        ReceiptRow(*row)
+        for row in session.execute(
+            select(
+                Receipt.restaurant_id,
+                Receipt.day,
+                Receipt.product_id,
+                Receipt.supplier_id,
+                Receipt.qty,
+                Receipt.amount,
+            ).where(Receipt.day > since - timedelta(days=LOOKBACK_DAYS), Receipt.day <= until)
+        ).all()
+    ]
+    return Shared(products, lines, CostBook(receipts), load_norms(session), params.load(session))
+
+
+def _facts(session: Session, sh: Shared, restaurant: UUID, days: list[date]) -> Facts:
+    """The restaurant's own movements from its first count of `days` to the last: purchases, sales, transfers
+    in and out, write-offs and the counts on those days."""
+    since, until = days[0], days[-1]
+    f = Facts(products=sh.products, recipe_lines=sh.lines)
     f.sales = [
         SaleRow(restaurant, d, i, q, Decimal(0))
         for d, i, q in session.execute(
@@ -117,9 +151,7 @@ def _facts(session: Session, restaurant: UUID, since: date, until: date, days: l
         ReceiptRow(restaurant, d, p, s, q, a)
         for d, p, s, q, a in session.execute(
             select(Receipt.day, Receipt.product_id, Receipt.supplier_id, Receipt.qty, Receipt.amount).where(
-                Receipt.restaurant_id == restaurant,
-                Receipt.day > since - timedelta(days=LOOKBACK_DAYS),
-                Receipt.day <= until,
+                Receipt.restaurant_id == restaurant, Receipt.day > since, Receipt.day <= until
             )
         ).all()
     ]
@@ -161,13 +193,14 @@ def _facts(session: Session, restaurant: UUID, since: date, until: date, days: l
     return f
 
 
-def periods(session: Session, restaurant: UUID, days: list[date], norms: Norms) -> list[Period]:
+def periods(session: Session, sh: Shared, restaurant: UUID, days: list[date]) -> list[Period]:
     """The periods between consecutive `days` (counts of the restaurant), each with what went beyond the
-    allowance. A period the engine does not judge (shorter than `M1_MIN_THEORY_DAYS`) has no items."""
+    allowance. A period the engine does not judge (shorter than `M1_MIN_THEORY_DAYS`) is not judged here
+    either: not «within the allowance», just not known (backend review of stage 12, p. 1)."""
     if len(days) < 2:
         return []
-    facts = _facts(session, restaurant, days[0], days[-1], days)
-    rows = m1.rows(facts, Usage(facts), CostBook(facts.receipts))
+    facts = _facts(session, sh, restaurant, days)
+    rows = m1.rows(facts, Usage(facts), sh.costs, sh.cfg)
     out_by: dict[tuple[date, UUID], Decimal] = defaultdict(Decimal)
     for t in facts.transfers:
         if t.sender == restaurant:
@@ -178,16 +211,29 @@ def periods(session: Session, restaurant: UUID, days: list[date], norms: Norms) 
     for r in rows:
         if r.unit_cost is None:
             continue
-        info = facts.products[r.product]
-        tol = norms.loss_allowance(info.category) / 100
+        info = sh.products[r.product]
+        tol = sh.norms.loss_allowance(info.category) / 100
         qty = r.unexplained - tol * r.theory
         if qty <= 0:
             continue
+        cost = sh.costs.cost(restaurant, r.product, r.first_day, r.end)
         by_end[r.end].append(
-            Excess(r.product, qty, qty * r.unit_cost, r.write_off, out_by[(r.end, r.product)])
+            Excess(
+                r.product,
+                qty,
+                qty * r.unit_cost,
+                r.write_off,
+                out_by[(r.end, r.product)],
+                network_price=cost is not None and cost.source == "network",
+            )
         )
     return [
-        Period(a, b, sorted(by_end[b], key=lambda x: (-x.rub, facts.products[x.product].code)))
+        Period(
+            a,
+            b,
+            sorted(by_end[b], key=lambda x: (-x.rub, sh.products[x.product].code)),
+            (b - a).days >= sh.cfg.M1_MIN_THEORY_DAYS,
+        )
         for a, b in pairwise(days)
     ]
 
@@ -225,12 +271,17 @@ def _director_findings(session: Session, restaurant: UUID) -> dict[str, str]:
 
 
 def _director(
-    session: Session, r: Restaurant, p: Period, cards: dict[UUID, str], products: dict[UUID, Product]
+    session: Session,
+    r: Restaurant,
+    p: Period,
+    cards: dict[UUID, str],
+    products: dict[UUID, Product],
+    least: Decimal,
 ) -> NoteDraft | None:
     seen = _director_findings(session, r.id)
     items: list[dict[str, Any]] = []
     for x in p.items:
-        if x.product in cards or p.per_month(x.rub) < ITEM_MIN_RUB_MONTH:
+        if x.product in cards or p.per_month(x.rub) < least:
             continue
         prod = products[x.product]
         hints: list[dict[str, str]] = []
@@ -247,6 +298,7 @@ def _director(
                 "unit": prod.base_unit,
                 "qty": _qty(x.qty),
                 "rub": _rub(x.rub),
+                "network_price": x.network_price,
                 "hints": hints,
             }
         )
@@ -274,7 +326,7 @@ def _director(
             "action": "create_task",
             "due_on": until.isoformat(),
             "title": f"Объяснить расхождения инвентаризации {p.end.strftime('%d.%m')}",
-            "checklist": [f"Объяснить: {i['name']} — {i['rub']} ₽ сверх допуска" for i in items],
+            "checklist": [f"Объяснить: {i['name']} — {rub(Decimal(i['rub']))} сверх допуска" for i in items],
         },
     )
 
@@ -291,19 +343,22 @@ def drafts(session: Session, restaurants: list[Restaurant], today: date) -> list
     fresh = [r for r in restaurants if days.get(r.id) and (today - days[r.id][-1]).days <= RESULT_DAYS]
     if not fresh:
         return []
-    norms = load_norms(session)
+    sh = shared(session, min(days[r.id][-HISTORY_COUNTS:][0] for r in fresh), today)
+    # As the engine's M1: a smaller difference is not worth a director's attention (review of stage 12, p. 3).
+    least = sh.cfg.M1_MATERIALITY_RUB_MONTH
     cards = card_products(session)
     products = {p.id: p for p in session.execute(select(Product)).scalars()}
     out = []
     network: list[dict[str, Any]] = []
     for r in fresh:
-        ps = periods(session, r.id, days[r.id][-3:], norms)
-        if not ps:
-            continue
-        last = ps[-1]
-        if (d := _director(session, r, last, cards, products)) is not None:
+        judged = [p for p in periods(session, sh, r.id, days[r.id][-HISTORY_COUNTS:]) if p.judged]
+        if not judged or (today - judged[-1].end).days > RESULT_DAYS:
+            continue  # the fresh count closes no period the engine judges: nothing known to say
+        last = judged[-1]
+        d = _director(session, r, last, cards, products, least)
+        if d is not None:
             out.append(d)
-        before = ps[-2] if len(ps) > 1 else None
+        before = judged[-2] if len(judged) > 1 else None
         now_month = last.month(set(cards))
         before_month = before.month(set(cards)) if before else None
         top = next((x for x in last.items if x.product not in cards), None)
@@ -314,12 +369,14 @@ def drafts(session: Session, restaurants: list[Restaurant], today: date) -> list
                 "count_on": last.end.isoformat(),
                 "month": _rub(now_month),
                 "before": _rub(before_month) if before_month is not None else None,
-                "grew": before_month is not None and now_month - before_month >= ITEM_MIN_RUB_MONTH,
+                "grew": before_month is not None and now_month - before_month >= least,
                 "top": products[top.product].name if top else None,
                 "top_rub": _rub(top.rub) if top else None,
+                # How many products the director got to explain: none when each is under the threshold (p. 2)
+                "director": len(d.facts["products"]) if d else 0,
             }
         )
-    over = [x for x in network if Decimal(x["month"]) >= ITEM_MIN_RUB_MONTH or x["grew"]]
+    over = [x for x in network if Decimal(x["month"]) >= least or x["grew"]]
     if over:
         over.sort(
             key=lambda x: (
@@ -341,6 +398,7 @@ def drafts(session: Session, restaurants: list[Restaurant], today: date) -> list
                     "counted": len(network),
                     "within": len(network) - len(over),
                     "grew": sum(1 for x in over if x["grew"]),
+                    "least": _rub(least),
                     "card_products": sorted(set(cards.values())),
                 },
             )

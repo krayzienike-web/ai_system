@@ -416,28 +416,39 @@ def count_result(f: dict[str, Any]) -> tuple[str, str, list[str]]:
                 line += f", на прошлом пересчете — {rub(Decimal(r['before']))}"
             if r["top"]:
                 line += f"; больше всего — {r['top']}, {rub(Decimal(r['top_rub']))} за период"
+            # What the director has to explain — or that nobody does (backend review of stage 12, p. 2)
+            if r.get("director"):
+                line += f"; директору — {_count(r['director'], ('товар', 'товара', 'товаров'))} к объяснению"
+            else:
+                line += (
+                    f"; директору объяснять нечего: каждый товар меньше {rub(Decimal(f['least']))} в месяц"
+                )
             items.append(line)
         if f["card_products"]:
             items.append(
-                f"Не считали: {', '.join(f['card_products'])} — расход выше техкарты во всей сети, "
-                "это техкарта"
+                f"Не учтен: {', '.join(f['card_products'])} — расход выше техкарты во всей сети, вопрос к "
+                "техкарте, а не к ресторанам"
             )
         grew = f["grew"]
         title = (
-            f"Итоги инвентаризаций: расхождения выросли в {grew} из {len(f['restaurants'])}"
+            f"Итоги инвентаризаций: расхождения заметно выросли в {grew} из {len(f['restaurants'])}"
             if grew
             else "Итоги инвентаризаций: расхождения сверх допуска"
         )
         text = (
             f"Пересчитали {_restaurants(f['counted'])} за последние три недели. Сверх допуска потерь — в "
             f"{len(f['restaurants'])} из них, в допуске — {f['within']}. Сначала те, где расхождения "
-            "выросли с прошлого пересчета: директора уже видят свои итоги и объясняют их в задаче."
+            f"выросли с прошлого пересчета на {rub(Decimal(f['least']))} в месяц и больше. Директор видит "
+            "итоги своего ресторана, если в них есть товар от этой суммы, и может поставить себе задачу их "
+            "объяснить."
         )
         return title, text, items
     items = []
     for p in f["products"]:
         u = UNITS.get(p["unit"], p["unit"])
         line = f"{p['name']}: {num(p['qty'])} {u} сверх допуска ≈ {rub(Decimal(p['rub']))}"
+        if p.get("network_price"):
+            line += " по средней цене сети: ресторан его не закупал"
         hints = [_hint(h, u) for h in p["hints"]]
         if hints:
             line += ". С чего начать: " + "; ".join(hints)
@@ -451,7 +462,7 @@ def count_result(f: dict[str, Any]) -> tuple[str, str, list[str]]:
     text = (
         f"С {_d(f['since'])} по {_d(f['count_on'])} расход по пересчету выше техкарт и списаний сверх "
         f"допуска: {_positions(len(f['products']))} на {rub(Decimal(f['total_rub']))}. Разберитесь до "
-        "следующего пересчета, с чего начать — рядом с каждым товаром; объяснение запишите в задаче."
+        "следующего пересчета: с чего начать, написано у каждого товара; объяснение запишите в задаче."
     )
     return title, text, items
 
@@ -472,12 +483,10 @@ def menu_price(f: dict[str, Any]) -> tuple[str, str, list[str]]:
         line += f"; маржа сейчас теряет ≈ {rub(Decimal(d['lost_month']))} в месяц"
         items.append(line)
     if f["already"]:
-        items.append(
-            f"Еще блюд выше цели и до этого: {f['already']} — они в находках «Фудкост выше целевого»"
-        )
+        items.append(f"Еще блюд выше цели и до этого: {f['already']}")
     lost = sum((Decimal(d["lost_month"]) for d in f["dishes"]), Decimal(0))
     if f["reason"] == "price":
-        title = f"Цены меню: {f['product']} подорожал на {num(f['growth_pct'])}%"
+        title = f"Цены меню: «{f['product']}» +{num(f['growth_pct'])}% к цене закупки"
         why = (
             f"«{f['product']}» стоит сети {_kop(f['price'])}/{_u(f)} вместо {_kop(f['price_before'])} "
             "кварталом раньше"

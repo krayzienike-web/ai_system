@@ -144,6 +144,17 @@ export function NoteCard({ note, hq, onAnswered }: { note: AgentNote; hq: boolea
                 {all ? "Свернуть" : `Показать все (${note.items.length})`}
               </button>
             )}
+            {/* The count's result (stage 12) names its own points: shown before «Создать задачу» (review, p. 1) */}
+            {note.action === "create_task" && note.agent !== "inventory_prep" && note.action_checklist.length > 0 && (
+              <div className="mt-2 text-sm">
+                <div className="text-ink-2">В задаче будут пункты:</div>
+                <ul className="mt-0.5 list-disc space-y-0.5 pl-5">
+                  {note.action_checklist.map((line) => (
+                    <li key={line}>{line}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
             {note.action_tasks.length > 0 && (
               <div className="mt-2 text-sm">
                 <div className="text-ink-2">Будут поставлены задачи:</div>
@@ -162,37 +173,42 @@ export function NoteCard({ note, hq, onAnswered }: { note: AgentNote; hq: boolea
               )}
               {may && action && answerButton("accept", "primary", action.label(note))}
               {note.agent === "data_check" && (
-                <Link to="/data" className="text-sm font-medium underline">
+                <Link to="/data" aria-describedby={titleId} className="text-sm font-medium underline">
                   Загрузить на экране «Данные»
                 </Link>
               )}
               {note.agent === "shortage_story" && (
-                <Link to="/findings" className="text-sm font-medium underline">
+                <Link to="/findings" aria-describedby={titleId} className="text-sm font-medium underline">
                   Открыть находки
                 </Link>
               )}
               {note.agent === "check_watch" && note.check_id && (
-                <Link to="/checks/$checkId" params={{ checkId: note.check_id }} className="text-sm font-medium underline">
+                <Link
+                  to="/checks/$checkId"
+                  params={{ checkId: note.check_id }}
+                  aria-describedby={titleId}
+                  className="text-sm font-medium underline"
+                >
                   Открыть проверку
                 </Link>
               )}
-              {(note.agent === "recipe_update" || (note.agent === "count_result" && note.audience === "hq")) && (
-                <Link to="/findings" className="text-sm font-medium underline">
+              {(note.agent === "recipe_update" || note.agent === "count_result") && (
+                <Link to="/findings" aria-describedby={titleId} className="text-sm font-medium underline">
                   Открыть находки
                 </Link>
               )}
               {note.agent === "menu_price" && (
-                <Link to="/menu" className="text-sm font-medium underline">
+                <Link to="/menu" aria-describedby={titleId} className="text-sm font-medium underline">
                   Открыть меню
                 </Link>
               )}
               {note.agent === "hq_agenda" && (
-                <Link to="/decisions" className="text-sm font-medium underline">
+                <Link to="/decisions" aria-describedby={titleId} className="text-sm font-medium underline">
                   Ждут решения
                 </Link>
               )}
               {(note.agent === "task_due" || note.agent === "task_stuck") && (
-                <Link to="/tasks" className="text-sm font-medium underline">
+                <Link to="/tasks" aria-describedby={titleId} className="text-sm font-medium underline">
                   Открыть задачи
                 </Link>
               )}
