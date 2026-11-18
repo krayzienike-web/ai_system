@@ -429,6 +429,9 @@ def count_result(f: dict[str, Any]) -> tuple[str, str, list[str]]:
                 f"Не учтен: {', '.join(f['card_products'])} — расход выше техкарты во всей сети, вопрос к "
                 "техкарте, а не к ресторанам"
             )
+        # Beyond the allowance with no purchase price anywhere: not «within», just not known in rubles
+        rest = f["counted"] - len(f["restaurants"]) - f["within"]
+        unknown = f", без цены закупки не оценить — {rest}" if rest > 0 else ""
         grew = f["grew"]
         title = (
             f"Итоги инвентаризаций: расхождения заметно выросли в {grew} из {len(f['restaurants'])}"
@@ -437,10 +440,10 @@ def count_result(f: dict[str, Any]) -> tuple[str, str, list[str]]:
         )
         text = (
             f"Пересчитали {_restaurants(f['counted'])} за последние три недели. Сверх допуска потерь — в "
-            f"{len(f['restaurants'])} из них, в допуске — {f['within']}. Сначала те, где расхождения "
-            f"выросли с прошлого пересчета на {rub(Decimal(f['least']))} в месяц и больше. Директор видит "
-            "итоги своего ресторана, если в них есть товар от этой суммы, и может поставить себе задачу их "
-            "объяснить."
+            f"{len(f['restaurants'])} из них, в допуске — {f['within']}{unknown}. Сначала те, где "
+            f"расхождения выросли с прошлого пересчета на {rub(Decimal(f['least']))} в месяц и больше. "
+            "Директор видит итоги своего ресторана, если в них есть товар от этой суммы, и может поставить "
+            "себе задачу их объяснить."
         )
         return title, text, items
     items = []

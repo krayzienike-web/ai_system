@@ -85,6 +85,7 @@ class Period:
     end: date
     items: list[Excess]  # beyond the allowance, the largest first
     judged: bool  # long enough for the engine (`M1_MIN_THEORY_DAYS`): a short one says nothing
+    unpriced: int = 0  # products beyond the allowance with no price at all: not known in rubles, not «within»
 
     @property
     def days(self) -> int:
@@ -208,13 +209,15 @@ def periods(session: Session, sh: Shared, restaurant: UUID, days: list[date]) ->
                 if a < t.day <= b:
                     out_by[(b, t.product)] += t.qty
     by_end: dict[date, list[Excess]] = defaultdict(list)
+    unpriced: dict[date, int] = defaultdict(int)
     for r in rows:
-        if r.unit_cost is None:
-            continue
         info = sh.products[r.product]
         tol = sh.norms.loss_allowance(info.category) / 100
         qty = r.unexplained - tol * r.theory
         if qty <= 0:
+            continue
+        if r.unit_cost is None:
+            unpriced[r.end] += 1
             continue
         cost = sh.costs.cost(restaurant, r.product, r.first_day, r.end)
         by_end[r.end].append(
@@ -233,6 +236,7 @@ def periods(session: Session, sh: Shared, restaurant: UUID, days: list[date]) ->
             b,
             sorted(by_end[b], key=lambda x: (-x.rub, sh.products[x.product].code)),
             (b - a).days >= sh.cfg.M1_MIN_THEORY_DAYS,
+            unpriced[b],
         )
         for a, b in pairwise(days)
     ]
@@ -350,6 +354,7 @@ def drafts(session: Session, restaurants: list[Restaurant], today: date) -> list
     products = {p.id: p for p in session.execute(select(Product)).scalars()}
     out = []
     network: list[dict[str, Any]] = []
+    unknown: set[str] = set()  # beyond the allowance with no price: neither listed nor «within»
     for r in fresh:
         judged = [p for p in periods(session, sh, r.id, days[r.id][-HISTORY_COUNTS:]) if p.judged]
         if not judged or (today - judged[-1].end).days > RESULT_DAYS:
@@ -358,6 +363,8 @@ def drafts(session: Session, restaurants: list[Restaurant], today: date) -> list
         d = _director(session, r, last, cards, products, least)
         if d is not None:
             out.append(d)
+        if last.unpriced:
+            unknown.add(r.code)
         before = judged[-2] if len(judged) > 1 else None
         now_month = last.month(set(cards))
         before_month = before.month(set(cards)) if before else None
@@ -396,7 +403,7 @@ def drafts(session: Session, restaurants: list[Restaurant], today: date) -> list
                 facts={
                     "restaurants": over,
                     "counted": len(network),
-                    "within": len(network) - len(over),
+                    "within": sum(1 for x in network if x not in over and x["code"] not in unknown),
                     "grew": sum(1 for x in over if x["grew"]),
                     "least": _rub(least),
                     "card_products": sorted(set(cards.values())),
