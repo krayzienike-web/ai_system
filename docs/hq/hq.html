@@ -1,0 +1,283 @@
+<title>Штаб SousChef AI</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600&family=Unbounded:wght@500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: a working desk — a header with what waits for the client, tabs, one column of cards per tab. */
+:root {
+  --bg: #f4f6f3;
+  --surface: #ffffff;
+  --ink: #1b2420;
+  --ink-2: #5a665f;
+  --line: #dbe2dd;
+  --accent: #2f6b4f;
+  --accent-ink: #ffffff;
+  --accent-soft: #e3efe8;
+  --wait: #9a6412;
+  --wait-soft: #fbf0dc;
+  --bad: #a83f35;
+  --bad-soft: #f8e5e2;
+  --font-body: "Golos Text", "Segoe UI", system-ui, sans-serif;
+  --font-head: "Unbounded", "Golos Text", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #121815; --surface: #1a221e; --ink: #e6ece8; --ink-2: #9aa8a0; --line: #2c3832;
+    --accent: #6cbf95; --accent-ink: #0e1a14; --accent-soft: #1f3329;
+    --wait: #e2b260; --wait-soft: #3a2e17; --bad: #e98a80; --bad-soft: #3d2320;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #121815; --surface: #1a221e; --ink: #e6ece8; --ink-2: #9aa8a0; --line: #2c3832;
+  --accent: #6cbf95; --accent-ink: #0e1a14; --accent-soft: #1f3329;
+  --wait: #e2b260; --wait-soft: #3a2e17; --bad: #e98a80; --bad-soft: #3d2320;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink); font: 15px/1.5 var(--font-body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 24px 48px;
+}
+.wrap { max-width: 980px; margin: 0 auto; display: grid; gap: 20px; }
+header { display: grid; gap: 14px; }
+h1 { font: 600 clamp(22px, 4vw, 30px)/1.15 var(--font-head); margin: 0; letter-spacing: -0.01em; text-wrap: balance; }
+.sub { color: var(--ink-2); margin: 0; max-width: 68ch; }
+.summary { display: flex; flex-wrap: wrap; gap: 8px; }
+.pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; font-size: 13px; background: var(--accent-soft); color: var(--ink); border: 1px solid var(--line); }
+.pill b { font-family: var(--font-mono); font-weight: 500; }
+.pill.wait { background: var(--wait-soft); }
+nav { display: flex; gap: 4px; overflow-x: auto; border-bottom: 1px solid var(--line); }
+nav a { padding: 10px 14px; color: var(--ink-2); text-decoration: none; border-bottom: 2px solid transparent; white-space: nowrap; font-weight: 500; }
+nav a[aria-current="page"] { color: var(--ink); border-bottom-color: var(--accent); }
+nav a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+section { display: grid; gap: 12px; }
+h2 { font: 600 17px/1.3 var(--font-head); margin: 8px 0 0; }
+h3 { font-size: 15px; font-weight: 600; margin: 0; text-wrap: balance; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; display: grid; gap: 8px; min-width: 0; }
+.card.waiting { border-left: 3px solid var(--wait); }
+.meta { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 13px; color: var(--ink-2); }
+.k { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-2); }
+.num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.chip { font-size: 12px; padding: 2px 8px; border-radius: 6px; background: var(--accent-soft); white-space: nowrap; }
+.chip.wait { background: var(--wait-soft); color: var(--wait); }
+.chip.bad { background: var(--bad-soft); color: var(--bad); }
+.chip.muted { background: transparent; border: 1px solid var(--line); color: var(--ink-2); }
+p { margin: 0; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+textarea, input, select { font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; width: 100%; }
+textarea { min-height: 70px; resize: vertical; }
+button { font: inherit; font-weight: 500; border-radius: 8px; padding: 7px 14px; border: 1px solid var(--accent); background: var(--accent); color: var(--accent-ink); cursor: pointer; }
+button.ghost { background: transparent; color: var(--accent); }
+button:disabled { opacity: 0.5; cursor: default; }
+.note { font-size: 13px; color: var(--ink-2); }
+.answer { background: var(--accent-soft); border-radius: 8px; padding: 8px 10px; }
+.stages { display: grid; gap: 8px; }
+.stage { display: grid; grid-template-columns: 48px 1fr; gap: 12px; }
+.stage .n { font: 600 18px/1 var(--font-head); color: var(--ink-2); padding-top: 2px; }
+.tbl { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink-2); font-weight: 500; }
+td input { width: 110px; padding: 4px 8px; }
+details summary { cursor: pointer; color: var(--ink-2); }
+.empty { color: var(--ink-2); padding: 12px 0; }
+.toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(16px + env(safe-area-inset-bottom, 0px)); background: var(--ink); color: var(--bg); padding: 8px 14px; border-radius: 8px; font-size: 14px; }
+.grid2 { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+@media (prefers-reduced-motion: no-preference) { .card { transition: border-color .15s; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>Штаб SousChef AI</h1>
+    <p class="sub">Здесь заказчик отвечает на вопросы, видит план и бэклог, предлагает идеи и пороги движка. Разработчик разбирает ответы в начале каждой сессии и переносит их в документы проекта.</p>
+    <div class="summary" id="summary"><span class="pill">Загрузка…</span></div>
+  </header>
+  <nav aria-label="Разделы">
+    <a href="#questions" data-tab="questions">Вопросы</a>
+    <a href="#plan" data-tab="plan">План</a>
+    <a href="#backlog" data-tab="backlog">Бэклог</a>
+    <a href="#engine" data-tab="engine">Движок</a>
+    <a href="#journal" data-tab="journal">Журнал</a>
+  </nav>
+  <main id="main"><p class="empty">Загружаю данные штаба…</p></main>
+</div>
+<div class="toast" id="toast" role="status" hidden></div>
+
+<script>
+const S = { questions: [], stages: [], ideas: [], log: [], engine: [], proposals: [], finding_ideas: [], engine_params: [], rebuilds: [] };
+let db = null, loaded = false, failed = false;
+const $ = (s) => document.querySelector(s);
+const esc = (t) => String(t ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const today = () => new Date().toISOString().slice(0, 10);
+const fmt = (d) => (d ? d.slice(8, 10) + "." + d.slice(5, 7) + "." + d.slice(0, 4) : "");
+function toast(t) { const el = $("#toast"); el.textContent = t; el.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => (el.hidden = true), 3000); }
+const tab = () => (["questions", "plan", "backlog", "engine", "journal"].includes(location.hash.slice(1)) ? location.hash.slice(1) : "questions");
+
+const STATUS = {
+  done: ["Сделано", ""], in_progress: ["Идет", "wait"], planned: ["В плане", "muted"], blocked: ["Ждет заказчика", "bad"],
+  open: ["Ждет ответа", "wait"], answered: ["Ответ получен", ""], closed: ["Закрыт", "muted"],
+  new: ["Новое", "wait"], backlog: ["В бэклоге", "muted"], accepted: ["Принято", ""], rejected: ["Отклонено", "muted"],
+  applied: ["Применено", ""], proposed: ["Предложено", "wait"],
+};
+const chip = (s) => { const [t, c] = STATUS[s] || [s, "muted"]; return `<span class="chip ${c}">${esc(t)}</span>`; };
+
+function summary() {
+  const open = S.questions.filter((q) => q.status === "open").length;
+  const answered = S.questions.filter((q) => q.status === "answered").length;
+  const done = S.stages.filter((s) => s.status === "done").length;
+  const fresh = S.ideas.filter((i) => i.source === "client" && i.status === "new").length + S.proposals.filter((p) => p.status === "new").length;
+  $("#summary").innerHTML =
+    `<span class="pill wait">Ждут вашего ответа <b>${open}</b></span>` +
+    `<span class="pill">Ответы ждут разбора <b>${answered}</b></span>` +
+    `<span class="pill">Этапов сделано <b>${done} из ${S.stages.length}</b></span>` +
+    `<span class="pill">Ваши новые идеи и предложения <b>${fresh}</b></span>`;
+}
+
+function questions() {
+  const open = S.questions.filter((q) => q.status !== "closed").sort((a, b) => (a.status === "open" ? 0 : 1) - (b.status === "open" ? 0 : 1) || a.num - b.num);
+  const closed = S.questions.filter((q) => q.status === "closed").sort((a, b) => b.num - a.num);
+  const card = (q) => `
+    <article class="card ${q.status === "open" ? "waiting" : ""}">
+      <div class="row"><span class="num k">Q${q.num}</span>${chip(q.status)}${q.stage ? `<span class="note">нужно к этапу: ${esc(q.stage)}</span>` : ""}</div>
+      <h3>${esc(q.question)}</h3>
+      ${q.why ? `<p class="note"><span class="k">Зачем</span> ${esc(q.why)}</p>` : ""}
+      ${q.assumption ? `<p class="note"><span class="k">Пока работаем так</span> ${esc(q.assumption)}</p>` : ""}
+      ${q.status === "answered" ? `<p class="answer"><span class="k">Ваш ответ${q.answered_at ? " · " + fmt(q.answered_at) : ""}</span><br>${esc(q.answer)}</p><p class="note">Разработчик перенесет ответ в документы в начале следующей сессии.</p>` : ""}
+      ${q.status === "open" ? `<label class="k" for="a-${q.id}">Ваш ответ</label><textarea id="a-${q.id}" placeholder="Ответьте своими словами — можно коротко"></textarea><div class="row"><button data-answer="${q.id}">Ответить</button></div>` : ""}
+    </article>`;
+  return `<section aria-labelledby="h-q"><h2 id="h-q">Открытые вопросы</h2>${open.map(card).join("") || '<p class="empty">Открытых вопросов нет.</p>'}
+    <details><summary>Закрытые вопросы (${closed.length})</summary><div class="stages" style="margin-top:10px">${closed.map((q) => `<div class="card"><div class="row"><span class="num k">Q${q.num}</span>${q.closed_on ? `<span class="note">${esc(q.closed_on)}</span>` : ""}</div><h3>${esc(q.question)}</h3><p class="note">${esc(q.resolution)}</p></div>`).join("")}</div></details></section>`;
+}
+
+function plan() {
+  const rows = [...S.stages].sort((a, b) => a.order - b.order).map((s) => `
+    <article class="card stage"><div class="n num">${esc(s.num)}</div><div style="display:grid;gap:6px;min-width:0">
+      <div class="row"><h3>${esc(s.title)}</h3>${chip(s.status)}</div>
+      <p>${esc(s.content)}</p>
+      <p class="note"><span class="k">Готово, когда</span> ${esc(s.criterion)}</p>
+      ${s.note ? `<p class="note">${esc(s.note)}</p>` : ""}
+    </div></article>`);
+  return `<section aria-labelledby="h-p"><h2 id="h-p">План MVP</h2><div class="stages">${rows.join("")}</div></section>`;
+}
+
+function backlog() {
+  const groups = [["client", "Ваши идеи"], ["agents", "ИИ-агенты на данных MVP"], ["mvp", "Как усилить MVP"]];
+  const card = (i) => `<article class="card"><div class="row"><h3>${esc(i.title)}</h3>${chip(i.status)}</div>${i.text ? `<p class="note">${esc(i.text)}</p>` : ""}${i.resolution ? `<p class="answer">${esc(i.resolution)}</p>` : ""}</article>`;
+  const by = (g) => S.ideas.filter((i) => (g === "client" ? i.source === "client" : i.source !== "client" && i.group === g)).sort((a, b) => (a.status === "done") - (b.status === "done") || (a.order ?? 0) - (b.order ?? 0));
+  return `<section aria-labelledby="h-b"><h2 id="h-b">Предложить идею</h2>
+    <form class="card" id="idea-form"><label class="k" for="idea-title">Коротко</label><input id="idea-title" required maxlength="200" placeholder="Например: сверка выручки с банком">
+    <label class="k" for="idea-text">Подробнее</label><textarea id="idea-text" maxlength="3000" placeholder="Что должно происходить и кому это поможет"></textarea>
+    <div class="row"><button type="submit">Добавить в бэклог</button></div></form>
+    ${groups.map(([g, t]) => { const l = by(g); return l.length ? `<h2>${t}</h2>${l.map(card).join("")}` : ""; }).join("")}</section>`;
+}
+
+function engine() {
+  const mods = [...S.engine].sort((a, b) => a.order - b.order).map((m) => `<div class="card"><h3>${esc(m.title)}</h3><p class="note">${esc(m.text)}</p></div>`).join("");
+  const params = [...S.engine_params].sort((a, b) => a.order - b.order);
+  const pending = params.filter((p) => p.status === "proposed").length;
+  const rows = params.map((p) => `<tr><td class="num">${esc(p.module)}</td><td>${esc(p.title)}${p.meaning ? `<div class="note">${esc(p.meaning)}</div>` : ""}</td>
+    <td class="num">${esc(p.value)} ${esc(p.unit)}</td>
+    <td><input id="p-${p.id}" type="number" step="any" min="${p.low}" max="${p.high}" value="${p.proposed ?? ""}" placeholder="${esc(p.value)}" aria-label="Новое значение: ${esc(p.title)}"><div class="note num">${p.low}–${p.high}</div></td>
+    <td>${chip(p.status)}</td></tr>`).join("");
+  const rebuilds = [...S.rebuilds].sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+  const props = [...S.proposals].sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+  const fi = [...S.finding_ideas].sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+  const item = (x) => `<article class="card"><div class="row">${chip(x.status)}${x.module ? `<span class="num note">${esc(x.module)}</span>` : ""}<span class="note">${fmt(x.created_at)}</span></div><p>${esc(x.text)}</p>${x.reply || x.resolution ? `<p class="answer">${esc(x.reply || x.resolution)}</p>` : ""}</article>`;
+  return `<section aria-labelledby="h-e"><h2 id="h-e">Пороги движка</h2>
+    <p class="note">Значения — в привычных единицах: 75 = 75 %, 0,5 = 0,5 п.п. Впишите новое значение, сохраните и отправьте на пересчет: разработчик перенесет его в движок, прогонит тесты и пересчет демо и напишет, что изменилось в находках.</p>
+    <div class="tbl"><table><thead><tr><th>Модуль</th><th>Порог</th><th>Сейчас</th><th>Новое</th><th>Статус</th></tr></thead><tbody>${rows || '<tr><td colspan="5" class="empty">Пороги появятся после загрузки</td></tr>'}</tbody></table></div>
+    <div class="row"><button id="save-params" class="ghost">Сохранить новые значения</button><button id="rebuild" ${pending ? "" : "disabled"}>Отправить на пересчет${pending ? ` (${pending})` : ""}</button></div>
+    ${rebuilds.length ? `<h2>Запросы на пересчет</h2>${rebuilds.map((r) => `<article class="card"><div class="row">${chip(r.status)}<span class="note">${fmt(r.created_at)}${r.applied_at ? " → " + fmt(r.applied_at) : ""}</span></div><p class="note">${esc((r.params || []).join(", "))}</p>${r.reply ? `<p class="answer">${esc(r.reply)}</p>` : ""}</article>`).join("")}` : ""}
+    <div class="grid2">
+      <form class="card" id="proposal-form"><h3>Предложение по движку</h3><label class="k" for="pr-mod">Модуль</label>
+        <select id="pr-mod"><option value="">Любой</option>${["M1", "M2", "M3", "M4", "M5", "M6", "M7", "M8"].map((m) => `<option>${m}</option>`).join("")}</select>
+        <label class="k" for="pr-text">Что изменить</label><textarea id="pr-text" required maxlength="3000"></textarea><div class="row"><button type="submit">Отправить</button></div></form>
+      <form class="card" id="fi-form"><h3>Идея новой находки</h3><label class="k" for="fi-text">Что должна ловить система</label>
+        <textarea id="fi-text" required maxlength="3000" placeholder="Например: повар списывает в конце смены одно и то же"></textarea><div class="row"><button type="submit">Отправить</button></div></form>
+    </div>
+    ${props.length ? `<h2>Предложения</h2>${props.map(item).join("")}` : ""}
+    ${fi.length ? `<h2>Идеи находок</h2>${fi.map(item).join("")}` : ""}
+    <h2>Модули движка</h2>${mods}</section>`;
+}
+
+function journal() {
+  const rows = [...S.log].sort((a, b) => String(b.date).localeCompare(String(a.date)) || (b.order ?? 0) - (a.order ?? 0));
+  return `<section aria-labelledby="h-j"><h2 id="h-j">Журнал работ</h2><div class="tbl"><table><tbody>${rows.map((l) => `<tr><td class="num note" style="white-space:nowrap">${fmt(l.date)}</td><td>${esc(l.text)}</td></tr>`).join("")}</tbody></table></div></section>`;
+}
+
+function render() {
+  const t = tab();
+  document.querySelectorAll("nav a").forEach((a) => (a.dataset.tab === t ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current")));
+  if (!loaded) { $("#main").innerHTML = `<p class="empty">${failed ? "Не удалось открыть данные штаба. Войдите в claude.ai под аккаунтом, с которым поделились штабом, и обновите страницу." : "Загружаю данные штаба…"}</p>`; return; }
+  summary();
+  const focus = document.activeElement?.id, drafts = {};
+  document.querySelectorAll("textarea[id], input[id]").forEach((el) => (drafts[el.id] = el.value));
+  $("#main").innerHTML = { questions, plan, backlog, engine, journal }[t]();
+  for (const [id, v] of Object.entries(drafts)) { const el = document.getElementById(id); if (el && v && !el.value) el.value = v; }
+  if (focus) document.getElementById(focus)?.focus();
+}
+
+async function write(fn, ok) {
+  if (!db) return toast("Только просмотр: изменения сохранить нельзя");
+  try { await fn(); toast(ok); } catch (e) { toast(e?.code === "not_granted" ? "Нет прав на изменения в штабе" : "Не сохранилось — попробуйте еще раз"); }
+}
+
+document.addEventListener("click", (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  if (b.dataset.answer) {
+    const id = b.dataset.answer, text = document.getElementById("a-" + id).value.trim();
+    if (!text) return toast("Напишите ответ");
+    b.disabled = true;
+    write(() => db.doc("questions/" + id).update({ answer: text, status: "answered", answered_at: today() }), "Ответ сохранен");
+  }
+  if (b.id === "save-params") {
+    const changed = S.engine_params.filter((p) => { const v = document.getElementById("p-" + p.id)?.value; return v !== "" && v !== undefined && Number(v) !== p.value && Number(v) !== p.proposed; });
+    const bad = changed.find((p) => { const v = Number(document.getElementById("p-" + p.id).value); return !(v >= p.low && v <= p.high); });
+    if (bad) return toast(`«${bad.title}»: значение от ${bad.low} до ${bad.high}`);
+    if (!changed.length) return toast("Новых значений нет");
+    write(async () => { for (const p of changed) await db.doc("engine_params/" + p.id).update({ proposed: Number(document.getElementById("p-" + p.id).value), status: "proposed" }); }, `Сохранено: ${changed.length}`);
+  }
+  if (b.id === "rebuild") {
+    const keys = S.engine_params.filter((p) => p.status === "proposed").map((p) => p.id);
+    b.disabled = true;
+    write(() => db.collection("rebuilds").add({ status: "new", created_at: today(), params: keys, reply: "" }), "Запрос на пересчет отправлен");
+  }
+});
+document.addEventListener("submit", (e) => {
+  e.preventDefault();
+  const f = e.target;
+  if (f.id === "idea-form") {
+    const title = $("#idea-title").value.trim(), text = $("#idea-text").value.trim();
+    write(async () => { await db.collection("ideas").add({ title, text, source: "client", status: "new", group: "client", created_at: today(), resolution: "" }); f.reset(); }, "Идея добавлена");
+  }
+  if (f.id === "proposal-form") {
+    write(async () => { await db.collection("proposals").add({ text: $("#pr-text").value.trim(), module: $("#pr-mod").value, status: "new", created_at: today(), reply: "" }); f.reset(); }, "Предложение отправлено");
+  }
+  if (f.id === "fi-form") {
+    write(async () => { await db.collection("finding_ideas").add({ text: $("#fi-text").value.trim(), source: "client", status: "new", created_at: today(), resolution: "" }); f.reset(); }, "Идея находки отправлена");
+  }
+});
+window.addEventListener("hashchange", render);
+render();
+
+(async () => {
+  const timer = setTimeout(() => { if (!loaded) { failed = true; render(); } }, 10000);
+  db = await window.claude?.use?.("db");
+  if (!db) { clearTimeout(timer); failed = true; render(); return; }
+  const pending = new Set(Object.keys(S));
+  for (const name of Object.keys(S)) {
+    db.collection(name).onSnapshot(
+      (snap) => {
+        S[name] = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        pending.delete(name);
+        if (!pending.size) { loaded = true; clearTimeout(timer); }
+        if (loaded) render();
+      },
+      () => { pending.delete(name); if (!pending.size) { loaded = true; clearTimeout(timer); render(); } },
+    );
+  }
+})();
+</script>

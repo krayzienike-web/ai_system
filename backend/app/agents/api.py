@@ -42,6 +42,8 @@ class NoteOut(BaseModel):
         "supplier_deal",
         "recipe_update",
         "check_watch",
+        "count_result",
+        "menu_price",
     ]
     audience: Literal["director", "hq"]
     # None: a note about the whole network (the HQ's weekly agenda)
@@ -58,6 +60,7 @@ class NoteOut(BaseModel):
     action: Literal["create_task", "move_due", "transfer", "claim"] | None
     action_due_on: date | None
     action_title: str | None  # the task «Создать задачу» makes
+    action_checklist: list[str]  # … and its points (stage 12: the count's result has its own)
     action_tasks: list[PlannedTaskOut]  # a transfer: the two tasks «Поставить задачи» sets
     check_id: UUID | None  # a note about a check (stage 11): the check to open
     source: Literal["rules", "model"]
@@ -88,6 +91,7 @@ def notes_out(session: Session, notes: list[AgentNote]) -> list[NoteOut]:
                 action=proposal.get("action"),
                 action_due_on=date.fromisoformat(proposal["due_on"]) if "due_on" in proposal else None,
                 action_title=proposal.get("title"),
+                action_checklist=service.task_checklist(n),
                 action_tasks=[
                     PlannedTaskOut(restaurant_id=p.restaurant_id, title=p.title, checklist=list(p.checklist))
                     for p in service.transfer_plan(n)

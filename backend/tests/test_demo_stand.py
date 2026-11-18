@@ -91,11 +91,17 @@ def test_the_rebuild_brings_the_demo_network_back_as_on_the_first_day(owner_engi
             select(AgentNote, Restaurant.code).outerjoin(Restaurant, Restaurant.id == AgentNote.restaurant_id)
         ).all()
         # TC-AG-44 (stage 11): the running check of cheese, the fries card, two suppliers' letters.
+        # TC-AG-60 (stage 12): the counts of 01.10 — R01's cheese and R03's salmon to their directors, the
+        # network's summary to the HQ; «Лосось на гриле» above the target after salmon grew.
         assert sorted((n.agent, code or "", n.for_date, n.status) for n, code in notes) == [
             ("check_watch", "", date(2026, 10, 19), "new"),
+            ("count_result", "", date(2026, 10, 1), "new"),
+            ("count_result", "R01", date(2026, 10, 1), "new"),
+            ("count_result", "R03", date(2026, 10, 1), "new"),
             ("data_check", "R09", cli.DEMO_TODAY, "new"),
             ("hq_agenda", "", date(2026, 10, 19), "new"),
             ("inventory_prep", "R01", cli.DEMO_TODAY + timedelta(days=2), "new"),
+            ("menu_price", "", date(2026, 10, 18), "new"),
             ("recipe_update", "", date(2026, 10, 1), "new"),
             ("shortage_story", "R01", date(2026, 10, 1), "new"),
             ("supplier_claim", "", date(2026, 10, 18), "new"),
@@ -109,6 +115,11 @@ def test_the_rebuild_brings_the_demo_network_back_as_on_the_first_day(owner_engi
             "Молочный двор",
             "Сырный дом",
         ]
+        counted = {code: n.facts for n, code in notes if n.agent == "count_result" and code}
+        assert [p["name"] for p in counted["R01"]["products"]] == ["Сыр Моцарелла"]
+        assert [p["name"] for p in counted["R03"]["products"]] == ["Лосось охлажденный"]
+        (menu_note,) = [n for n, _ in notes if n.agent == "menu_price"]
+        assert [d["name"] for d in menu_note.facts["dishes"]] == ["Лосось на гриле"]
         (claim,) = [n for n, _ in notes if n.agent == "supplier_claim"]
         assert claim.facts["supplier"] == "Северная рыба" and claim.facts["kind"] == "growth"
         (move,) = [n for n, _ in notes if n.agent == "transfer"]

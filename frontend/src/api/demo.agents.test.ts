@@ -30,7 +30,10 @@ describe("the agents' notes in the prototype", () => {
     expect(stuck).toBeDefined();
     expect(status(() => post(`/agents/notes/${stuck.id}/accept`, ANALYST))).toBe(403);
     expect(status(() => post(`/agents/notes/${stuck.id}/dismiss`, ANALYST))).toBe(403);
-    expect(get<AgentNote[]>("/agents/notes", DIRECTOR).map((n) => n.agent)).toEqual(["inventory_prep"]);
+    expect(get<AgentNote[]>("/agents/notes", DIRECTOR).map((n) => n.agent).sort()).toEqual([
+      "count_result",
+      "inventory_prep",
+    ]);
     expect(status(() => post(`/agents/notes/${stuck.id}/accept`, DIRECTOR))).toBe(404);
   });
 
@@ -50,7 +53,7 @@ describe("the agents' notes in the prototype", () => {
     expect(task.checklist[0]).toBe(`Пересчитать: ${prep.items[0]}`);
     expect(get<{ open_tasks: number }>("/overview/badges", DIRECTOR).open_tasks).toBe(before + 1);
     expect(status(() => post(`/agents/notes/${prep.id}/accept`, DIRECTOR))).toBe(409);
-    expect(get<AgentNote[]>("/agents/notes", DIRECTOR)).toEqual([]);
+    expect(get<AgentNote[]>("/agents/notes", DIRECTOR).map((n) => n.agent)).toEqual(["count_result"]);
   });
 
   it("moves a stuck task's deadline: the task, its finding and «Ждут решения» are no longer late", () => {
@@ -169,5 +172,39 @@ describe("the agents' notes in the prototype", () => {
     }
     expect(status(() => post(`/agents/notes/${watch.id}/accept`, ADMIN))).toBe(422);
     expect(post<AgentNote>(`/agents/notes/${recipe.id}/accept`, ADMIN).status).toBe("accepted");
+  });
+
+  // Stage 12 (TC-UI-48): the count's result — R01's director explains it in a task with its own points; the HQ
+  // gets one summary of the network; menu prices after salmon grew — the HQ's note to hand over.
+  it("gives the director the count's result as a task and the HQ the summary and menu prices", () => {
+    const mine = note(DIRECTOR, "count_result");
+    expect([mine.audience, mine.action, mine.action_title]).toEqual([
+      "director",
+      "create_task",
+      "Объяснить расхождения инвентаризации 01.10",
+    ]);
+    expect(mine.items[0]).toMatch(/^Сыр Моцарелла: /);
+    expect(mine.action_checklist).toEqual([expect.stringMatching(/^Объяснить: Сыр Моцарелла — \d+ ₽ сверх допуска$/)]);
+    const hq = get<AgentNote[]>("/agents/notes", ADMIN).filter((n) => n.agent === "count_result");
+    expect(hq.map((n) => [n.audience, n.restaurant_id, n.action])).toEqual([["hq", null, null]]);
+    const menu = note(ADMIN, "menu_price");
+    expect([menu.action, menu.restaurant_id, menu.title]).toEqual([
+      "claim",
+      null,
+      "Цены меню: Лосось охлажденный подорожал на 39,7%",
+    ]);
+    expect(get<AgentNote[]>("/agents/notes", DIRECTOR).some((n) => n.agent === "menu_price")).toBe(false);
+    expect(status(() => post(`/agents/notes/${menu.id}/accept`, DIRECTOR))).toBe(404);
+
+    const before = get<ApiTask[]>("/tasks", DIRECTOR).length;
+    const answer = post<AgentNote>(`/agents/notes/${mine.id}/accept`, DIRECTOR);
+    const tasks = get<ApiTask[]>("/tasks", DIRECTOR);
+    expect(tasks.length).toBe(before + 1);
+    const task = tasks.find((t) => t.id === answer.result_task_id)!;
+    expect([task.title, task.due_on, task.checklist]).toEqual([
+      mine.action_title,
+      mine.action_due_on,
+      mine.action_checklist,
+    ]);
   });
 });

@@ -4763,6 +4763,13 @@
       ],
       "title": "Action"
      },
+     "action_checklist": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Action Checklist",
+      "type": "array"
+     },
      "action_due_on": {
       "anyOf": [
        {
@@ -4805,7 +4812,9 @@
        "hq_agenda",
        "supplier_deal",
        "recipe_update",
-       "check_watch"
+       "check_watch",
+       "count_result",
+       "menu_price"
       ],
       "title": "Agent",
       "type": "string"
@@ -4947,6 +4956,7 @@
      "action",
      "action_due_on",
      "action_title",
+     "action_checklist",
      "action_tasks",
      "check_id",
      "source",

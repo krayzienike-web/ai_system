@@ -761,7 +761,7 @@ export interface NormsOut {
 
 export interface NoteOut {
   id: string;
-  agent: "inventory_prep" | "task_due" | "task_stuck" | "data_check" | "shortage_story" | "supplier_claim" | "transfer" | "hq_agenda" | "supplier_deal" | "recipe_update" | "check_watch";
+  agent: "inventory_prep" | "task_due" | "task_stuck" | "data_check" | "shortage_story" | "supplier_claim" | "transfer" | "hq_agenda" | "supplier_deal" | "recipe_update" | "check_watch" | "count_result" | "menu_price";
   audience: "director" | "hq";
   restaurant_id: string | null;
   restaurant_code: string | null;
@@ -774,6 +774,7 @@ export interface NoteOut {
   action: "create_task" | "move_due" | "transfer" | "claim" | null;
   action_due_on: string | null;
   action_title: string | null;
+  action_checklist: string[];
   action_tasks: PlannedTaskOut[];
   check_id: string | null;
   source: "rules" | "model";
