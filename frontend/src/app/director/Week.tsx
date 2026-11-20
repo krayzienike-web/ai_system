@@ -2,7 +2,7 @@ import { isNotFound } from "../../api/client";
 import { NoDataYet, useNoData } from "../NoDataYet";
 import { Link } from "@tanstack/react-router";
 import { ArrowDownRight, ArrowUpRight, CheckCircle2, ChevronDown, MessageCircle } from "lucide-react";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 
 import { useAppContext, useRestaurantWeek } from "../../api/hooks";
 import type { ApiFinding } from "../../api/types";
@@ -16,14 +16,23 @@ import { OutcomePill } from "../tasks/trace";
 
 const share = (v: string | null | undefined) => (v === null || v === undefined ? null : Number(v) * 100);
 
-/** The weekly view of one restaurant. Director's home; HQ opens it from "Рестораны" (readOnly). */
-export function WeekView({ code, readOnly = false }: { code: string; readOnly?: boolean }) {
+/**
+ * The weekly view of one restaurant. Director's home; HQ opens it from "Рестораны" (readOnly).
+ * `afterHero` goes right under the main numbers (the home screen puts «Помощник» there).
+ */
+export function WeekView({ code, readOnly = false, afterHero }: { code: string; readOnly?: boolean; afterHero?: ReactNode }) {
   const { openChat } = useUi();
   const week = useRestaurantWeek(code);
   const context = useAppContext();
   const [process, setProcess] = useState<string | null>(null);
   const empty = useNoData();
-  if (empty) return <NoDataYet canUpload={false} />;
+  if (empty)
+    return (
+      <div className="space-y-6">
+        {afterHero}
+        <NoDataYet canUpload={false} />
+      </div>
+    );
   if (week.isError && !week.data)
     return isNotFound(week.error) ? (
       <EmptyState title="Ресторан не найден" />
@@ -107,6 +116,8 @@ export function WeekView({ code, readOnly = false }: { code: string; readOnly?: 
           </div>
         </section>
       </Reveal>
+
+      {afterHero}
 
       {/* 2. Three actions for the week */}
       <Reveal index={1}>

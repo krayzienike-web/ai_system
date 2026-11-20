@@ -23,7 +23,7 @@ import { ApiError, DEMO } from "../../api/client";
 import { useAgentNotes, useAnswerNote, useAppContext, useAskInventory, useMe } from "../../api/hooks";
 import type { AgentNote } from "../../api/types";
 import { Button, Card } from "../../ds/primitives";
-import { ddmm } from "../../lib/format";
+import { ddmm, plural } from "../../lib/format";
 import { useViewer } from "../../lib/useViewer";
 import { useUi } from "../../state/ui";
 
@@ -290,9 +290,14 @@ function AskInventory({ restaurantId, onReady }: { restaurantId: string; onReady
   );
 }
 
+/** How many notes the home screen shows before «Показать еще» — the main numbers stay in sight. */
+export const NOTES_SHOWN = 3;
+
 /** «Помощник» on the home screen: nothing to say — nothing shown, except the director's «Подготовить список». */
 export function AgentNotes() {
   const viewer = useViewer();
+  const [all, setAll] = useState(false);
+  const listId = useId();
   const { data: me } = useMe();
   const notes = useAgentNotes();
   const headingId = useId();
@@ -318,17 +323,29 @@ export function AgentNotes() {
           className="flex items-center gap-2 text-lg font-semibold outline-none"
         >
           <Sparkles size={18} aria-hidden /> Помощник
+          {notes.data.length > NOTES_SHOWN && (
+            <span className="text-sm font-normal text-ink-3">· {plural(notes.data.length, ["сообщение", "сообщения", "сообщений"])}</span>
+          )}
         </h2>
         {restaurantId && viewer.can("tasks.execute") && !DEMO && (
           <AskInventory restaurantId={restaurantId} onReady={focusHeading} />
         )}
       </div>
       {notes.data.length > 0 ? (
-        <ul className="space-y-3">
-          {notes.data.map((n) => (
-            <NoteCard key={n.id} note={n} hq={viewer.isHq} onAnswered={focusHeading} />
-          ))}
-        </ul>
+        <>
+          <ul id={listId} className="space-y-3">
+            {(all ? notes.data : notes.data.slice(0, NOTES_SHOWN)).map((n) => (
+              <NoteCard key={n.id} note={n} hq={viewer.isHq} onAnswered={focusHeading} />
+            ))}
+          </ul>
+          {notes.data.length > NOTES_SHOWN && (
+            <Button size="sm" variant="secondary" aria-expanded={all} aria-controls={listId} onClick={() => setAll(!all)}>
+              {all
+                ? "Свернуть"
+                : `Показать еще ${plural(notes.data.length - NOTES_SHOWN, ["сообщение", "сообщения", "сообщений"])}`}
+            </Button>
+          )}
+        </>
       ) : (
         <p className="text-sm text-ink-2">Сейчас подсказать нечего: сроки в порядке, данные пришли.</p>
       )}

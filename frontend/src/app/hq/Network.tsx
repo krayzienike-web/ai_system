@@ -1,6 +1,8 @@
 import { Link, useNavigate } from "@tanstack/react-router";
 import { ArrowDownRight, ArrowUpRight, Inbox } from "lucide-react";
 
+import type { ReactNode } from "react";
+
 import { useNetworkOverview } from "../../api/hooks";
 import type { ApiFinding, NetworkOverview } from "../../api/types";
 import { VerifiedNote } from "../../ds/ai";
@@ -111,13 +113,20 @@ function FoodCostCard({ n }: { n: NetworkOverview }) {
   );
 }
 
-export function NetworkPage() {
+/** The network overview. `afterHero` goes right under the main numbers (the home screen puts «Помощник» there). */
+export function NetworkPage({ afterHero }: { afterHero?: ReactNode } = {}) {
   const navigate = useNavigate();
   const { period } = useUi();
   const overview = useNetworkOverview(period);
   const n = overview.data;
   const empty = useNoData();
-  if (empty) return <NoDataYet canUpload />;
+  if (empty)
+    return (
+      <div className="space-y-6">
+        {afterHero}
+        <NoDataYet canUpload />
+      </div>
+    );
   if (overview.isError) return <LoadError error={overview.error} />;
   if (!n) return <Skeleton className="h-[600px]" />;
 
@@ -190,6 +199,8 @@ export function NetworkPage() {
           </div>
         </section>
       </Reveal>
+
+      {afterHero}
 
       {n.kpi && (
         <Reveal index={1}>

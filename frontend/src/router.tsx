@@ -38,7 +38,6 @@ const FindingsPage = screen(() => import("./app/findings/FindingsPage"), "Findin
 const CheckPage = screen(() => import("./app/hq/Checks"), "CheckPage");
 const NewCheckPage = screen(() => import("./app/hq/Checks"), "NewCheckPage");
 const DecisionsPage = screen(() => import("./app/hq/Decisions"), "DecisionsPage");
-const NetworkPage = screen(() => import("./app/hq/Network"), "NetworkPage");
 const ReportPage = screen(() => import("./app/hq/Report"), "ReportPage");
 const MenuPage = screen(() => import("./app/hq/Menu"), "MenuPage");
 const ReviewPage = screen(() => import("./app/hq/Review"), "ReviewPage");
@@ -47,6 +46,7 @@ const RestaurantsPage = screen(() => import("./app/hq/Restaurants"), "Restaurant
 const RestaurantPage = screen(() => import("./app/hq/Restaurants"), "RestaurantPage");
 const SettingsPage = screen(() => import("./app/hq/Settings"), "SettingsPage");
 const TasksPage = screen(() => import("./app/TasksPage"), "TasksPage");
+const NetworkHome = lazy(() => import("./app/hq/Network").then((m) => ({ default: m.NetworkPage })));
 const WeekView = lazy(() => import("./app/director/Week").then((m) => ({ default: m.WeekView })));
 
 /** Screens for the management company only. The API refuses them to a director; the UI never dead-ends there. */
@@ -62,21 +62,17 @@ function hqOnly(Page: ComponentType) {
 function Home() {
   const viewer = useViewer();
   if (!viewer) return null;
-  if (viewer.isHq)
-    return (
-      <div className="space-y-6">
-        <AgentNotes />
-        <NetworkPage />
-      </div>
-    );
-  return viewer.restaurantCode ? (
-    <div className="space-y-6">
-      <AgentNotes />
-      <Suspense fallback={<Skeleton className="h-96" />}>
-        <WeekView code={viewer.restaurantCode} />
-      </Suspense>
-    </div>
-  ) : null;
+  // The main numbers first, «Помощник» right under them (UX pass 20.11.2026, docs/10-ux.md).
+  if (!viewer.isHq && !viewer.restaurantCode) return null;
+  return (
+    <Suspense fallback={<Skeleton className="h-96" />}>
+      {viewer.isHq ? (
+        <NetworkHome afterHero={<AgentNotes />} />
+      ) : (
+        <WeekView code={viewer.restaurantCode!} afterHero={<AgentNotes />} />
+      )}
+    </Suspense>
+  );
 }
 
 const rootRoute = createRootRoute();
