@@ -4,6 +4,7 @@ import { Link } from "@tanstack/react-router";
 import {
   ArrowLeftRight,
   CalendarClock,
+  ClipboardCheck,
   ClipboardList,
   DatabaseZap,
   FileSearch,
@@ -14,6 +15,7 @@ import {
   NotebookPen,
   Sparkles,
   Timer,
+  Utensils,
 } from "lucide-react";
 import { useId, useRef, useState } from "react";
 
@@ -37,7 +39,12 @@ const ICON = {
   supplier_deal: Handshake,
   recipe_update: NotebookPen,
   check_watch: Timer,
+  count_result: ClipboardCheck,
+  menu_price: Utensils,
 } as const;
+
+/** A note handed over inside the network (to the chef, about menu prices), not a letter to a supplier. */
+const MEMO = new Set<AgentNote["agent"]>(["recipe_update", "menu_price"]);
 
 /** What the main button says and what it reports, by what the note proposes. */
 const ACTION = {
@@ -52,9 +59,13 @@ const ACTION = {
   },
   claim: {
     label: () => "Отметить: отправлено",
-    // A note to the chef (stage 11) is handed over, not mailed to a supplier.
+    // A note to the chef (stage 11) or about menu prices (stage 12) is handed over, not mailed to a supplier.
     done: (n: AgentNote) =>
-      n.agent === "recipe_update" ? "Отметили: записка передана шеф-технологу" : "Отметили: письмо отправлено",
+      n.agent === "recipe_update"
+        ? "Отметили: записка передана шеф-технологу"
+        : n.agent === "menu_price"
+          ? "Отметили: записка о ценах передана"
+          : "Отметили: письмо отправлено",
   },
 } as const;
 
@@ -95,7 +106,7 @@ export function NoteCard({ note, hq, onAnswered }: { note: AgentNote; hq: boolea
     // No clipboard outside a secure page or in some web views: say so instead of failing silently (review, p. 4)
     const writing = navigator.clipboard?.writeText([note.text, "", ...note.items].join("\n")); // with the invoices
     (writing ?? Promise.reject(new Error("no clipboard")))
-      .then(() => notify(note.agent === "recipe_update" ? "Текст записки скопирован" : "Текст письма скопирован"))
+      .then(() => notify(MEMO.has(note.agent) ? "Текст записки скопирован" : "Текст письма скопирован"))
       .catch(() => notify("Не получилось скопировать — выделите текст вручную"));
   };
   // Each button names its note for a screen reader: «Скрыть» of which of the three?
@@ -133,6 +144,17 @@ export function NoteCard({ note, hq, onAnswered }: { note: AgentNote; hq: boolea
                 {all ? "Свернуть" : `Показать все (${note.items.length})`}
               </button>
             )}
+            {/* The count's result (stage 12) names its own points: shown before «Создать задачу» (review, p. 1) */}
+            {note.action === "create_task" && note.agent !== "inventory_prep" && note.action_checklist.length > 0 && (
+              <div className="mt-2 text-sm">
+                <div className="text-ink-2">В задаче будут пункты:</div>
+                <ul className="mt-0.5 list-disc space-y-0.5 pl-5">
+                  {note.action_checklist.map((line) => (
+                    <li key={line}>{line}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
             {note.action_tasks.length > 0 && (
               <div className="mt-2 text-sm">
                 <div className="text-ink-2">Будут поставлены задачи:</div>
@@ -146,37 +168,47 @@ export function NoteCard({ note, hq, onAnswered }: { note: AgentNote; hq: boolea
             <div className="mt-3 flex flex-wrap items-center gap-2">
               {note.action === "claim" && (
                 <Button size="sm" aria-describedby={titleId} onClick={copy}>
-                  {note.agent === "recipe_update" ? "Скопировать записку" : "Скопировать письмо"}
+                  {MEMO.has(note.agent) ? "Скопировать записку" : "Скопировать письмо"}
                 </Button>
               )}
               {may && action && answerButton("accept", "primary", action.label(note))}
               {note.agent === "data_check" && (
-                <Link to="/data" className="text-sm font-medium underline">
+                <Link to="/data" aria-describedby={titleId} className="text-sm font-medium underline">
                   Загрузить на экране «Данные»
                 </Link>
               )}
               {note.agent === "shortage_story" && (
-                <Link to="/findings" className="text-sm font-medium underline">
+                <Link to="/findings" aria-describedby={titleId} className="text-sm font-medium underline">
                   Открыть находки
                 </Link>
               )}
               {note.agent === "check_watch" && note.check_id && (
-                <Link to="/checks/$checkId" params={{ checkId: note.check_id }} className="text-sm font-medium underline">
+                <Link
+                  to="/checks/$checkId"
+                  params={{ checkId: note.check_id }}
+                  aria-describedby={titleId}
+                  className="text-sm font-medium underline"
+                >
                   Открыть проверку
                 </Link>
               )}
-              {note.agent === "recipe_update" && (
-                <Link to="/findings" className="text-sm font-medium underline">
+              {(note.agent === "recipe_update" || note.agent === "count_result") && (
+                <Link to="/findings" aria-describedby={titleId} className="text-sm font-medium underline">
                   Открыть находки
                 </Link>
               )}
+              {note.agent === "menu_price" && (
+                <Link to="/menu" aria-describedby={titleId} className="text-sm font-medium underline">
+                  Открыть меню
+                </Link>
+              )}
               {note.agent === "hq_agenda" && (
-                <Link to="/decisions" className="text-sm font-medium underline">
+                <Link to="/decisions" aria-describedby={titleId} className="text-sm font-medium underline">
                   Ждут решения
                 </Link>
               )}
               {(note.agent === "task_due" || note.agent === "task_stuck") && (
-                <Link to="/tasks" className="text-sm font-medium underline">
+                <Link to="/tasks" aria-describedby={titleId} className="text-sm font-medium underline">
                   Открыть задачи
                 </Link>
               )}

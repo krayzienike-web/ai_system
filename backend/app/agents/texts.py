@@ -392,6 +392,119 @@ def check_watch(f: dict[str, Any]) -> tuple[str, str, list[str]]:
     return title, text, items
 
 
+def _hint(h: dict[str, Any], u: str) -> str:
+    if h["kind"] == "finding":
+        return f"по нему уже открыта находка «{h['finding']}»"
+    if h["kind"] == "no_write_offs":
+        return "оформлены ли списания: за период их нет"
+    return f"дошли ли до получателя перемещения: ушло {num(h['qty'])} {u}"
+
+
+def _restaurants(n: int) -> str:
+    return _count(n, ("ресторан", "ресторана", "ресторанов"))
+
+
+def count_result(f: dict[str, Any]) -> tuple[str, str, list[str]]:
+    if "restaurants" in f:  # the HQ: the network
+        items = []
+        for r in f["restaurants"]:
+            line = (
+                f"{r['restaurant']} ({_ddmm(r['count_on'])}): сверх допуска ≈ {rub(Decimal(r['month']))} "
+                "в месяц"
+            )
+            if r["before"] is not None:
+                line += f", на прошлом пересчете — {rub(Decimal(r['before']))}"
+            if r["top"]:
+                line += f"; больше всего — {r['top']}, {rub(Decimal(r['top_rub']))} за период"
+            # What the director has to explain — or that nobody does (backend review of stage 12, p. 2)
+            if r.get("director"):
+                line += f"; директору — {_count(r['director'], ('товар', 'товара', 'товаров'))} к объяснению"
+            else:
+                line += (
+                    f"; директору объяснять нечего: каждый товар меньше {rub(Decimal(f['least']))} в месяц"
+                )
+            items.append(line)
+        if f["card_products"]:
+            items.append(
+                f"Не учтен: {', '.join(f['card_products'])} — расход выше техкарты во всей сети, вопрос к "
+                "техкарте, а не к ресторанам"
+            )
+        # Beyond the allowance with no purchase price anywhere: not «within», just not known in rubles
+        rest = f["counted"] - len(f["restaurants"]) - f["within"]
+        unknown = f", без цены закупки не оценить — {rest}" if rest > 0 else ""
+        grew = f["grew"]
+        title = (
+            f"Итоги инвентаризаций: расхождения заметно выросли в {grew} из {len(f['restaurants'])}"
+            if grew
+            else "Итоги инвентаризаций: расхождения сверх допуска"
+        )
+        text = (
+            f"Пересчитали {_restaurants(f['counted'])} за последние три недели. Сверх допуска потерь — в "
+            f"{len(f['restaurants'])} из них, в допуске — {f['within']}{unknown}. Сначала те, где "
+            f"расхождения выросли с прошлого пересчета на {rub(Decimal(f['least']))} в месяц и больше. "
+            "Директор видит итоги своего ресторана, если в них есть товар от этой суммы, и может поставить "
+            "себе задачу их объяснить."
+        )
+        return title, text, items
+    items = []
+    for p in f["products"]:
+        u = UNITS.get(p["unit"], p["unit"])
+        line = f"{p['name']}: {num(p['qty'])} {u} сверх допуска ≈ {rub(Decimal(p['rub']))}"
+        if p.get("network_price"):
+            line += " по средней цене сети: ресторан его не закупал"
+        hints = [_hint(h, u) for h in p["hints"]]
+        if hints:
+            line += ". С чего начать: " + "; ".join(hints)
+        items.append(line)
+    if f["card_products"]:
+        items.append(
+            f"{', '.join(f['card_products'])}: расход выше техкарты во всей сети — норму пересматривает УК, "
+            "объяснять не нужно"
+        )
+    title = f"Итоги инвентаризации {_d(f['count_on'])}: что объяснить"
+    text = (
+        f"С {_d(f['since'])} по {_d(f['count_on'])} расход по пересчету выше техкарт и списаний сверх "
+        f"допуска: {_positions(len(f['products']))} на {rub(Decimal(f['total_rub']))}. Разберитесь до "
+        "следующего пересчета: с чего начать, написано у каждого товара; объяснение запишите в задаче."
+    )
+    return title, text, items
+
+
+def menu_price(f: dict[str, Any]) -> tuple[str, str, list[str]]:
+    items = []
+    for d in f["dishes"]:
+        line = (
+            f"{d['name']}: себестоимость {_kop(d['cost_before'])} → {_kop(d['cost'])}, фудкост "
+            f"{num(d['food_cost_before_pct'])}% → {num(d['food_cost_pct'])}% при цели "
+            f"{num(d['target_pct'])}%. Цена {rub(Decimal(d['new_price']))} вместо {rub(Decimal(d['price']))}"
+        )
+        if d["cut"]:
+            line += (
+                f" или {f['product'].lower()} в порции {num(d['cut']['old'])} → "
+                f"{num(d['cut']['new'])} {_u(f)}"
+            )
+        line += f"; маржа сейчас теряет ≈ {rub(Decimal(d['lost_month']))} в месяц"
+        items.append(line)
+    if f["already"]:
+        items.append(f"Еще блюд выше цели и до этого: {f['already']}")
+    lost = sum((Decimal(d["lost_month"]) for d in f["dishes"]), Decimal(0))
+    if f["reason"] == "price":
+        title = f"Цены меню: «{f['product']}» +{num(f['growth_pct'])}% к цене закупки"
+        why = (
+            f"«{f['product']}» стоит сети {_kop(f['price'])}/{_u(f)} вместо {_kop(f['price_before'])} "
+            "кварталом раньше"
+        )
+    else:
+        title = f"Цены меню: новые техкарты с {_d(f['since'])}"
+        why = f"С {_d(f['since'])} действуют новые техкарты"
+    text = (
+        f"{why}, и фудкост {_count(len(f['dishes']), ('блюда', 'блюд', 'блюд'))} ушел выше цели: маржа "
+        f"теряет ≈ {rub(lost)} в месяц. Для каждого блюда — цена меню, которая вернет фудкост к цели, или "
+        "меньшая порция. Решение за УК, цену меняют в кассовой системе."
+    )
+    return title, text, items
+
+
 RULES = {
     Agent.INVENTORY_PREP: inventory,
     Agent.TASK_DUE: task_due,
@@ -404,6 +517,8 @@ RULES = {
     Agent.SUPPLIER_DEAL: supplier_deal,
     Agent.RECIPE_UPDATE: recipe_update,
     Agent.CHECK_WATCH: check_watch,
+    Agent.COUNT_RESULT: count_result,
+    Agent.MENU_PRICE: menu_price,
 }
 
 

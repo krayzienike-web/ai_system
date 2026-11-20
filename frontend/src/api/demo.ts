@@ -919,7 +919,7 @@ function answerNote(v: Viewer, id: string, answer: string): AgentNote {
         title: note.action_title,
         due_on: note.action_due_on,
         restaurant_ids: note.restaurant_id ? [note.restaurant_id] : [],
-        checklist: note.items.map((line) => `Пересчитать: ${line}`),
+        checklist: note.action_checklist,
       });
       result = task?.id ?? null;
     } else if (note.action === "transfer" && note.action_due_on) {

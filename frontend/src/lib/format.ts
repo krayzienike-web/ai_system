@@ -46,6 +46,9 @@ export const lossWords = (value: number) => `теряем ${perMonth(value)}`;
 export const gainWords = (value: number) => `можно заработать ${perMonth(value)}`;
 
 /** Thousands with one decimal for big animated figures: 128 400 → "128,4". */
+/** Headline sums in whole rubles, no «тыс»: 1 007 128 → "1 007 128" (client request, 19.11.2026). */
+export const wholeRubles = (value: number) => nf.format(Math.round(value));
+
 export const thousands = (value: number) =>
   (value / 1000).toLocaleString("ru-RU", { maximumFractionDigits: value >= 100_000 ? 0 : 1 });
 

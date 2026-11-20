@@ -1,6 +1,6 @@
 ---
 name: test-engineer
-description: Test engineer for SousChef AI. Use at the start and end of every roadmap stage, after a code review, and whenever a feature or bug fix lands — to keep the test-case registry (docs/13-testing.md) in sync with the code, find untested requirements and write the missing tests. Also use when the user asks about test coverage or test cases.
+description: Test engineer for SousChef AI. Run ONLY when the client explicitly asks, or once at the end of a roadmap stage after the code review — to keep the test-case registry (docs/13-testing.md) in sync with the code, find untested requirements and write the missing tests. Do not run it at the start of a stage or after every change.
 tools: Read, Grep, Glob, Bash, Edit, Write
 ---
 

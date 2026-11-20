@@ -22,10 +22,12 @@ from sqlalchemy.orm import Session
 from app.agents import (
     agenda,
     checks,
+    counts,
     data,
     deadlines,
     deals,
     inventory,
+    menu_prices,
     recipes,
     story,
     suppliers,
@@ -179,6 +181,8 @@ def run_network(session: Session, tenant_id: UUID, today: date, write: Writer | 
         + deals.drafts(session, restaurants, today)
         + recipes.drafts(session, restaurants, today)
         + checks.drafts(session, restaurants, today)
+        + counts.drafts(session, restaurants, today)
+        + menu_prices.drafts(session, restaurants, today)
     }
     written: dict[tuple[str, str], Text | None] = {}
     for k, d in drafts.items():
@@ -219,10 +223,14 @@ def run_all(today: date, write_for: Callable[[AccessContext], Writer | None] | N
 
 def notes(session: Session, ctx: AccessContext, restaurant_id: UUID | None = None) -> list[AgentNote]:
     """The notes waiting for an answer, as this person may see them (row-level security: a director — the
-    notes to the director of their restaurant; the HQ — all)."""
+    notes to the director of their restaurant; the HQ — all). The HQ's whole list leaves out the directors'
+    count results (stage 12): its own summary of the network says it once, not twelve times; a restaurant's
+    list (`restaurant_id`) has them."""
     q = select(AgentNote).where(AgentNote.status == NoteStatus.NEW)
     if restaurant_id is not None:
         q = q.where(AgentNote.restaurant_id == restaurant_id)
+    elif ctx.role.is_hq:
+        q = q.where(~((AgentNote.agent == Agent.COUNT_RESULT) & (AgentNote.audience == Audience.DIRECTOR)))
     return list(
         session.execute(q.order_by(AgentNote.for_date, AgentNote.created_on, AgentNote.key)).scalars()
     )
@@ -271,7 +279,11 @@ def accept(session: Session, ctx: AccessContext, note_id: UUID, *, today: date) 
         proposal = note.proposal or {}
         due = date.fromisoformat(proposal["due_on"])
         if due < today:
-            raise InvalidError("День пересчета уже прошел")
+            raise InvalidError(
+                "Срок объяснения уже прошел"
+                if note.agent == Agent.COUNT_RESULT
+                else "День пересчета уже прошел"
+            )
         (task,) = tasks.create_tasks(
             session,
             ctx,
@@ -279,7 +291,7 @@ def accept(session: Session, ctx: AccessContext, note_id: UUID, *, today: date) 
             due_on=due,
             today=today,
             restaurant_ids=[note.restaurant_id] if note.restaurant_id else [],
-            checklist=[f"Пересчитать: {line}" for line in note.items],
+            checklist=task_checklist(note),
         )
         note.result_task_id = task.id
     elif action == "transfer":
@@ -296,6 +308,15 @@ def accept(session: Session, ctx: AccessContext, note_id: UUID, *, today: date) 
         raise InvalidError("Здесь нечего брать в работу: сообщение можно только скрыть")
     _decided(session, ctx, note, NoteStatus.ACCEPTED)
     return note
+
+
+def task_checklist(note: AgentNote) -> list[str]:
+    """The points of the task «Создать задачу» makes: the count's result (stage 12) names its own; the list
+    before a count — what to recount. Shown on the note before the button is pressed."""
+    proposal = note.proposal or {}
+    if proposal.get("action") != "create_task":
+        return []
+    return list(proposal.get("checklist") or [f"Пересчитать: {line}" for line in note.items])
 
 
 @dataclass(frozen=True)

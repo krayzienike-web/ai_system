@@ -6,7 +6,7 @@ import type { ApiFinding, NetworkOverview } from "../../api/types";
 import { VerifiedNote } from "../../ds/ai";
 import { buttonClass, LoadError, QuestionBlock, Reveal, Skeleton, Term } from "../../ds/primitives";
 import { AnimatedNumber, AreaTrend, PROCESS_ICON, ProfitSplit, RankList } from "../../ds/viz";
-import { ddmm, money, pct, perMonth, plural, pp, rub, thousands } from "../../lib/format";
+import { ddmm, money, pct, perMonth, plural, pp, rub, wholeRubles } from "../../lib/format";
 import { NoDataYet, useNoData } from "../NoDataYet";
 import { ProcessMatrix } from "./ProcessMatrix";
 import { useUi } from "../../state/ui";
@@ -153,9 +153,9 @@ export function NetworkPage() {
             </div>
             <div className="mt-1 flex items-baseline gap-3">
               <span className="font-display text-[56px] leading-none font-semibold tracking-tight sm:text-[72px]">
-                <AnimatedNumber value={onTable} format={thousands} />
+                <AnimatedNumber value={onTable} format={wholeRubles} />
               </span>
-              <span className="text-lg text-white/80">тыс ₽ в месяц</span>
+              <span className="text-lg text-white/80">₽ в месяц</span>
             </div>
             <div className="mt-2 text-sm text-white/60">{rub(money(n.on_table_year) ?? 0)} в год</div>
             <ProfitSplit losses={losses} missed={potential} format={rub} />
@@ -164,7 +164,7 @@ export function NetworkPage() {
             <div className="rounded-[18px] bg-white/[0.07] p-5">
               <div className="text-sm text-white/70">Подтвержденный эффект</div>
               <div className="mt-1 font-display text-3xl font-semibold text-[#9be3a9]">
-                +<AnimatedNumber value={money(n.confirmed) ?? 0} format={thousands} /> <span className="text-base text-white/80">тыс ₽</span>
+                +<AnimatedNumber value={money(n.confirmed) ?? 0} format={wholeRubles} /> <span className="text-base text-white/80">₽</span>
               </div>
               <div className="mt-1 text-xs text-white/60">
                 в месяц — прибыль, которую уже дали изменения. Завершено проверок: {n.completed_checks}
@@ -213,8 +213,8 @@ export function NetworkPage() {
             >
               <div className="text-sm text-ink-3">Переплаты поставщикам</div>
               <div className="mt-1 flex items-baseline gap-2">
-                <span className="num font-display text-3xl font-semibold">{thousands(money(n.overpay) ?? 0)}</span>
-                <span className="text-sm text-ink-2">тыс ₽ в месяц</span>
+                <span className="num font-display text-3xl font-semibold">{wholeRubles(money(n.overpay) ?? 0)}</span>
+                <span className="text-sm text-ink-2">₽ в месяц</span>
               </div>
               <div className="mt-1 text-sm text-ink-2">по открытым находкам о закупках</div>
               <div className="mt-auto pt-3 text-xs font-medium text-brand-strong group-hover:underline">К находкам →</div>

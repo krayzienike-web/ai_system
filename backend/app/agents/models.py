@@ -32,6 +32,10 @@ class Agent(StrEnum):
     SUPPLIER_DEAL = "supplier_deal"  # № 4: one price and a discount on volume from a supplier (to the HQ)
     RECIPE_UPDATE = "recipe_update"  # № 6: a recipe card the whole network overspends (to the HQ, the chef)
     CHECK_WATCH = "check_watch"  # № 10: how a running check goes and what may spoil it; its result (HQ)
+    COUNT_RESULT = (
+        "count_result"  # № 13: a count's differences beyond the allowance (director; HQ: the network)
+    )
+    MENU_PRICE = "menu_price"  # № 14: dishes pushed above the food cost target by a price or a card (HQ)
 
 
 class Audience(StrEnum):

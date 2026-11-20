@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { pct, perMonth, plural, points, rub, thousands } from "./format";
+import { pct, perMonth, plural, points, rub, thousands, wholeRubles } from "./format";
 
 // Intl inserts non-breaking spaces between groups of digits.
 const plain = (s: string) => s.replace(/\u00a0|\u202f/g, " ");
@@ -43,5 +43,10 @@ describe("money and numbers in words", () => {
     expect(pct(11.44)).toBe("11,4%");
     expect(thousands(128_400)).toBe("128");
     expect(thousands(12_840)).toBe("12,8");
+  });
+
+  it("writes headline sums in whole rubles, without «тыс»", () => {
+    expect(plain(wholeRubles(1_007_128.4))).toBe("1 007 128");
+    expect(plain(wholeRubles(5_127))).toBe("5 127");
   });
 });

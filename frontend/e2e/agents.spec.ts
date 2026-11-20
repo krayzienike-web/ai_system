@@ -67,3 +67,32 @@ test("TC-UI-42: the director's «Помощник» has none of the HQ's notes",
   for (const text of ["Перемещение:", "Повестка планерки", "Недостача:", "Запрос «"])
     await expect(assistant.getByText(text)).toHaveCount(0);
 });
+
+// TC-UI-48 (stage 12): the count's result — the director sees the task's points before pressing and makes it;
+// the HQ gets the network's summary and the note about menu prices to copy, with a link to «Меню».
+test("TC-UI-48: the director explains the count's result in a task", async ({ page }) => {
+  await signIn(page, "Директор ресторана");
+  const assistant = page.getByRole("region", { name: "Помощник" });
+  const note = assistant.getByRole("listitem").filter({ hasText: "Итоги инвентаризации 01.10" });
+  await expect(note.getByText("В задаче будут пункты:")).toBeVisible();
+  await expect(note.getByText(/^Объяснить: Сыр Моцарелла/)).toBeVisible();
+  await expect(note.getByRole("link", { name: "Открыть находки" })).toBeVisible();
+  await note.getByRole("button", { name: "Создать задачу" }).click();
+  await expect(page.getByText("Задача создана — она в «Задачах»")).toBeVisible();
+  await open(page, /Задачи/);
+  await expect(page.getByText(/Объяснить расхождения инвентаризации 01\.10/).first()).toBeVisible();
+});
+
+test("TC-UI-48: the HQ gets the network's summary and menu prices", async ({ page }) => {
+  await signIn(page, "Управляющая компания");
+  const assistant = page.getByRole("region", { name: "Помощник" });
+  const summary = assistant.getByRole("listitem").filter({ hasText: "Итоги инвентаризаций" });
+  await expect(summary).toHaveCount(1);
+  await expect(summary.getByRole("button", { name: "Скрыть" })).toBeVisible();
+  await expect(assistant.getByText("Итоги инвентаризации 01.10")).toHaveCount(0); // the directors' own
+  const menu = assistant.getByRole("listitem").filter({ hasText: "Цены меню:" });
+  await expect(menu.getByText(/Лосось на гриле/)).toBeVisible();
+  await expect(menu.getByRole("button", { name: "Скопировать записку" })).toBeVisible();
+  await menu.getByRole("link", { name: "Открыть меню" }).click();
+  await expect(page.getByRole("heading", { name: "Меню: популярность и маржа" })).toBeVisible();
+});
