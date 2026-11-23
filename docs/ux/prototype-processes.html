@@ -1,0 +1,569 @@
+<title>Проекты и процессы</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600&family=Unbounded:wght@600&display=swap">
+<style>
+/* Layout: app shell (sidebar + content up to 1280px); screens are lists → run with tabs → drawer for details */
+:root{
+  --ink:#14202B;--ink-2:#3D4A57;--ink-3:#6A7683;--paper:#F2F5F4;--surface:#FFFFFF;--line:#DFE6E3;
+  --brand:#0A8F84;--brand-strong:#07736A;--brand-soft:#E1F3F1;--spark:#F2B33D;
+  --bad:#B42318;--bad-bg:#FDECEA;--ok:#1F7A3A;--ok-bg:#E7F5EC;--warn:#8A5A00;--warn-bg:#FFF4D6;--info:#1D4ED8;--info-bg:#E8EEFD;
+  --shadow:0 8px 30px rgba(20,32,43,.14);
+  --f-display:"Unbounded","Onest",system-ui,sans-serif;--f-ui:"Onest",system-ui,-apple-system,"Segoe UI",sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --ink:#E7EEEC;--ink-2:#B9C5C2;--ink-3:#8B9895;--paper:#0F1719;--surface:#172225;--line:#263437;
+  --brand:#2BB3A6;--brand-strong:#5FD0C4;--brand-soft:#123634;
+  --bad:#FF8A80;--bad-bg:#3A1C1A;--ok:#7BD58F;--ok-bg:#15301E;--warn:#F2C66B;--warn-bg:#33290F;--info:#9DB8FF;--info-bg:#1A2545;
+  --shadow:0 8px 30px rgba(0,0,0,.5);color-scheme:dark}}
+:root[data-theme="dark"]{
+  --ink:#E7EEEC;--ink-2:#B9C5C2;--ink-3:#8B9895;--paper:#0F1719;--surface:#172225;--line:#263437;
+  --brand:#2BB3A6;--brand-strong:#5FD0C4;--brand-soft:#123634;
+  --bad:#FF8A80;--bad-bg:#3A1C1A;--ok:#7BD58F;--ok-bg:#15301E;--warn:#F2C66B;--warn-bg:#33290F;--info:#9DB8FF;--info-bg:#1A2545;
+  --shadow:0 8px 30px rgba(0,0,0,.5);color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--paper);color:var(--ink);font-family:var(--f-ui);font-size:15px;line-height:1.45;margin:0}
+button,input,select,textarea{font:inherit;color:inherit}
+.shell{display:grid;grid-template-columns:220px minmax(0,1fr);min-height:100vh}
+.side{background:var(--surface);border-right:1px solid var(--line);padding:20px 12px;display:flex;flex-direction:column;gap:4px}
+.logo{display:flex;align-items:center;gap:8px;font-family:var(--f-display);font-size:16px;padding:0 8px 16px}
+.logo i{width:26px;height:26px;border-radius:7px;background:var(--brand);position:relative;display:block}
+.logo i:after{content:"";position:absolute;right:-3px;top:-3px;width:8px;height:8px;border-radius:50%;background:var(--spark)}
+.logo b{font-family:var(--f-ui);font-size:11px;border:1px solid var(--ink-3);border-radius:4px;padding:0 4px;font-weight:600}
+.nav{padding:8px 10px;border-radius:10px;color:var(--ink-2);font-weight:500}
+.nav.on{background:var(--brand-soft);color:var(--brand-strong)}
+.nav small{display:block;font-weight:400;color:var(--ink-3);font-size:12px}
+.main{padding-block:24px 64px;padding-left:max(24px,env(safe-area-inset-left,0px));padding-right:max(24px,env(safe-area-inset-right,0px));min-width:0}
+.wrap{max-width:1280px;margin:0 auto;display:flex;flex-direction:column;gap:20px}
+.top{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between}
+h1{font-family:var(--f-display);font-weight:600;font-size:26px;margin:0;text-wrap:balance}
+h2{font-size:18px;margin:0;font-weight:600}
+h3{font-size:16px;margin:0;font-weight:600}
+.muted{color:var(--ink-3)}.small{font-size:13px}
+.viewer{display:flex;flex-wrap:wrap;min-width:0;align-items:center;gap:8px;font-size:13px;color:var(--ink-3)}
+.viewer select{max-width:100%;min-width:0;border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:6px 10px}
+.proto{font-size:12px;color:var(--warn);background:var(--warn-bg);padding:4px 10px;border-radius:999px}
+.btn{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:8px 14px;cursor:pointer;font-weight:500}
+.btn:hover{border-color:var(--brand)}
+.btn.pri{background:var(--brand);border-color:var(--brand);color:#fff}
+.btn.pri:hover{background:var(--brand-strong)}
+.btn.bad{color:var(--bad)}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.btn.sm{padding:4px 10px;font-size:13px}
+button:focus-visible,select:focus-visible,input:focus-visible,textarea:focus-visible,.cell:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:20px}
+.grid{display:grid;gap:16px;grid-template-columns:repeat(auto-fill,minmax(320px,1fr))}
+.run{cursor:pointer;display:flex;flex-direction:column;gap:12px;transition:border-color .15s}
+.run:hover{border-color:var(--brand)}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.between{justify-content:space-between}
+.pill{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;padding:3px 9px;border-radius:999px;white-space:nowrap}
+.pill:before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}
+.p-ok{color:var(--ok);background:var(--ok-bg)}.p-bad{color:var(--bad);background:var(--bad-bg)}
+.p-warn{color:var(--warn);background:var(--warn-bg)}.p-info{color:var(--info);background:var(--info-bg)}
+.p-mute{color:var(--ink-3);background:var(--paper)}
+.bar{height:8px;border-radius:99px;background:var(--paper);overflow:hidden}
+.bar i{display:block;height:100%;background:var(--brand);border-radius:99px}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+.kpi{background:var(--paper);border-radius:12px;padding:12px}
+.kpi b{display:block;font-family:var(--f-display);font-size:24px;font-variant-numeric:tabular-nums}
+.kpi span{font-size:13px;color:var(--ink-2)}
+.back{background:none;border:0;color:var(--brand);cursor:pointer;padding:0;font-weight:500}
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);overflow-x:auto}
+.tab{background:none;border:0;padding:10px 14px;cursor:pointer;color:var(--ink-2);font-weight:500;border-bottom:2px solid transparent;white-space:nowrap}
+.tab.on{color:var(--brand-strong);border-color:var(--brand)}
+.tab em{font-style:normal;font-size:12px;background:var(--bad-bg);color:var(--bad);border-radius:99px;padding:0 6px;margin-left:4px}
+.scroll{overflow-x:auto;border:1px solid var(--line);border-radius:16px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}
+th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:top;font-size:14px}
+th{font-size:12px;font-weight:600;color:var(--ink-3);letter-spacing:.02em;background:var(--surface);white-space:nowrap}
+tr:last-child td{border-bottom:0}
+.gate td{background:var(--brand-soft)}
+.gate b{color:var(--brand-strong)}
+.cardgrid td{padding:0}
+.cardgrid th .own{display:block;font-weight:400;letter-spacing:0;text-transform:none}
+.cell{display:block;width:100%;min-width:130px;max-width:220px;text-align:left;background:none;border:0;padding:10px 12px;cursor:pointer;font-size:13px;line-height:1.35}
+.cell:hover{background:var(--brand-soft)}
+.c-empty{background:var(--bad-bg);color:var(--bad)}
+.c-error{background:var(--bad-bg);box-shadow:inset 3px 0 0 var(--bad)}
+.c-review{background:var(--warn-bg);box-shadow:inset 3px 0 0 var(--warn)}
+.c-mine{font-weight:500}
+.dish{min-width:170px;padding:10px 12px !important}
+.dish small{display:block;color:var(--ink-3)}
+.removed .cell{color:var(--ink-3)}
+.legend{display:flex;flex-wrap:wrap;gap:16px;font-size:13px;color:var(--ink-2)}
+.legend i{display:inline-block;width:12px;height:12px;border-radius:3px;vertical-align:-1px;margin-right:6px}
+.lock{font-size:11px;color:var(--brand-strong);font-weight:600}
+.ev{display:grid;grid-template-columns:150px minmax(0,1fr);gap:12px;padding:12px 0;border-bottom:1px solid var(--line)}
+.ev:last-child{border-bottom:0}
+.drawer-bg{position:fixed;inset:0;background:rgba(10,20,25,.35);z-index:20}
+.drawer{position:fixed;top:0;right:0;bottom:0;width:min(480px,100%);background:var(--surface);z-index:21;box-shadow:var(--shadow);
+  padding:calc(20px + env(safe-area-inset-top,0px)) max(20px,env(safe-area-inset-right,0px)) calc(20px + env(safe-area-inset-bottom,0px)) 20px;overflow-y:auto;display:flex;flex-direction:column;gap:16px}
+.field{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--ink-2)}
+.field input,.field select,.field textarea{border:1px solid var(--line);border-radius:10px;padding:8px 10px;background:var(--surface);font-size:14px}
+.hist{border-left:2px solid var(--line);padding-left:12px;display:flex;flex-direction:column;gap:10px}
+.hist div{font-size:13px}
+.note{background:var(--paper);border-radius:12px;padding:12px;font-size:13px;color:var(--ink-2)}
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(20px + env(safe-area-inset-bottom,0px));background:var(--ink);color:var(--paper);padding:12px 18px;border-radius:12px;z-index:30;max-width:min(560px,90vw);font-size:14px;box-shadow:var(--shadow)}
+.date-in{border:1px solid var(--line);border-radius:8px;padding:4px 6px;background:var(--surface)}
+@media (max-width:860px){
+  .shell{grid-template-columns:1fr}
+  .side{flex-direction:row;overflow-x:auto;padding:10px max(16px,env(safe-area-inset-left,0px));border-right:0;border-bottom:1px solid var(--line)}
+  .logo{padding:0 8px 0 0}.nav small{display:none}.nav{white-space:nowrap}
+  .main{padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+  .ev{grid-template-columns:1fr;gap:4px}
+  h1{font-size:22px}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+
+<div class="shell">
+  <aside class="side">
+    <div class="logo"><i></i>SousChef <b>AI</b></div>
+    <div class="nav">Главная</div>
+    <div class="nav">Находки</div>
+    <div class="nav">Меню</div>
+    <div class="nav">Задачи</div>
+    <div class="nav on">Проекты и процессы<small>Ввод меню</small></div>
+  </aside>
+  <main class="main"><div class="wrap" id="app"></div></main>
+</div>
+<div id="layer"></div>
+
+<script>
+const TODAY = "2026-11-23";
+const P = {
+  ak:{name:"Анна Ковалева",role:"Бренд-шеф",fn:"chef"},
+  is:{name:"Илья Сорокин",role:"Маркетинг",fn:"mkt"},
+  mb:{name:"Мария Белова",role:"Финансы",fn:"fin"},
+  od:{name:"Олег Демин",role:"Операционный директор",fn:"ops"},
+  dk:{name:"Дмитрий Ким",role:"IT · владелец процесса",fn:"it"},
+};
+const BY_FN = {chef:"ak",mkt:"is",fin:"mb",ops:"od",it:"dk"};
+const FN_NAME = {chef:"Бренд-шеф",mkt:"Маркетинг",fin:"Финансы",ops:"Опер. директор",it:"IT"};
+const TEMPLATE = {
+  global:[
+    {n:1,t:"Анализ рынка и текущего меню",fn:"chef",off:-60,deps:[]},
+    {n:2,t:"Дегустации",fn:"chef",off:-45,deps:[1]},
+    {n:3,t:"Состав меню утвержден",fn:"ops",off:-40,deps:[2],gate:true},
+    {n:4,t:"ТТК, выход, КБЖУ, аллергены",fn:"chef",off:-30,deps:[3]},
+    {n:5,t:"Себестоимость и цены по зонам",fn:"fin",off:-25,deps:[4]},
+    {n:6,t:"Цены утверждены",fn:"ops",off:-21,deps:[5],gate:true},
+    {n:7,t:"Названия и описания для гостя",fn:"mkt",off:-25,deps:[3]},
+    {n:8,t:"Фотосъемка блюд",fn:"mkt",off:-21,deps:[3]},
+    {n:9,t:"Макет и печать меню",fn:"mkt",off:-14,deps:[6,7,8]},
+    {n:10,t:"Карточка меню заполнена и проверена",fn:"it",off:-10,deps:[4,5,7,8]},
+    {n:11,t:"Выгрузка в кассу и витрины",fn:"it",off:-3,deps:[10]},
+    {n:12,t:"Проверка на точках и старт продаж",fn:"it",off:0,deps:[11]},
+  ],
+  partial:[
+    {n:3,t:"Состав блюд утвержден",fn:"ops",off:-16,deps:[],gate:true},
+    {n:4,t:"ТТК, выход, КБЖУ, аллергены",fn:"chef",off:-14,deps:[3]},
+    {n:5,t:"Себестоимость и цены по зонам",fn:"fin",off:-12,deps:[4]},
+    {n:6,t:"Цены утверждены",fn:"ops",off:-10,deps:[5],gate:true},
+    {n:7,t:"Названия и описания для гостя",fn:"mkt",off:-12,deps:[3]},
+    {n:8,t:"Фотосъемка блюд",fn:"mkt",off:-10,deps:[3]},
+    {n:10,t:"Карточка меню заполнена и проверена",fn:"it",off:-5,deps:[4,5,7,8]},
+    {n:11,t:"Выгрузка в кассу и витрины",fn:"it",off:-2,deps:[10]},
+    {n:12,t:"Проверка на точках и старт продаж",fn:"it",off:0,deps:[11]},
+  ]
+};
+const COLS = [
+  {k:"pos",t:"Название в кассе",fn:"it"},
+  {k:"guest",t:"Название для гостя",fn:"mkt"},
+  {k:"comp",t:"Состав",fn:"chef",gate:3},
+  {k:"yield",t:"Выход, г",fn:"chef",gate:3},
+  {k:"kbju",t:"КБЖУ на 100 г",fn:"chef"},
+  {k:"allerg",t:"Аллергены",fn:"chef"},
+  {k:"cost",t:"Себестоимость, ₽",fn:"fin"},
+  {k:"p_msk",t:"Цена · Москва, ₽",fn:"fin",gate:6},
+  {k:"p_reg",t:"Цена · Регионы, ₽",fn:"fin",gate:6},
+  {k:"desc",t:"Описание",fn:"mkt"},
+  {k:"photo",t:"Фото",fn:"mkt"},
+];
+const COL = Object.fromEntries(COLS.map(c=>[c.k,c]));
+const DEPS = {comp:["kbju","allerg","desc","cost"],yield:["kbju","cost","desc"],cost:["p_msk","p_reg"],guest:[],p_msk:[],p_reg:[]};
+const SHOWCASES = [
+  {k:"rk",t:"r_keeper",req:["pos","p_msk","p_reg"]},
+  {k:"iiko",t:"iiko",req:["pos","comp","yield","kbju"]},
+  {k:"site",t:"Сайт",req:["guest","desc","photo","kbju","allerg","p_msk","p_reg"]},
+  {k:"app",t:"Приложение",req:["guest","desc","photo","kbju","allerg","p_msk","p_reg"]},
+  {k:"ya",t:"Яндекс Еда",req:["guest","desc","photo","kbju","allerg","p_msk"],limit:40},
+  {k:"kuper",t:"Купер",req:["guest","desc","photo","p_msk"],limit:50},
+  {k:"kate",t:"Кейт Медиа",req:["guest","photo","p_msk"]},
+];
+const KIND = {
+  late:{t:"Срыв срока",cls:"p-bad"},
+  forgot:{t:"Забыл обновить",cls:"p-warn"},
+  lateedit:{t:"Поздняя правка",cls:"p-info"},
+  error:{t:"Ошибка в данных",cls:"p-bad"},
+};
+
+// ---------- data helpers
+const d = s => new Date(s+"T00:00:00");
+const iso = dt => dt.toISOString().slice(0,10);
+const addDays = (s,n) => { const x=d(s); x.setDate(x.getDate()+n); return iso(x); };
+const diff = (a,b) => Math.round((d(a)-d(b))/864e5);
+const fmt = s => { const [y,m,dd]=s.split("-"); return `${dd}.${m}`; };
+const fmtY = s => { const [y,m,dd]=s.split("-"); return `${dd}.${m}.${y}`; };
+const esc = s => String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const plural = (n,a,b,c) => { const m10=n%10,m100=n%100; return m10===1&&m100!==11?a:(m10>=2&&m10<=4&&(m100<10||m100>=20)?b:c); };
+const days = n => `${n} ${plural(n,"день","дня","дней")}`;
+const C = (v,by,at,extra={}) => ({v,hist:v===""?[]:[{at,by,from:"",to:v}],...extra});
+
+function makeStages(kind, launch, doneMap={}, assignee={}){
+  return TEMPLATE[kind].map(s=>({...s,due:addDays(launch,s.off),who:assignee[s.n]||BY_FN[s.fn],doneAt:doneMap[s.n]||null,dueEdits:[]}));
+}
+
+// ---------- seed: brand «Тесто», winter menu (active, with problems)
+const winter = {
+  id:"r1",brand:"Пиццерия «Тесто»",title:"Зимнее меню 2026/27",kind:"global",launch:"2026-12-15",startedAt:"2026-10-16",
+  stages:makeStages("global","2026-12-15",{1:"2026-10-16",2:"2026-10-31",3:"2026-11-05",4:"2026-11-18",5:"2026-11-20"}),
+  rows:[
+    {id:"d1",dish:"Пицца «Тартифлет»",change:"new",cells:{
+      pos:C("Пицца Тартифлет 30","dk","2026-11-19"),guest:C("Тартифлет","is","2026-11-17"),
+      comp:C("тесто, сливочный соус, картофель, бекон, реблошон, лук","ak","2026-11-03"),yield:C("450","ak","2026-11-03"),
+      kbju:C("268 / 11 / 14 / 24","ak","2026-11-18"),
+      allerg:C("глютен, молоко","ak","2026-11-18"),cost:C("212,40","mb","2026-11-20"),p_msk:C("790","mb","2026-11-20"),p_reg:C("690","mb","2026-11-20"),
+      desc:C("Альпийская классика: картофель, бекон и тающий реблошон","is","2026-11-17"),photo:C("Снято, ссылка","is","2026-11-21")}},
+    {id:"d2",dish:"Пицца «Груша и горгонзола»",change:"new",cells:{
+      pos:C("Пицца Груша-горгонз 30","dk","2026-11-19"),guest:C("Пицца с грушей, горгонзолой, медом и грецким орехом","is","2026-11-17"),
+      comp:C("тесто, сливки, груша, горгонзола, моцарелла, мед, грецкий орех","ak","2026-11-03"),yield:C("420","ak","2026-11-03"),
+      kbju:C("251 / 9 / 12 / 27","ak","2026-11-18"),allerg:C("глютен, молоко, орехи","ak","2026-11-18"),cost:C("238,10","mb","2026-11-20"),
+      p_msk:C("820","mb","2026-11-20"),p_reg:C("720","mb","2026-11-20"),desc:C("","is",""),photo:C("Снято, ссылка","is","2026-11-21")}},
+    {id:"d3",dish:"Глинтвейн безалкогольный",change:"new",cells:{
+      pos:C("","dk",""),guest:C("Глинтвейн без алкоголя","is","2026-11-17"),comp:C("вишневый и яблочный сок, апельсин, специи","ak","2026-11-03"),
+      yield:C("300","ak","2026-11-03"),kbju:C("54 / 0 / 0 / 13","ak","2026-11-18"),allerg:C("нет","ak","2026-11-18"),cost:C("41,70","mb","2026-11-20"),
+      p_msk:C("290","mb","2026-11-20"),p_reg:C("250","mb","2026-11-20"),desc:C("Горячий, с корицей и бадьяном","is","2026-11-17"),photo:C("","is","")}},
+    {id:"d4",dish:"Пицца «Карбонара»",change:"update",cells:{
+      pos:C("Пицца Карбонара 30","dk","2025-09-01"),guest:C("Карбонара","is","2025-09-01"),
+      comp:{v:"тесто, сливочный соус, гуанчиале, желток, пармезан, черный перец",hist:[
+        {at:"2025-09-01",by:"ak",from:"",to:"тесто, сливочный соус, бекон, желток, пармезан, черный перец"},
+        {at:"2026-11-19",by:"ak",from:"тесто, сливочный соус, бекон, желток, пармезан, черный перец",to:"тесто, сливочный соус, гуанчиале, желток, пармезан, черный перец",afterGate:"Состав меню утвержден",req:true}]},
+      yield:C("430","ak","2025-09-01"),kbju:C("262 / 12 / 13 / 24","ak","2026-11-20"),allerg:C("глютен, молоко, яйцо","ak","2025-09-01"),
+      cost:C("205,90","mb","2026-11-20"),p_msk:C("740","mb","2026-11-20"),p_reg:C("650","mb","2026-11-20"),
+      desc:C("Бекон, желток и пармезан на сливочном соусе","is","2025-09-01",{state:"review",note:"Состав изменен 19.11 (бекон → гуанчиале). Описание нужно проверить до 21.11",flagDue:"2026-11-21"}),
+      photo:C("Есть, прошлое","is","2025-09-01")}},
+    {id:"d5",dish:"Пицца «Маргарита»",change:"update",cells:{
+      pos:C("Пицца Маргарита 30","dk","2024-03-01"),guest:C("Маргарита","is","2024-03-01"),comp:C("тесто, томатный соус, моцарелла, базилик","ak","2024-03-01"),
+      yield:C("400","ak","2024-03-01"),kbju:C("238 / 10 / 9 / 29","ak","2024-03-01"),allerg:C("глютен, молоко","ak","2024-03-01"),
+      cost:C("148,20","mb","2026-11-20"),p_msk:{v:"690",hist:[{at:"2025-09-01",by:"mb",from:"",to:"650"},{at:"2026-11-20",by:"mb",from:"650",to:"690"}]},
+      p_reg:C("590","mb","2026-11-20"),desc:C("Томаты, моцарелла и свежий базилик","is","2024-03-01"),photo:C("Есть, прошлое","is","2024-03-01")}},
+    {id:"d6",dish:"Салат «Цезарь с креветками»",change:"remove",cells:{}},
+  ],
+  requests:[
+    {id:"cr2",row:"d1",col:"yield",from:"450",to:"420",by:"ak",at:"2026-11-22",reason:"После второй проработки: 450 г не помещается в коробку 30 см",status:"new"},
+    {id:"cr1",row:"d4",col:"comp",from:"тесто, сливочный соус, бекон, желток, пармезан, черный перец",to:"тесто, сливочный соус, гуанчиале, желток, пармезан, черный перец",by:"ak",at:"2026-11-18",reason:"Поставщик предложил гуанчиале по цене бекона",status:"approved",decidedAt:"2026-11-19"},
+  ],
+  reports:[
+    {id:"er1",row:"d1",col:"kbju",by:"dk",at:"2026-11-22",text:"Калорийность не сходится с составом — по сумме ингредиентов около 310 ккал",status:"new"},
+  ],
+  events:[
+    {kind:"late",who:"ak",at:"2026-11-18",stage:4,text:"«ТТК, выход, КБЖУ, аллергены» сданы 18.11 при сроке 15.11 — на 3 дня позже. Из-за этого финансы начали цены на 3 дня позже"},
+    {kind:"late",who:"is",at:"2026-11-21",stage:7,text:"«Названия и описания для гостя» — срок 20.11, не сдано. Нет описания у «Груши и горгонзолы»"},
+    {kind:"lateedit",who:"ak",at:"2026-11-19",stage:3,text:"«Карбонара», состав: бекон → гуанчиале. Изменено через 14 дней после ворот «Состав меню утвержден», за 26 дней до старта. Запрос утвердил Дмитрий Ким 19.11. Затронуто: КБЖУ, аллергены, описание, себестоимость"},
+    {kind:"forgot",who:"is",at:"2026-11-22",stage:7,text:"«Карбонара», описание: после смены состава 19.11 не проверено. Срок проверки — 21.11, просрочено на 2 дня. В описании по-прежнему «бекон»"},
+  ],
+  exports:[],
+};
+
+// brand «Альденте», partial launch: 2 dishes
+const aldente = {
+  id:"r2",brand:"Паста-бар «Альденте»",title:"Две новые пасты",kind:"partial",launch:"2026-12-05",startedAt:"2026-11-18",
+  stages:makeStages("partial","2026-12-05",{3:"2026-11-19"}),
+  rows:[
+    {id:"a1",dish:"Паста с тыквой и шалфеем",change:"new",cells:{pos:C("","dk",""),guest:C("Паста с тыквой и шалфеем","is","2026-11-20"),comp:C("паппарделле, тыква, сливочное масло, шалфей, пармезан","ak","2026-11-19"),yield:C("330","ak","2026-11-19"),kbju:C("","ak",""),allerg:C("глютен, молоко, яйцо","ak","2026-11-21"),cost:C("","mb",""),p_msk:C("","mb",""),p_reg:C("","mb",""),desc:C("","is",""),photo:C("","is","")}},
+    {id:"a2",dish:"Паста с белыми грибами",change:"new",cells:{pos:C("","dk",""),guest:C("Паста с белыми грибами","is","2026-11-20"),comp:C("тальятелле, белые грибы, сливки, тимьян, пармезан","ak","2026-11-19"),yield:C("320","ak","2026-11-19"),kbju:C("","ak",""),allerg:C("глютен, молоко, яйцо","ak","2026-11-21"),cost:C("","mb",""),p_msk:C("","mb",""),p_reg:C("","mb",""),desc:C("","is",""),photo:C("","is","")}},
+  ],
+  requests:[],reports:[],events:[],exports:[],
+};
+
+// finished: autumn menu with post-launch report
+const autumn = {
+  id:"r3",brand:"Пиццерия «Тесто»",title:"Осеннее меню 2026",kind:"global",launch:"2026-09-15",startedAt:"2026-07-17",done:true,
+  stages:makeStages("global","2026-09-15",{1:"2026-07-17",2:"2026-08-03",3:"2026-08-10",4:"2026-08-19",5:"2026-08-21",6:"2026-08-27",7:"2026-08-22",8:"2026-08-28",9:"2026-09-04",10:"2026-09-09",11:"2026-09-13",12:"2026-09-17"}),
+  rows:[],requests:[],reports:[],exports:[],
+  report:{shift:2,lateEdits:7,lateTasks:5,forgot:4,errors:9,reprint:"18 400 ₽",reloads:3},
+  events:[
+    {kind:"lateedit",who:"mb",at:"2026-09-08",stage:6,text:"Цены на 4 пиццы в зоне «Москва» изменены через 12 дней после ворот «Цены утверждены», меню уже было в печати. Перепечатка — 18 400 ₽"},
+    {kind:"late",who:"is",at:"2026-08-28",stage:8,text:"«Фотосъемка блюд» сдана 28.08 при сроке 25.08 — на 3 дня позже"},
+    {kind:"error",who:"is",at:"2026-09-16",stage:11,text:"Яндекс Еда: название «Пицца с цыпленком барбекю и маринованным луком» длиннее 40 знаков — позиция не прошла модерацию, загружали повторно"},
+    {kind:"forgot",who:"ak",at:"2026-09-03",stage:4,text:"«Пепперони»: после смены колбасы не обновлены аллергены (добавилась горчица). Нашли при проверке на точке"},
+    {kind:"late",who:"dk",at:"2026-09-17",stage:12,text:"«Проверка на точках и старт продаж» закрыта 17.09 при сроке 15.09 — на 2 дня позже; старт сдвинулся на 2 дня"},
+  ],
+};
+
+const S = {runs:[winter,aldente,autumn],view:"list",runId:null,tab:"stages",viewer:"dk",filter:"all"};
+
+// ---------- derived
+const stageStatus = (run,s) => {
+  if(s.doneAt) return s.doneAt>s.due?{t:`Сдано ${fmt(s.doneAt)}, позже на ${days(diff(s.doneAt,s.due))}`,c:"p-warn",k:"late-done"}:{t:`Сдано ${fmt(s.doneAt)}`,c:"p-ok",k:"done"};
+  if(run.done) return {t:"Закрыто",c:"p-ok",k:"done"};
+  if(s.due<TODAY) return {t:`Просрочено на ${days(diff(TODAY,s.due))}`,c:"p-bad",k:"overdue"};
+  const ready = s.deps.every(n=>{const x=run.stages.find(y=>y.n===n);return !x||x.doneAt;});
+  return ready?{t:`В работе, осталось ${days(diff(s.due,TODAY))}`,c:"p-info",k:"active"}:{t:"Ждет предыдущих этапов",c:"p-mute",k:"wait"};
+};
+const gateDone = (run,n) => { const g=run.stages.find(s=>s.n===n); return !!(g&&g.doneAt); };
+const frozen = (run,col) => COL[col].gate && gateDone(run,COL[col].gate);
+const gateName = (run,n) => (run.stages.find(s=>s.n===n)||{}).t;
+const cellState = c => !c ? "na" : (c.state || (c.v===""?"empty":"ok"));
+function showcaseIssues(run, sc){
+  const out=[];
+  run.rows.filter(r=>r.change!=="remove").forEach(r=>{
+    sc.req.forEach(k=>{const c=r.cells[k];const st=cellState(c);
+      if(st==="empty") out.push(`${r.dish}: не заполнено «${COL[k].t}»`);
+      else if(st==="error") out.push(`${r.dish}: ошибка в «${COL[k].t}»`);
+      else if(st==="review") out.push(`${r.dish}: «${COL[k].t}» требует проверки`);});
+    if(sc.limit && r.cells.guest && r.cells.guest.v.length>sc.limit) out.push(`${r.dish}: название ${r.cells.guest.v.length} знаков, лимит витрины ${sc.limit}`);
+  });
+  return out;
+}
+function runCounts(run){
+  let empty=0,review=0,error=0;
+  run.rows.forEach(r=>Object.values(r.cells).forEach(c=>{const s=cellState(c);if(s==="empty")empty++;if(s==="review")review++;if(s==="error")error++;}));
+  const overdue=run.stages.filter(s=>stageStatus(run,s).k==="overdue").length;
+  const done=run.stages.filter(s=>s.doneAt).length;
+  return {empty,review,error,overdue,done,total:run.stages.length,reqs:run.requests.filter(x=>x.status==="new").length,reps:run.reports.filter(x=>x.status==="new").length};
+}
+const isOwner = () => S.viewer==="dk";
+const myFn = () => P[S.viewer].fn;
+
+// ---------- render
+const app = document.getElementById("app"), layer = document.getElementById("layer");
+function viewerBar(){
+  return `<div class="viewer"><span class="proto">Прототип: данные выдуманы, ничего не сохраняется</span>
+    <label for="viewer">Смотрю как</label><select id="viewer">${Object.entries(P).map(([k,p])=>`<option value="${k}" ${k===S.viewer?"selected":""}>${p.name} — ${p.role}</option>`).join("")}</select></div>`;
+}
+function render(){
+  app.innerHTML = S.view==="list"?renderList():renderRun();
+  document.getElementById("viewer").onchange = e => { S.viewer=e.target.value; if(S.tab==="audit"&&!isOwner()) S.tab="stages"; render(); };
+  bind();
+}
+function renderList(){
+  const active=S.runs.filter(r=>!r.done), done=S.runs.filter(r=>r.done);
+  const card = r => { const c=runCounts(r); const left=diff(r.launch,TODAY);
+    const pills=[c.overdue?`<span class="pill p-bad">Просрочено этапов: ${c.overdue}</span>`:"",c.error?`<span class="pill p-bad">Ошибок в данных: ${c.error}</span>`:"",c.review?`<span class="pill p-warn">Требует проверки: ${c.review}</span>`:"",c.empty?`<span class="pill p-mute">Пустых полей: ${c.empty}</span>`:"",c.reqs?`<span class="pill p-info">Запросов на изменение: ${c.reqs}</span>`:""].join("");
+    return `<div class="card run" data-open="${r.id}" tabindex="0" role="button">
+      <div class="row between"><span class="muted small">${esc(r.brand)} · ${r.kind==="global"?"глобальный ввод":"точечный ввод"}</span>${r.done?`<span class="pill p-ok">Запущено ${fmtY(r.launch)}</span>`:""}</div>
+      <h2>${esc(r.title)}</h2>
+      ${r.done?`<div class="muted small">Отчет после запуска: ${r.report.lateEdits} поздних правок, ${r.report.lateTasks} сорванных сроков, ${r.report.errors} ошибок в данных</div>`:
+      `<div class="small">Старт продаж ${fmtY(r.launch)} — через ${days(left)}</div>
+      <div><div class="bar"><i style="width:${Math.round(c.done/c.total*100)}%"></i></div><div class="muted small" style="margin-top:4px">Этапов сдано: ${c.done} из ${c.total}</div></div>
+      <div class="row">${pills||`<span class="pill p-ok">Все в порядке</span>`}</div>`}
+    </div>`; };
+  return `<div class="top"><h1>Проекты и процессы</h1>${viewerBar()}</div>
+    <section class="card"><div class="row between"><div><h2>Ввод меню</h2><div class="muted small">Шаблон процесса: 12 этапов, двое ворот согласования, сроки от даты старта продаж. Точечный ввод — 9 этапов</div></div>
+      ${isOwner()?`<button class="btn pri" data-act="launch">Запустить процесс</button>`:`<span class="muted small">Запускает владелец процесса — IT</span>`}</div></section>
+    <h2>Идут сейчас</h2><div class="grid">${active.map(card).join("")}</div>
+    <h2>Завершены</h2><div class="grid">${done.map(card).join("")}</div>`;
+}
+function renderRun(){
+  const r=S.runs.find(x=>x.id===S.runId), c=runCounts(r);
+  const tabs=[["stages","Этапы",c.overdue],["cardm","Карточка меню",c.error+c.empty],["reqs","Запросы на изменение",c.reqs],["exports","Выгрузки",0]];
+  if(isOwner()) tabs.push(["audit","Разбор запуска",c.reps]);
+  if(!tabs.find(t=>t[0]===S.tab)) S.tab="stages";
+  const my = r.stages.filter(s=>s.who===S.viewer&&!s.doneAt);
+  const myFlags=[]; r.rows.forEach(row=>Object.entries(row.cells).forEach(([k,cl])=>{if(COL[k].fn===myFn()&&["review","empty"].includes(cellState(cl)))myFlags.push(`${row.dish} — ${COL[k].t}`);}));
+  return `<div class="top"><button class="back" data-act="back">← Все процессы</button>${viewerBar()}</div>
+    <div><div class="muted small">${esc(r.brand)} · ${r.kind==="global"?"глобальный ввод меню":"точечный ввод меню"} · запущен ${fmtY(r.startedAt)}</div>
+    <h1>${esc(r.title)}</h1></div>
+    ${r.done?"":`<div class="kpis">
+      <div class="kpi"><b>${diff(r.launch,TODAY)}</b><span>${plural(diff(r.launch,TODAY),"день","дня","дней")} до старта продаж ${fmt(r.launch)}</span></div>
+      <div class="kpi"><b>${c.done}/${c.total}</b><span>этапов сдано</span></div>
+      <div class="kpi"><b style="color:${c.overdue?"var(--bad)":"inherit"}">${c.overdue}</b><span>этапов просрочено</span></div>
+      <div class="kpi"><b style="color:${c.error+c.review?"var(--warn)":"inherit"}">${c.error+c.review+c.empty}</b><span>полей карточки не готово</span></div></div>`}
+    ${!isOwner()&&!r.done&&(my.length||myFlags.length)?`<div class="note"><b>Ваше в этом запуске.</b> ${my.map(s=>`«${s.t}» до ${fmt(s.due)}`).join("; ")}${myFlags.length?`. Поля: ${myFlags.slice(0,4).map(esc).join("; ")}${myFlags.length>4?` и еще ${myFlags.length-4}`:""}`:""}</div>`:""}
+    <div class="tabs" role="tablist">${tabs.map(([k,t,n])=>`<button class="tab ${S.tab===k?"on":""}" data-tab="${k}" role="tab">${t}${n?`<em>${n}</em>`:""}</button>`).join("")}</div>
+    ${({stages:tStages,cardm:tCard,reqs:tReqs,exports:tExports,audit:tAudit})[S.tab](r)}`;
+}
+function tStages(r){
+  const sorted=[...r.stages].sort((a,b)=>a.due<b.due?-1:a.due>b.due?1:a.n-b.n);
+  return `<div class="muted small">Сроки посчитаны от даты старта продаж. Владелец процесса может поправить срок — правка попадет в историю с причиной.</div>
+  <div class="scroll"><table><thead><tr><th>Этап</th><th>Кто</th><th>Срок</th><th>Статус</th></tr></thead><tbody>
+  ${sorted.map(s=>{const st=stageStatus(r,s);return `<tr class="${s.gate?"gate":""}">
+    <td>${s.gate?`<b>Ворота: ${esc(s.t)}</b><div class="muted small">После них ${s.n===3?"состав и выход":"цены"} меняются только через запрос</div>`:esc(s.t)}
+      ${s.dueEdits.map(e=>`<div class="muted small">Срок изменен ${fmt(e.at)}: ${fmt(e.from)} → ${fmt(e.to)}, ${P[e.by].name}. ${esc(e.reason)}</div>`).join("")}</td>
+    <td>${P[s.who].name}<div class="muted small">${FN_NAME[s.fn]}</div></td>
+    <td>${fmt(s.due)}${isOwner()&&!s.doneAt&&!r.done?` <button class="btn sm" data-due="${s.n}">Изменить</button>`:""}</td>
+    <td><span class="pill ${st.c}">${st.t}</span></td></tr>`;}).join("")}
+  </tbody></table></div>`;
+}
+function tCard(r){
+  if(!r.rows.length) return `<div class="card muted">Карточка этого запуска в прототипе не заполнена.</div>`;
+  const head = COLS.map(c=>`<th>${c.t}${frozen(r,c.k)?` <span class="lock" title="Заморожено воротами">🔒</span>`:""}<span class="own">${FN_NAME[c.fn]}${c.fn===myFn()?" · вы":""}</span></th>`).join("");
+  const body = r.rows.map(row=>{
+    if(row.change==="remove") return `<tr class="removed"><td class="dish">${esc(row.dish)}<small>Выводим из меню</small></td><td colspan="${COLS.length}" style="padding:10px 12px" class="muted small">Снять с продажи во всех витринах в день старта</td></tr>`;
+    return `<tr><td class="dish">${esc(row.dish)}<small>${row.change==="new"?"Новое блюдо":"Изменяется"}</small></td>${COLS.map(c=>{const cl=row.cells[c.k],st=cellState(cl);
+      const txt = st==="empty"?"Не заполнено":esc(cl.v);
+      return `<td><button class="cell c-${st} ${c.fn===myFn()?"c-mine":""}" data-cell="${row.id}:${c.k}" title="${esc(cl.note||"")}">${txt}${st==="review"?`<div class="small" style="color:var(--warn)">Требует проверки</div>`:""}${st==="error"?`<div class="small" style="color:var(--bad)">Ошибка</div>`:""}</button></td>`;}).join("")}</tr>`;
+  }).join("");
+  return `<div class="legend"><span><i style="background:var(--bad-bg);box-shadow:inset 3px 0 0 var(--bad)"></i>Ошибка или не заполнено</span><span><i style="background:var(--warn-bg);box-shadow:inset 3px 0 0 var(--warn)"></i>Требует проверки после изменения соседнего поля</span><span>🔒 Заморожено воротами — только через запрос</span><span>Нажмите на ячейку: история правок и действия</span></div>
+  <div class="scroll"><table class="cardgrid"><thead><tr><th>Блюдо</th>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
+}
+function tReqs(r){
+  if(!r.requests.length) return `<div class="card muted">Запросов на изменение нет. Они появляются, когда кто-то меняет поле после ворот согласования.</div>`;
+  return `<div class="grid">${r.requests.map(q=>{const row=r.rows.find(x=>x.id===q.row);const aff=affected(r,q.col);
+    return `<div class="card" style="display:flex;flex-direction:column;gap:10px">
+      <div class="row between"><b>${esc(row.dish)} · ${COL[q.col].t}</b>${q.status==="new"?`<span class="pill p-info">Ждет решения</span>`:q.status==="approved"?`<span class="pill p-ok">Утверждено ${fmt(q.decidedAt)}</span>`:`<span class="pill p-mute">Отклонено</span>`}</div>
+      <div class="small"><span class="muted">Было:</span> ${esc(q.from)}<br><span class="muted">Станет:</span> <b>${esc(q.to)}</b></div>
+      <div class="small">${P[q.by].name}, ${fmt(q.at)}: «${esc(q.reason)}»</div>
+      <div class="note">После ворот «${esc(gateName(r,COL[q.col].gate))}», за ${days(diff(r.launch,q.at))} до старта. Затронет: ${aff.join(", ")}</div>
+      ${q.status==="new"&&isOwner()?`<div class="row"><button class="btn pri" data-approve="${q.id}">Утвердить и уведомить</button><button class="btn" data-reject="${q.id}">Отклонить</button></div>`:""}
+      ${q.status==="new"&&!isOwner()?`<div class="muted small">Решает владелец процесса — IT</div>`:""}
+    </div>`;}).join("")}</div>`;
+}
+function affected(r,col){
+  const out=(DEPS[col]||[]).map(k=>`${COL[k].t} (${FN_NAME[COL[k].fn]})`);
+  if(gateDone(r,9)) out.push("печатное меню — уже в печати");
+  if(r.exports.length) out.push("выгрузки в витрины — повторить");
+  if(!out.length) out.push("выгрузки в витрины");
+  return out;
+}
+function tExports(r){
+  if(!r.rows.length) return `<div class="card muted">Нет данных в прототипе.</div>`;
+  return `<div class="muted small">Файл под формат каждой витрины. Выгрузить можно, когда в карточке нет ошибок для этой витрины. Загружает IT вручную.</div>
+  <div class="grid">${SHOWCASES.map(sc=>{const is=showcaseIssues(r,sc);const ex=r.exports.find(e=>e.sc===sc.k);
+    return `<div class="card" style="display:flex;flex-direction:column;gap:10px">
+      <div class="row between"><h3>${sc.t}</h3>${is.length?`<span class="pill p-bad">Проблем: ${is.length}</span>`:`<span class="pill p-ok">Готово к выгрузке</span>`}</div>
+      ${is.length?`<ul class="small" style="margin:0;padding-left:18px">${is.slice(0,3).map(x=>`<li>${esc(x)}</li>`).join("")}${is.length>3?`<li class="muted">и еще ${is.length-3}</li>`:""}</ul>`:""}
+      ${ex?`<div class="muted small">Выгружено ${fmt(ex.at)}, версия карточки ${ex.ver}</div>`:""}
+      ${isOwner()?`<button class="btn ${is.length?"":"pri"}" data-export="${sc.k}" ${is.length?"disabled":""}>Выгрузить файл</button>`:""}
+    </div>`;}).join("")}</div>`;
+}
+function tAudit(r){
+  const evs=r.events.filter(e=>S.filter==="all"||e.kind===S.filter);
+  const people={}; r.events.forEach(e=>{people[e.who]=people[e.who]||{late:0,forgot:0,lateedit:0,error:0};people[e.who][e.kind]++;});
+  const cnt=k=>r.events.filter(e=>e.kind===k).length;
+  const pend=r.reports.filter(x=>x.status==="new");
+  return `<div class="note">Видят только владелец процесса и УК. Каждое событие посчитано по журналу правок и срокам. Ошибку по сообщению участника фиксирует только владелец процесса после проверки.</div>
+  ${r.done?`<div class="card"><h2>Отчет после запуска</h2><div class="kpis" style="margin-top:12px">
+    <div class="kpi"><b>${r.report.shift}</b><span>дня сдвиг старта</span></div><div class="kpi"><b>${r.report.lateEdits}</b><span>правок после ворот</span></div>
+    <div class="kpi"><b>${r.report.lateTasks}</b><span>сорванных сроков</span></div><div class="kpi"><b>${r.report.errors}</b><span>ошибок в данных</span></div>
+    <div class="kpi"><b>${r.report.reprint}</b><span>перепечатка меню</span></div><div class="kpi"><b>${r.report.reloads}</b><span>повторных загрузки в витрины</span></div></div></div>`:""}
+  ${pend.length?`<div class="card"><h2>Сообщения об ошибках ждут проверки</h2>${pend.map(p=>{const row=r.rows.find(x=>x.id===p.row);const cl=row.cells[p.col];const last=cl.hist[cl.hist.length-1];
+    return `<div class="ev"><div class="small muted">${fmt(p.at)} · от ${P[p.by].name}</div><div><b>${esc(row.dish)} · ${COL[p.col].t}</b><div class="small">${esc(p.text)}</div>
+    <div class="muted small">Последним правил: ${last?P[last.by].name+", "+fmt(last.at):"—"}</div>
+    <div class="row" style="margin-top:8px"><button class="btn sm pri" data-confirm="${p.id}">Подтвердить ошибку</button><button class="btn sm" data-dismiss="${p.id}">Ошибки нет</button></div></div></div>`;}).join("")}</div>`:""}
+  <div class="kpis">${Object.entries(KIND).map(([k,v])=>`<button class="kpi" data-filter="${k}" style="text-align:left;border:${S.filter===k?"2px solid var(--brand)":"1px solid transparent"};cursor:pointer"><b>${cnt(k)}</b><span>${v.t}</span></button>`).join("")}</div>
+  <div class="scroll"><table><thead><tr><th>Кто</th>${Object.values(KIND).map(v=>`<th>${v.t}</th>`).join("")}<th>Всего</th></tr></thead><tbody>
+  ${Object.entries(people).sort((a,b)=>Object.values(b[1]).reduce((x,y)=>x+y)-Object.values(a[1]).reduce((x,y)=>x+y)).map(([w,c])=>`<tr><td>${P[w].name}<div class="muted small">${P[w].role}</div></td>${Object.keys(KIND).map(k=>`<td>${c[k]||"—"}</td>`).join("")}<td><b>${Object.values(c).reduce((x,y)=>x+y)}</b></td></tr>`).join("")}
+  </tbody></table></div>
+  <div class="card"><div class="row between"><h2>События</h2>${S.filter!=="all"?`<button class="btn sm" data-filter="all">Показать все</button>`:""}</div>
+  ${evs.length?evs.map(e=>`<div class="ev"><div class="small"><span class="pill ${KIND[e.kind].cls}">${KIND[e.kind].t}</span><div class="muted" style="margin-top:6px">${fmtY(e.at)}</div></div>
+    <div><b>${P[e.who].name}</b> <span class="muted small">${P[e.who].role}</span><div class="small">${esc(e.text)}</div></div></div>`).join(""):`<div class="muted small" style="margin-top:8px">Событий этого вида нет.</div>`}</div>`;
+}
+
+// ---------- drawers
+function openDrawer(html){ layer.innerHTML=`<div class="drawer-bg" data-close></div><aside class="drawer" role="dialog" aria-modal="true">${html}</aside>`;
+  layer.querySelectorAll("[data-close]").forEach(b=>b.onclick=closeDrawer); bindDrawer(); }
+function closeDrawer(){ layer.innerHTML=""; }
+document.addEventListener("keydown",e=>{if(e.key==="Escape")closeDrawer();});
+let drawerCtx=null;
+function cellDrawer(r,rowId,k){
+  const row=r.rows.find(x=>x.id===rowId), cl=row.cells[k], col=COL[k], st=cellState(cl);
+  const mine=col.fn===myFn(), fr=frozen(r,k);
+  drawerCtx={r,row,k};
+  const stTxt={ok:`<span class="pill p-ok">Заполнено</span>`,empty:`<span class="pill p-bad">Не заполнено</span>`,review:`<span class="pill p-warn">Требует проверки</span>`,error:`<span class="pill p-bad">Ошибка</span>`}[st];
+  let act="";
+  if(r.done) act="";
+  else if(mine&&!fr) act=`<div class="field"><label for="nv">Новое значение</label><input id="nv" value="${esc(cl.v)}"></div>
+    <div class="row"><button class="btn pri" data-d="save">Сохранить</button>${st==="review"?`<button class="btn" data-d="ok">Проверено, менять не нужно</button>`:""}</div>
+    ${(DEPS[k]||[]).length?`<div class="muted small">После правки поля ${DEPS[k].map(x=>"«"+COL[x].t+"»").join(", ")} получат метку «Требует проверки», владельцам придет уведомление.</div>`:""}`;
+  else if(mine&&fr) act=`<div class="note">Поле заморожено воротами «${esc(gateName(r,col.gate))}». Изменить можно через запрос — его утверждает владелец процесса.</div>
+    <div class="field"><label for="nv">Новое значение</label><input id="nv" value="${esc(cl.v)}"></div>
+    <div class="field"><label for="why">Почему меняем</label><textarea id="why" rows="2"></textarea></div>
+    <button class="btn pri" data-d="request">Отправить запрос на изменение</button>`;
+  else act=`<div class="muted small">Поле заполняет ${FN_NAME[col.fn]} — ${P[BY_FN[col.fn]].name}. Если видите ошибку, сообщите: владелец процесса проверит и вернет поле на исправление.</div>
+    <div class="field"><label for="why">Что не так</label><textarea id="why" rows="2"></textarea></div>
+    <button class="btn" data-d="report">Сообщить об ошибке</button>`;
+  openDrawer(`<div class="row between"><div><div class="muted small">${esc(row.dish)}</div><h2>${col.t}</h2></div><button class="btn sm" data-close>Закрыть</button></div>
+    <div class="row">${stTxt}${fr?`<span class="pill p-info">Заморожено воротами</span>`:""}<span class="muted small">Заполняет: ${FN_NAME[col.fn]}</span></div>
+    <div style="font-size:16px">${st==="empty"?`<span class="muted">Пусто</span>`:esc(cl.v)}</div>
+    ${cl.note?`<div class="note">${esc(cl.note)}</div>`:""}
+    ${act}
+    <h3>История правок</h3>
+    ${cl.hist.length?`<div class="hist">${[...cl.hist].reverse().map(h=>`<div><b>${fmtY(h.at)}</b> · ${P[h.by].name}${h.afterGate?` · <span style="color:var(--info)">после ворот «${esc(h.afterGate)}»${h.req?", по запросу":""}</span>`:""}<br>${h.from?`<span class="muted">${esc(h.from)}</span> → `:""}${esc(h.to)}</div>`).join("")}</div>`:`<div class="muted small">Поле еще не заполняли.</div>`}`);
+}
+function markDeps(r,row,k,cause){
+  const flagged=[];
+  (DEPS[k]||[]).forEach(x=>{const c=row.cells[x]; if(c&&c.v!==""){c.state="review";c.note=`${cause}. Поле нужно проверить до ${fmt(addDays(TODAY,2))}`;c.flagDue=addDays(TODAY,2);flagged.push(COL[x].t);}});
+  return flagged;
+}
+function bindDrawer(){
+  layer.querySelectorAll("[data-d]").forEach(b=>b.onclick=()=>{
+    const {r,row,k}=drawerCtx, cl=row.cells[k], act=b.dataset.d, nv=(layer.querySelector("#nv")||{}).value, why=((layer.querySelector("#why")||{}).value||"").trim();
+    if(act==="save"){ if(nv===cl.v){toast("Значение не изменилось");return;}
+      cl.hist.push({at:TODAY,by:S.viewer,from:cl.v,to:nv}); cl.v=nv; delete cl.state; delete cl.note;
+      const f=markDeps(r,row,k,`${COL[k].t} изменено ${fmt(TODAY)}`); closeDrawer(); render();
+      toast(f.length?`Сохранено. Требует проверки: ${f.join(", ")} — владельцам ушло уведомление`:"Сохранено. Правка записана в историю"); }
+    if(act==="ok"){ cl.hist.push({at:TODAY,by:S.viewer,from:cl.v,to:cl.v+" (проверено)"}); delete cl.state; delete cl.note; closeDrawer(); render(); toast("Отмечено: поле проверено"); }
+    if(act==="request"){ if(!why){toast("Напишите, почему меняем");return;}
+      r.requests.unshift({id:"cr"+Date.now(),row:row.id,col:k,from:cl.v,to:nv,by:S.viewer,at:TODAY,reason:why,status:"new"}); closeDrawer(); S.tab="reqs"; render(); toast("Запрос отправлен владельцу процесса"); }
+    if(act==="report"){ if(!why){toast("Опишите, что не так");return;}
+      r.reports.unshift({id:"er"+Date.now(),row:row.id,col:k,by:S.viewer,at:TODAY,text:why,status:"new"}); closeDrawer(); render(); toast("Сообщение отправлено владельцу процесса"); }
+  });
+}
+function dueDrawer(r,n){
+  const s=r.stages.find(x=>x.n===n);
+  openDrawer(`<div class="row between"><div><div class="muted small">Изменить срок</div><h2>${esc(s.t)}</h2></div><button class="btn sm" data-close>Закрыть</button></div>
+    <div class="muted small">Сейчас: ${fmtY(s.due)}, по шаблону ${days(-s.off)} до старта.</div>
+    <div class="field"><label for="nd">Новый срок</label><input type="date" id="nd" value="${s.due}"></div>
+    <div class="field"><label for="why">Причина</label><textarea id="why" rows="2"></textarea></div>
+    <button class="btn pri" id="saveDue">Сохранить срок</button>`);
+  layer.querySelector("#saveDue").onclick=()=>{const nd=layer.querySelector("#nd").value, why=layer.querySelector("#why").value.trim();
+    if(!why){toast("Укажите причину: она попадет в историю");return;}
+    s.dueEdits.push({at:TODAY,by:S.viewer,from:s.due,to:nd,reason:why}); s.due=nd; closeDrawer(); render(); toast(`Срок изменен. ${P[s.who].name} получит уведомление`);};
+}
+function launchDrawer(){
+  let kind="global", launch="2027-03-01", brand="Пиццерия «Тесто»", title="Весеннее меню 2027";
+  const draw=()=>{const st=makeStages(kind,launch);
+    openDrawer(`<div class="row between"><h2>Запустить ввод меню</h2><button class="btn sm" data-close>Закрыть</button></div>
+    <div class="field"><label for="lb">Бренд</label><select id="lb">${["Пиццерия «Тесто»","Паста-бар «Альденте»"].map(b=>`<option ${b===brand?"selected":""}>${b}</option>`).join("")}</select></div>
+    <div class="field"><label for="lt">Название</label><input id="lt" value="${esc(title)}"></div>
+    <div class="field"><label for="lk">Тип</label><select id="lk"><option value="global" ${kind==="global"?"selected":""}>Глобальный: новое меню целиком</option><option value="partial" ${kind==="partial"?"selected":""}>Точечный: одно или несколько блюд</option></select></div>
+    <div class="field"><label for="ld">Старт продаж</label><input type="date" id="ld" value="${launch}"></div>
+    <h3>Этапы и сроки</h3><div class="muted small">Посчитаны от даты старта. Срок и исполнителя можно поправить.</div>
+    <div class="scroll"><table><tbody>${st.map(s=>`<tr class="${s.gate?"gate":""}"><td>${s.gate?"<b>Ворота: </b>":""}${esc(s.t)}<div class="muted small">${P[s.who].name}</div></td><td><input class="date-in" type="date" data-ldue="${s.n}" value="${s.due}" aria-label="Срок: ${esc(s.t)}"></td></tr>`).join("")}</tbody></table></div>
+    ${st[0].due<TODAY?`<div class="note" style="color:var(--bad)">Первый срок уже прошел: ${fmtY(st[0].due)}. Сдвиньте старт или сроки.</div>`:""}
+    <button class="btn pri" id="go">Запустить и поставить задачи</button>`);
+    layer.querySelector("#lk").onchange=e=>{kind=e.target.value;title=layer.querySelector("#lt").value;draw();};
+    layer.querySelector("#ld").onchange=e=>{launch=e.target.value;title=layer.querySelector("#lt").value;draw();};
+    layer.querySelector("#lb").onchange=e=>{brand=e.target.value;};
+    layer.querySelector("#go").onclick=()=>{const stages=makeStages(kind,launch);
+      layer.querySelectorAll("[data-ldue]").forEach(i=>{const s=stages.find(x=>x.n===+i.dataset.ldue);if(i.value!==s.due){s.dueEdits.push({at:TODAY,by:S.viewer,from:s.due,to:i.value,reason:"Поправлено при запуске"});s.due=i.value;}});
+      const id="r"+Date.now(); S.runs.unshift({id,brand,title:layer.querySelector("#lt").value||title,kind,launch,startedAt:TODAY,stages,rows:[],requests:[],reports:[],events:[],exports:[]});
+      const n=new Set(stages.map(s=>s.who)).size; closeDrawer(); S.view="run"; S.runId=id; S.tab="stages"; render(); toast(`Процесс запущен: ${stages.length} задач, ${n} ${plural(n,"исполнитель","исполнителя","исполнителей")} получили уведомления`);};
+  };
+  draw();
+}
+
+// ---------- actions
+function bind(){
+  app.querySelectorAll("[data-open]").forEach(el=>{const go=()=>{S.view="run";S.runId=el.dataset.open;S.tab="stages";S.filter="all";render();window.scrollTo(0,0);};el.onclick=go;el.onkeydown=e=>{if(e.key==="Enter")go();};});
+  app.querySelectorAll("[data-act=back]").forEach(b=>b.onclick=()=>{S.view="list";render();});
+  app.querySelectorAll("[data-act=launch]").forEach(b=>b.onclick=launchDrawer);
+  app.querySelectorAll("[data-tab]").forEach(b=>b.onclick=()=>{S.tab=b.dataset.tab;render();});
+  const r=S.runs.find(x=>x.id===S.runId);
+  app.querySelectorAll("[data-cell]").forEach(b=>b.onclick=()=>{const [row,k]=b.dataset.cell.split(":");cellDrawer(r,row,k);});
+  app.querySelectorAll("[data-due]").forEach(b=>b.onclick=()=>dueDrawer(r,+b.dataset.due));
+  app.querySelectorAll("[data-filter]").forEach(b=>b.onclick=()=>{S.filter=b.dataset.filter===S.filter?"all":b.dataset.filter;render();});
+  app.querySelectorAll("[data-approve]").forEach(b=>b.onclick=()=>{const q=r.requests.find(x=>x.id===b.dataset.approve), row=r.rows.find(x=>x.id===q.row), cl=row.cells[q.col];
+    const g=gateName(r,COL[q.col].gate);
+    cl.hist.push({at:TODAY,by:q.by,from:cl.v,to:q.to,afterGate:g,req:true}); cl.v=q.to; q.status="approved"; q.decidedAt=TODAY;
+    const f=markDeps(r,row,q.col,`${COL[q.col].t} изменено ${fmt(TODAY)} по запросу`);
+    const gs=r.stages.find(s=>s.n===COL[q.col].gate);
+    r.events.unshift({kind:"lateedit",who:q.by,at:TODAY,stage:gs.n,text:`«${row.dish}», ${COL[q.col].t.toLowerCase()}: ${q.from} → ${q.to}. Через ${days(diff(TODAY,gs.doneAt))} после ворот «${g}», за ${days(diff(r.launch,TODAY))} до старта. Запрос утвердил ${P[S.viewer].name}. Затронуто: ${f.join(", ")||"выгрузки"}`});
+    render(); toast(`Утверждено. Требует проверки: ${f.join(", ")}. Уведомлены: ${[...new Set((DEPS[q.col]||[]).map(x=>P[BY_FN[COL[x].fn]].name))].join(", ")}`);});
+  app.querySelectorAll("[data-reject]").forEach(b=>b.onclick=()=>{const q=r.requests.find(x=>x.id===b.dataset.reject);q.status="rejected";render();toast(`Запрос отклонен, ${P[q.by].name} получит уведомление`);});
+  app.querySelectorAll("[data-confirm]").forEach(b=>b.onclick=()=>{const p=r.reports.find(x=>x.id===b.dataset.confirm),row=r.rows.find(x=>x.id===p.row),cl=row.cells[p.col],last=cl.hist[cl.hist.length-1];
+    p.status="confirmed"; cl.state="error"; cl.note=`Подтвержденная ошибка: ${p.text}`;
+    r.events.unshift({kind:"error",who:last.by,at:TODAY,stage:null,text:`«${row.dish}», ${COL[p.col].t}: ${p.text}. Значение внесено ${fmt(last.at)}. Сообщил ${P[p.by].name}, подтвердил ${P[S.viewer].name}`});
+    render(); toast(`Ошибка зафиксирована. ${P[last.by].name} получит задачу исправить поле`);});
+  app.querySelectorAll("[data-dismiss]").forEach(b=>b.onclick=()=>{const p=r.reports.find(x=>x.id===b.dataset.dismiss),row=r.rows.find(x=>x.id===p.row),cl=row.cells[p.col];
+    p.status="dismissed"; if(cl.state==="error"){delete cl.state;delete cl.note;} render(); toast("Сообщение закрыто: ошибки нет");});
+  app.querySelectorAll("[data-export]").forEach(b=>b.onclick=()=>{const sc=SHOWCASES.find(x=>x.k===b.dataset.export);const ver=14+r.exports.length;
+    r.exports=r.exports.filter(e=>e.sc!==sc.k);r.exports.push({sc:sc.k,at:TODAY,ver});render();toast(`Файл для «${sc.t}» готов, версия карточки ${ver}. В прототипе файл не создается`);});
+}
+let tt; function toast(m){ clearTimeout(tt); let t=document.querySelector(".toast"); if(!t){t=document.createElement("div");t.className="toast";t.setAttribute("role","status");document.body.appendChild(t);} t.textContent=m; tt=setTimeout(()=>t.remove(),4200); }
+render();
+</script>
